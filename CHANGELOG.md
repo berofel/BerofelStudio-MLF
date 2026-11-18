@@ -1,5 +1,7 @@
 ## 0.10.0-alpha.1 — atualização local de prévia
 
+- Qwen agora tenta uma vez novamente quando a resposta não segue o JSON esperado, reconhece alguns formatos equivalentes e mantém a validação estrita dos IDs de palavra. Se continuar inválida, reporta lote/tamanho sem expor a transcrição; outras etapas permanecem preservadas.
+
 - Adiciona motor opcional Qwen3-TTS Base 0.6B para clonar voz de referência localmente em CPU, sem login ou gate; download inicial explícito, ambiente Python isolado e botão de preparação na aba Narração.
 - A interface permite transcrever opcionalmente o áudio de referência para melhorar a clonagem, preserva a confirmação de autorização e separa essa rota da voz rápida de catálogo Pocket TTS.
 - Adiciona cache local por conteúdo, worker offline após a instalação, saída WAV durável e testes sintéticos de fluxo, cache e privacidade. Não baixou nem executou os pesos reais nesta sessão; desempenho/qualidade ficam pendentes de validação no PC após a preparação.

@@ -28,6 +28,7 @@ Os valores `a` e `b` ficam no relógio relativo da fonte. Ao aplicar o corte, o 
 - Dentro do worker, o texto é dividido pelo contexto e preserva sobreposição para analisar frases nas bordas.
 - Cada lote Qwen concluído é salvo no cache do estágio. Se uma chamada posterior falhar ou expirar, a próxima execução reutiliza os lotes prontos.
 - O prompt pede até oito grupos por lote, com saída JSON curta e 320 tokens máximos. A transcrição e as decisões Silero/Whisper já concluídas permanecem disponíveis mesmo se o Qwen falhar.
+- Se o modelo ignorar o formato, o worker tenta uma única vez com um prompt de JSON ainda mais estrito. O parser aceita wrappers/fences e chaves equivalentes comuns, mas IDs e cortes continuam sujeitos à validação local. Se a resposta continuar inválida, o Qwen falha com número de lote e tamanho da resposta, sem mostrar ou registrar o texto transcrito; Whisper, Silero e legendas não são descartados.
 - Silero continua mais rápido por ser uma detecção acústica de fala/silêncio. Qwen faz inferência linguística local; lotes, cache, contexto reutilizado e saída curta reduzem trabalho, mas não tornam inferência semântica equivalente em custo ao VAD.
 
 O prompt versionado está em `berofel/services/ai_worker.py`; o mapeamento e cache estão em `berofel/services/ai_pipeline.py`. O servidor local segue os endpoints `/health` e `/completion` documentados pelo [projeto oficial llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md).

@@ -264,6 +264,46 @@ class AITest(unittest.TestCase):
         self.assertEqual(out,{'removals':[]})
         with self.assertRaises(ValueError):_parse_model_json('sem estrutura')
 
+    def test_qwen_parser_accepts_common_alternate_decision_keys_and_empty_array(self):
+        self.assertEqual(_parse_model_json('Final: {"cuts":[{"ids":["w1"]}]}'),
+                         {'removals':[{'ids':['w1']}]})
+        self.assertEqual(_parse_model_json('[]'),{'removals':[]})
+
+    def test_qwen_retries_one_malformed_response_with_stricter_json_prompt(self):
+        cli=Path(self.temp.name)/'llama-cli.exe';cli.write_bytes(b'fake')
+        model=Path(self.temp.name)/'model.gguf';model.write_bytes(b'fake')
+        calls=[]
+        def fake_run(command,**kwargs):
+            prompt=Path(command[command.index('-f')+1]).read_text(encoding='utf-8')
+            calls.append(prompt)
+            content='Não há cortes.' if len(calls)==1 else (
+                '{"removals":[{"word_ids":["w1","w2"],"reason":"repetição",'
+                '"confidence":0.91}]}')
+            return SimpleNamespace(returncode=0,stdout=content,stderr='')
+        with patch('berofel.services.ai_worker.subprocess.run',side_effect=fake_run):
+            result=_qwen({'llama_cli':str(cli),'qwen_model':str(model),
+                'words':[{'id':'w1','text':'muito'},{'id':'w2','text':'muito'}],
+                'threads':1,'context_size':4096,'prompt_max_chars':8192})
+        self.assertEqual(len(calls),2)
+        self.assertIn('Responda somente com um objeto JSON válido',calls[1])
+        self.assertEqual(result['removals'][0]['word_ids'],['w1','w2'])
+
+    def test_qwen_reports_bounded_failure_after_retry_without_echoing_transcript(self):
+        cli=Path(self.temp.name)/'llama-cli.exe';cli.write_bytes(b'fake')
+        model=Path(self.temp.name)/'model.gguf';model.write_bytes(b'fake')
+        calls=[]
+        def fake_run(command,**kwargs):
+            calls.append(command)
+            return SimpleNamespace(returncode=0,stdout='texto secreto sem JSON',stderr='')
+        with patch('berofel.services.ai_worker.subprocess.run',side_effect=fake_run):
+            with self.assertRaisesRegex(ValueError,'mesmo após uma retentativa') as error:
+                _qwen({'llama_cli':str(cli),'qwen_model':str(model),
+                    'words':[{'id':'w1','text':'texto secreto'}],
+                    'threads':1,'context_size':4096,'prompt_max_chars':8192})
+        self.assertEqual(len(calls),2)
+        self.assertIn('lote 1/1',str(error.exception))
+        self.assertNotIn('texto secreto',str(error.exception))
+
     def test_qwen_parser_prefers_final_answer_over_echoed_prompt_example(self):
         echoed='Prompt: {"removals":[{"word_ids":["w0_1"],"reason":"...","confidence":0.8}]}\n'
         answer='{"removals":[{"word_ids":["actual1","actual2"],"confidence":0.9}]}'
