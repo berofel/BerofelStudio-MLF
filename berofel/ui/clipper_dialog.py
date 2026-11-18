@@ -1,0 +1,272 @@
+"""Revisão leve e não modal dos candidatos do Clipador Inteligente."""
+from __future__ import annotations
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QDoubleSpinBox,
+    QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton, QSpinBox,
+    QTableWidget, QTableWidgetItem, QVBoxLayout)
+
+from berofel.services.clipper import ClipperOptions
+
+
+class ClipperDialog(QDialog):
+    analyze_requested=Signal(object)
+    cancel_requested=Signal()
+    preview_requested=Signal(object)
+    insert_requested=Signal(object)
+    markers_requested=Signal(object)
+
+    def __init__(self,parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Clipador Inteligente · revisar destaques')
+        self.resize(900,620)
+        self.setMinimumSize(620,420)
+        self.setModal(False)
+        root=QVBoxLayout(self)
+        intro=QLabel('CLIPADOR INTELIGENTE  ·  TRANSCRIÇÃO + SINAIS DE ÁUDIO')
+        intro.setStyleSheet('color:#ffad70;font-weight:850;font-size:12px;letter-spacing:.5px;')
+        root.addWidget(intro)
+        explanation=QLabel('A nota 0–100 é um ranking editorial explicável, não uma previsão de viralização. '
+            'O Clipador reutiliza as palavras já transcritas, mede RMS/picos em PCM por streaming e nunca '
+            'corta nem renderiza a mídia durante a análise. Cada candidato precisa de confirmação.')
+        explanation.setWordWrap(True)
+        explanation.setStyleSheet('color:#bac2cc;')
+        root.addWidget(explanation)
+
+        options=QHBoxLayout()
+        options.addWidget(QLabel('Duração mínima (s)'))
+        self.minimum=QSpinBox();self.minimum.setRange(3,300);self.minimum.setValue(15)
+        options.addWidget(self.minimum)
+        options.addWidget(QLabel('máxima (s)'))
+        self.maximum=QSpinBox();self.maximum.setRange(4,600);self.maximum.setValue(60)
+        options.addWidget(self.maximum)
+        options.addWidget(QLabel('candidatos'))
+        self.maximum_candidates=QSpinBox();self.maximum_candidates.setRange(1,50)
+        self.maximum_candidates.setValue(8)
+        options.addWidget(self.maximum_candidates)
+        options.addWidget(QLabel('sensibilidade (dB)'))
+        self.sensitivity=QDoubleSpinBox();self.sensitivity.setRange(1.,24.)
+        self.sensitivity.setSingleStep(1.);self.sensitivity.setDecimals(1)
+        self.sensitivity.setValue(6.)
+        options.addWidget(self.sensitivity)
+        root.addLayout(options)
+
+        self.status=QLabel('Analise somente o alcance escolhido na aba Ações IA.')
+        self.status.setWordWrap(True)
+        self.status.setStyleSheet('color:#ffbe83;background:#202329;border-left:3px solid #f5822b;padding:6px;')
+        root.addWidget(self.status)
+        boundary_row=QHBoxLayout()
+        boundary_row.addWidget(QLabel('Ajuste por palavra · início'))
+        self.start_boundary=QComboBox();self.start_boundary.setMinimumWidth(150)
+        boundary_row.addWidget(self.start_boundary,1)
+        boundary_row.addWidget(QLabel('fim'))
+        self.end_boundary=QComboBox();self.end_boundary.setMinimumWidth(150)
+        boundary_row.addWidget(self.end_boundary,1)
+        root.addLayout(boundary_row)
+        self.table=QTableWidget(0,5)
+        self.table.setHorizontalHeaderLabels(('Usar','Nota','Tempo · duração','Texto transcrito','Sinais e avisos'))
+        self.table.verticalHeader().hide()
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        header=self.table.horizontalHeader()
+        header.setSectionResizeMode(0,QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3,QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(4,QHeaderView.ResizeMode.Stretch)
+        self.table.cellDoubleClicked.connect(lambda _row,_column:self._preview_current())
+        self.table.currentCellChanged.connect(lambda row,*_args:self._load_boundaries(row))
+        self.start_boundary.currentIndexChanged.connect(lambda *_:self._boundary_changed('start'))
+        self.end_boundary.currentIndexChanged.connect(lambda *_:self._boundary_changed('end'))
+        root.addWidget(self.table,1)
+
+        actions=QHBoxLayout()
+        self.analyze_button=QPushButton('⌕ Analisar com configurações')
+        self.analyze_button.clicked.connect(self._analyze)
+        actions.addWidget(self.analyze_button)
+        self.cancel_button=QPushButton('Cancelar análise')
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel_requested.emit)
+        actions.addWidget(self.cancel_button)
+        self.preview_button=QPushButton('▶ Prévia no monitor')
+        self.preview_button.clicked.connect(self._preview_current)
+        actions.addWidget(self.preview_button)
+        self.markers_button=QPushButton('⚑ Marcar eventos')
+        self.markers_button.setToolTip('Adiciona marcadores dos eventos acústicos à timeline; operação reversível por Ctrl+Z.')
+        self.markers_button.clicked.connect(self._mark_events)
+        actions.addWidget(self.markers_button)
+        self.insert_button=QPushButton('＋ Adicionar marcados à timeline')
+        self.insert_button.setStyleSheet('background:#ff8126;color:#24170f;font-weight:800;')
+        self.insert_button.clicked.connect(self._insert)
+        actions.addWidget(self.insert_button)
+        self.select_all=QPushButton('Marcar todos')
+        self.select_all.clicked.connect(lambda:self._set_all(True))
+        actions.addWidget(self.select_all)
+        self.clear_all=QPushButton('Limpar')
+        self.clear_all.clicked.connect(lambda:self._set_all(False))
+        actions.addWidget(self.clear_all)
+        root.addLayout(actions)
+
+        self._candidates=[]
+        self._events=[]
+        self._updating_boundaries=False
+
+    def options(self):
+        if self.maximum.value()<=self.minimum.value():
+            QMessageBox.information(self,'Clipador Inteligente',
+                'A duração máxima precisa ser maior que a duração mínima.')
+            return None
+        return ClipperOptions(self.minimum.value(),self.maximum.value(),
+            self.maximum_candidates.value(),self.sensitivity.value())
+
+    def _analyze(self):
+        options=self.options()
+        if options is not None:
+            self.analyze_requested.emit(options)
+
+    def set_busy(self,busy: bool):
+        self.analyze_button.setEnabled(not busy)
+        self.cancel_button.setEnabled(busy)
+        for widget in (self.minimum,self.maximum,self.maximum_candidates,self.sensitivity):
+            widget.setEnabled(not busy)
+        if busy:self.status.setText('Calculando em segundo plano; você pode continuar editando a timeline.')
+
+    def set_results(self,result: dict):
+        self.set_busy(False)
+        self._candidates=list(result.get('candidates',[]))
+        self._events=list(result.get('events',[]))
+        self.table.setRowCount(len(self._candidates))
+        for row,candidate in enumerate(self._candidates):
+            check=QTableWidgetItem('')
+            check.setFlags(check.flags()|Qt.ItemFlag.ItemIsUserCheckable)
+            check.setCheckState(Qt.CheckState.Unchecked)
+            check.setData(Qt.ItemDataRole.UserRole,candidate)
+            self.table.setItem(row,0,check)
+            self.table.setItem(row,1,QTableWidgetItem(f"{candidate['score']:.1f}/100"))
+            self.table.setItem(row,2,QTableWidgetItem(
+                f"{candidate['source_start']:.2f}–{candidate['source_end']:.2f}s  ·  {candidate['duration']:.1f}s"))
+            self.table.setItem(row,3,QTableWidgetItem(candidate.get('text','')))
+            evidence='; '.join(candidate.get('reasons',[])) or 'Sem evidência textual forte.'
+            warnings=candidate.get('warnings',[])
+            if warnings:evidence+='  ⚠ '+'; '.join(warnings)
+            if candidate.get('events'):
+                evidence+=f"  ·  {len(candidate['events'])} evento(s) de energia"
+            self.table.setItem(row,4,QTableWidgetItem(evidence))
+            self.table.item(row,3).setToolTip(candidate.get('text',''))
+            self.table.item(row,4).setToolTip(evidence)
+        if self._candidates:
+            self.table.selectRow(0)
+            self._load_boundaries(0)
+        stats=result.get('stats',{})
+        rss=stats.get('rss_mb')
+        rss_label=f" · RSS {rss:.1f} MiB" if rss is not None else ''
+        self.status.setText(f"{len(self._candidates)} candidato(s) · {len(self._events)} evento(s) acústico(s) · "
+            f"{stats.get('elapsed_seconds',0):.2f}s · cache {stats.get('cache_hits',0)} hit(s)/"
+            f"{stats.get('cache_misses',0)} novo(s) · decodificados {stats.get('decoded_seconds',0):.1f}s"
+            +rss_label+". Se não houver áudio, a nota usa somente os sinais disponíveis.")
+
+    def _selected_candidate(self):
+        row=self.table.currentRow()
+        if row<0 and self.table.rowCount():row=0
+        item=self.table.item(row,0) if row>=0 else None
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    @staticmethod
+    def _fill_boundary(combo,choices,selected_ms):
+        combo.clear()
+        for choice in choices:
+            at=int(choice['ms'])
+            combo.addItem(f"{at/1000:.2f}s · {choice.get('word','')}",at)
+        index=combo.findData(int(selected_ms))
+        combo.setCurrentIndex(max(0,index))
+
+    def _load_boundaries(self,row):
+        if row<0 or row>=self.table.rowCount():return
+        candidate=self.table.item(row,0).data(Qt.ItemDataRole.UserRole)
+        if not candidate:return
+        self._updating_boundaries=True
+        self._fill_boundary(self.start_boundary,candidate.get('start_choices',[]),
+                            candidate['start_ms'])
+        self._fill_boundary(self.end_boundary,candidate.get('end_choices',[]),
+                            candidate['end_ms'])
+        self.start_boundary.setEnabled(bool(candidate.get('start_choices')))
+        self.end_boundary.setEnabled(bool(candidate.get('end_choices')))
+        self._updating_boundaries=False
+
+    def _boundary_changed(self,which):
+        if self._updating_boundaries:return
+        candidate=self._selected_candidate()
+        if not candidate:return
+        start=(int(self.start_boundary.currentData()) if which=='start'
+               else int(candidate['start_ms']))
+        end=(int(self.end_boundary.currentData()) if which=='end'
+             else int(candidate['end_ms']))
+        minimum=int(candidate.get('min_duration_ms',0))
+        maximum=int(candidate.get('max_duration_ms',10**12))
+        if not minimum<=end-start<=maximum:
+            self._updating_boundaries=True
+            if which=='start':
+                valid=[choice for choice in candidate.get('end_choices',[])
+                       if minimum<=int(choice['ms'])-start<=maximum]
+                if valid:
+                    chosen=min(valid,key=lambda choice:abs(int(choice['ms'])-int(candidate['end_ms'])))
+                    self._fill_boundary(self.end_boundary,valid,int(chosen['ms']))
+                    end=int(chosen['ms'])
+                else:
+                    self._fill_boundary(self.start_boundary,candidate.get('start_choices',[]),
+                                        int(candidate['start_ms']))
+                    self._updating_boundaries=False
+                    return
+            else:
+                valid=[choice for choice in candidate.get('start_choices',[])
+                       if minimum<=end-int(choice['ms'])<=maximum]
+                if valid:
+                    chosen=min(valid,key=lambda choice:abs(int(choice['ms'])-int(candidate['start_ms'])))
+                    self._fill_boundary(self.start_boundary,valid,int(chosen['ms']))
+                    start=int(chosen['ms'])
+                else:
+                    self._fill_boundary(self.end_boundary,candidate.get('end_choices',[]),
+                                        int(candidate['end_ms']))
+                    self._updating_boundaries=False
+                    return
+            self._updating_boundaries=False
+        if start==candidate['start_ms'] and end==candidate['end_ms']:return
+        candidate=dict(candidate)
+        candidate.update({'start_ms':start,'end_ms':end,'source_start':start/1000.,
+            'source_end':end/1000.,'duration':(end-start)/1000.,'score_adjusted':True})
+        spans=[word for word in candidate.get('word_spans',[])
+               if int(word['start_ms'])>=start and int(word['end_ms'])<=end]
+        candidate['text']=' '.join(str(word['text']) for word in spans).strip()
+        warning='Bordas ajustadas por palavra; a nota original não foi recalculada.'
+        if warning not in candidate['warnings']:candidate['warnings'].append(warning)
+        row=self.table.currentRow()
+        self.table.item(row,0).setData(Qt.ItemDataRole.UserRole,candidate)
+        self.table.item(row,2).setText(
+            f"{candidate['source_start']:.2f}–{candidate['source_end']:.2f}s  ·  {candidate['duration']:.1f}s")
+        self.table.item(row,3).setText(candidate['text'])
+        self.table.item(row,4).setText('; '.join(candidate['reasons'])+'  ⚠ '+
+                                      '; '.join(candidate['warnings']))
+
+    def _preview_current(self):
+        candidate=self._selected_candidate()
+        if candidate:self.preview_requested.emit(candidate)
+
+    def _set_all(self,value):
+        for row in range(self.table.rowCount()):
+            self.table.item(row,0).setCheckState(
+                Qt.CheckState.Checked if value else Qt.CheckState.Unchecked)
+
+    def selected_candidates(self):
+        return [self.table.item(row,0).data(Qt.ItemDataRole.UserRole)
+            for row in range(self.table.rowCount())
+            if self.table.item(row,0).checkState()==Qt.CheckState.Checked]
+
+    def _insert(self):
+        candidates=self.selected_candidates()
+        if candidates:self.insert_requested.emit(candidates)
+
+    def _mark_events(self):
+        if self._events:self.markers_requested.emit(self._events)

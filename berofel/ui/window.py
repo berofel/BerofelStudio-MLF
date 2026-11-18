@@ -4,6 +4,7 @@ import copy
 import os
 import tempfile
 import threading
+from dataclasses import replace as dataclass_replace
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl, QThreadPool, QTimer, QSize, Signal, QSettings
@@ -33,7 +34,9 @@ from berofel.services.action_scope import (ScopeSpec, resolve_scope, scope_summa
 from berofel.services.caption_actions import (create_manual_caption, create_auto_captions,
     export_scoped_srt, scoped_cues)
 from berofel.services.transcript_coverage import (record_coverage,has_coverage,words_in_clip)
+from berofel.services.clipper import analyze_clips as analyze_clip_candidates
 from berofel.ui.actions_panel import ActionsPanel, format_timecode
+from berofel.ui.clipper_dialog import ClipperDialog
 from berofel.services.export_multitrack import export_project, render_frame
 from berofel.services.preview_pipeline import prepare_commands
 from berofel.ui.live_preview import LivePreview
@@ -577,6 +580,8 @@ class MainWindow(QMainWindow):
         self._open_error_dialogs=set()
         self._ai_busy=False
         self.active_task=None
+        self._clipper_dialog=None
+        self._clipper_task=None
         self.media_cache={}
         self.active_clip_id=None
         self._pending_source_ms=None
@@ -798,6 +803,7 @@ class MainWindow(QMainWindow):
         self.actions_panel=ActionsPanel(self)
         self.actions_panel.on_execute=self.execute_modular
         self.actions_panel.on_execute_plan=self.execute_edit_queue
+        self.actions_panel.on_clipper=self.open_clipper
         self.side_tabs.addTab(self.actions_panel, 'Assistente IA')
         self.side_tabs.addTab(self.props_scroll, 'Propriedades')
         self.narration_panel=NarrationPanel(self)
@@ -2912,6 +2918,180 @@ class MainWindow(QMainWindow):
                 self.preview_stack.setCurrentWidget(self.preview_image)
                 self.statusBar().showMessage('Quadro composto com a ordem real de todas as camadas.')
         self._ui_task(fn,ready,label='Quadro final · FFmpeg')
+
+    def open_clipper(self):
+        """Open a non-modal ranking tool that reuses only saved transcripts."""
+        if self._ai_busy or self.active_task is not None:
+            QMessageBox.information(self,'Clipador Inteligente',
+                'A Batata Quente já está ocupada. A análise do Clipador pode começar quando a tarefa atual terminar.')
+            return
+        try:
+            selected,targets=self.actions_panel.selection()
+        except ValueError as exc:
+            QMessageBox.information(self,'Clipador Inteligente',str(exc))
+            self.open_actions()
+            return
+        if not selected:
+            QMessageBox.information(self,'Clipador Inteligente',
+                'Selecione blocos de áudio/vídeo ou escolha um alcance na aba Ações IA.')
+            self.open_actions()
+            return
+        usable=[];missing=[]
+        for clip in selected:
+            if words_in_clip(self.project,clip):usable.append(clip)
+            else:missing.append(clip.title or clip.id[:8])
+        if not usable:
+            QMessageBox.information(self,'Transcrição necessária',
+                'O Clipador reutiliza as palavras já salvas e não inicia uma retranscrição. '
+                'Marque “Transcrever · Faster-Whisper” na aba Ações IA para estes blocos e tente novamente.')
+            self.open_actions()
+            return
+        source_paths={str(Path(clip.source).resolve()) for clip in usable}
+        words=[dict(word) for word in self.project.transcripts
+            if str(Path(word.get('source','')).resolve()) in source_paths]
+        originals=copy.deepcopy({target.original_id:self.project.clip(target.original_id)
+                                 for target in targets})
+        dialog=ClipperDialog(self)
+        dialog._clipper_context={'clips':copy.deepcopy(usable),'targets':copy.deepcopy(targets),
+            'originals':originals,'words':words,'missing':missing}
+        dialog.analyze_requested.connect(
+            lambda options,dlg=dialog:self._run_clipper(dlg,options))
+        dialog.cancel_requested.connect(lambda dlg=dialog:self._cancel_clipper(dlg))
+        dialog.preview_requested.connect(self.preview_clipper_candidate)
+        dialog.insert_requested.connect(
+            lambda candidates,dlg=dialog:self.insert_clipper_candidates(dlg,candidates))
+        dialog.markers_requested.connect(
+            lambda events,dlg=dialog:self.mark_clipper_events(dlg,events))
+        self._clipper_dialog=dialog
+        dialog.show()
+        dialog.raise_()
+        if missing:
+            dialog.status.setText('Alguns blocos sem transcrição foram ignorados: '+', '.join(missing[:5])+'.')
+
+    def _run_clipper(self,dialog,options):
+        context=getattr(dialog,'_clipper_context',None)
+        if not context:return
+        if self._ai_busy or self.active_task is not None:
+            QMessageBox.information(dialog,'Clipador Inteligente',
+                'Aguarde a tarefa da Batata Quente terminar antes de iniciar a análise.')
+            return
+        if not scope_is_still_valid(self.project,context['originals'],context['targets']):
+            QMessageBox.warning(dialog,'Alcance alterado',
+                'O projeto mudou desde que este Clipador foi aberto. Feche e abra a ferramenta novamente.')
+            return
+        selected=context['clips'];words=context['words']
+        dialog.set_busy(True)
+        def worker(progress,control=None,stage=None):
+            return analyze_clip_candidates(selected,words,options,control=control,
+                                           progress=progress,stage=stage)
+        def ready(result):
+            self._clipper_task=None
+            if self._closing or not dialog:return
+            if not scope_is_still_valid(self.project,context['originals'],context['targets']):
+                dialog.set_busy(False)
+                QMessageBox.warning(dialog,'Alcance alterado',
+                    'Você editou o material durante a análise. Nada foi inserido; reabra o Clipador para atualizar os tempos.')
+                return
+            dialog.set_results(result)
+            if context['missing']:
+                dialog.status.setText(dialog.status.text()+' Blocos sem transcrição ignorados: '+
+                    ', '.join(context['missing'][:5])+'.')
+        task=self._task(worker,ready,label='Clipador Inteligente · PCM e transcrição')
+        if task is None:
+            dialog.set_busy(False)
+            return
+        self._clipper_task=task
+        task.signals.cancelled.connect(lambda dlg=dialog:dlg.set_busy(False))
+        task.signals.error.connect(lambda _message,dlg=dialog:dlg.set_busy(False))
+        task.signals.finished.connect(
+            lambda current=task:setattr(self,'_clipper_task',None)
+            if self._clipper_task is current else None)
+
+    def _cancel_clipper(self,dialog):
+        task=self._clipper_task
+        if task is not None and self.active_task is task:
+            task.control.cancel()
+            dialog.status.setText('Cancelando a decodificação. Os itens concluídos no cache serão preservados.')
+
+    def preview_clipper_candidate(self,candidate):
+        clip=self.project.clip(str(candidate.get('clip_id','')))
+        if clip is None:
+            QMessageBox.information(self,'Prévia do candidato',
+                'O clipe de origem foi removido. Reabra o Clipador para atualizar os candidatos.')
+            return
+        start=float(candidate['source_start'])-clip.start
+        end=float(candidate['source_end'])-clip.start
+        if start<-.005 or end>clip.end-clip.start+.005:
+            QMessageBox.information(self,'Prévia do candidato',
+                'O intervalo mudou desde a análise. Reabra o Clipador para recalcular.')
+            return
+        self._preview_review_finding(clip.id,max(0.,start),max(0.,end))
+
+    def insert_clipper_candidates(self,dialog,candidates):
+        additions=[];next_positions={};skipped=[]
+        for candidate in sorted(candidates,key=lambda item:(item.get('clip_id',''),
+                                                             item.get('source_start',0.))):
+            source_clip=self.project.clip(str(candidate.get('clip_id','')))
+            if source_clip is None:
+                skipped.append(candidate.get('title','clipe ausente'));continue
+            start=float(candidate['source_start']);end=float(candidate['source_end'])
+            track=self.project.track(source_clip.track_id)
+            if (not track or track.locked or start<source_clip.start-.005 or
+                    end>source_clip.end+.005 or end-start<.05 or
+                    not Path(source_clip.source).is_file()):
+                skipped.append(source_clip.title or source_clip.id[:8]);continue
+            timeline_start=next_positions.get(source_clip.track_id)
+            if timeline_start is None:
+                timeline_start=max((clip.timeline_end for clip in self.project.clips
+                    if clip.track_id==source_clip.track_id),default=0.)
+            title=(source_clip.title or Path(source_clip.source).stem)[:90]
+            clone=dataclass_replace(source_clip,id=new_id(),start=start,end=end,
+                timeline_start=timeline_start,title=f'Clipador · {title}',keyframes={},
+                fade_in=0.,fade_out=0.,audio_fade_in=0.,audio_fade_out=0.,
+                group_id='',generated_by='clipper',caption_anchor_clip_id='',
+                caption_source_start=None,caption_source_end=None,caption_words=[],
+                caption_generated_text='')
+            additions.append(clone)
+            next_positions[source_clip.track_id]=timeline_start+clone.duration
+        if not additions:
+            QMessageBox.information(dialog,'Clipador Inteligente',
+                'Nenhum candidato pôde ser inserido. Confira se a origem ainda existe e a faixa está desbloqueada.')
+            if skipped:dialog.status.setText('Ignorados: '+', '.join(skipped[:5]))
+            return
+        self.snapshot()
+        for clip in additions:self.project.add_clip(clip)
+        ids=[clip.id for clip in additions]
+        self.refresh(ids)
+        self.statusBar().showMessage(
+            f'{len(additions)} candidato(s) adicionados ao fim da(s) faixa(s). Ctrl+Z desfaz a inserção.')
+        if skipped:
+            dialog.status.setText(f'{len(additions)} inserido(s); {len(skipped)} ignorado(s) por faixa bloqueada, '
+                                  'origem ausente ou intervalo alterado.')
+
+    def mark_clipper_events(self,dialog,events):
+        marks=[];seen=set()
+        for event in events:
+            clip=self.project.clip(str(event.get('clip_id','')))
+            if clip is None:continue
+            source_time=float(event.get('start_ms',0))/1000.
+            if source_time<clip.start or source_time>clip.end:continue
+            at=clip.timeline_start+(source_time-clip.start)/clip.speed
+            label=f"Clipador · energia +{float(event.get('rise_db',0)):.1f} dB"
+            key=(round(at,2),label)
+            if key in seen:continue
+            seen.add(key)
+            if any(round(float(marker.get('time',-1)),2)==key[0] and
+                   marker.get('label')==label for marker in self.project.markers):continue
+            marks.append((at,label))
+        if not marks:
+            QMessageBox.information(dialog,'Eventos acústicos',
+                'Não há eventos acústicos novos para marcar neste alcance.')
+            return
+        self.snapshot()
+        for at,label in marks:self.project.add_marker(at,label)
+        self.refresh(self.selected_ids)
+        self.statusBar().showMessage(
+            f'{len(marks)} evento(s) acústico(s) marcado(s) na timeline. Ctrl+Z desfaz os marcadores.')
 
     def execute_edit_queue(self, actions, optimize_silence=True):
         """Edição combinada 0.9: uma fila com IA sequencial e revisão única.

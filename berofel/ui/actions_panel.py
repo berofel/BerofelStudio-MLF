@@ -59,6 +59,7 @@ class ActionsPanel(QScrollArea):
         super().__init__(parent)
         self.on_execute = None
         self.on_execute_plan = None
+        self.on_clipper = None
         self.project = None
         self.selected_ids = []
         self.playhead = 0.0
@@ -185,6 +186,11 @@ class ActionsPanel(QScrollArea):
         box.addWidget(hint)
         line_single=QFrame();line_single.setFrameShape(QFrame.Shape.HLine)
         box.addWidget(line_single)
+        self.clipper_button=QPushButton('✂ Clipador Inteligente · sugerir destaques')
+        self.clipper_button.setToolTip('Reutiliza transcrição e waveform para ranquear intervalos. Não corta sem confirmação.')
+        self.clipper_button.clicked.connect(self._trigger_clipper)
+        box.addWidget(self.clipper_button)
+        self.action_buttons.append(self.clipper_button)
         box.addWidget(QLabel('AÇÕES AVULSAS · um clique, uma função'))
         for label,key in ACTIONS:
             button=QPushButton(label)
@@ -234,6 +240,8 @@ class ActionsPanel(QScrollArea):
             check.setText(labels[key] if compact else self._action_labels[key])
         self.batch_button.setText('▶ APLICAR EDIÇÃO' if compact
                                   else '▶ APLICAR EDIÇÃO · executar fila')
+        self.clipper_button.setText('✂ Clipador Inteligente' if compact else
+                                    '✂ Clipador Inteligente · sugerir destaques')
         self.manual_text.setMinimumHeight(64 if compact else 85)
 
     def checked_actions(self):
@@ -270,6 +278,10 @@ class ActionsPanel(QScrollArea):
     def _trigger(self, action):
         if self._busy:return
         if self.on_execute:self.on_execute(action)
+
+    def _trigger_clipper(self):
+        if not self._busy and self.on_clipper:
+            self.on_clipper()
 
     def spec(self) -> ScopeSpec:
         return ScopeSpec(mode=self.scope.currentData(),

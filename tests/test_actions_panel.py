@@ -16,6 +16,7 @@ try:
                                    QMessageBox, QToolButton, QAbstractScrollArea)
     from berofel import __version__
     from berofel.ui.actions_panel import ActionsPanel, parse_timecode,format_timecode
+    from berofel.ui.clipper_dialog import ClipperDialog
     from berofel.ui.narration_panel import NarrationPanel
     from berofel.ui.window import MainWindow, SuggestionsDialog
     from berofel.core.project import Project,Clip
@@ -60,6 +61,120 @@ class ActionsUITests(unittest.TestCase):
         panel.end.setText('00:00:05')
         self.assertIn('00:00:03',panel.summary.text())
         panel.close()
+
+    def test_clipper_button_opens_callback_and_dialog_keeps_options_explicit(self):
+        panel=ActionsPanel()
+        calls=[]
+        panel.on_clipper=lambda:calls.append('open')
+        panel.clipper_button.click()
+        self.assertEqual(calls,['open'])
+        dialog=ClipperDialog()
+        self.assertEqual(dialog.options().min_seconds,15.)
+        self.assertEqual(dialog.options().max_seconds,60.)
+        candidate={'id':'candidate-1','clip_id':'clip-1','title':'Teste',
+            'source_start':1.,'source_end':8.,'duration':7.,'score':74.,
+            'text':'Uma fala de teste.','reasons':['Fecha em limite de frase'],
+            'warnings':[],'events':[],'audio_available':False,'checked':False,
+            'start_ms':1000,'end_ms':8000,'min_duration_ms':3000,'max_duration_ms':10000,
+            'start_choices':[{'ms':900,'word':'A'}, {'ms':1000,'word':'Uma'},
+                             {'ms':1100,'word':'fala'}],
+            'end_choices':[{'ms':7900,'word':'teste'}, {'ms':8000,'word':'teste.'},
+                           {'ms':8100,'word':'final'}],
+            'word_spans':[{'start_ms':900,'end_ms':1000,'text':'A'},
+                          {'start_ms':1000,'end_ms':2000,'text':'Uma'},
+                          {'start_ms':2000,'end_ms':3000,'text':'fala'},
+                          {'start_ms':3000,'end_ms':4500,'text':'de'},
+                          {'start_ms':4500,'end_ms':6000,'text':'teste.'}]}
+        dialog.set_results({'candidates':[candidate],'events':[],'stats':{}})
+        self.assertEqual(dialog.selected_candidates(),[])
+        dialog.select_all.click()
+        self.assertEqual(dialog.selected_candidates()[0]['id'],'candidate-1')
+        dialog.start_boundary.setCurrentIndex(dialog.start_boundary.findData(1100))
+        adjusted=dialog.selected_candidates()[0]
+        self.assertEqual(adjusted['source_start'],1.1)
+        self.assertTrue(adjusted['score_adjusted'])
+        self.assertTrue(any('nota original não foi recalculada' in warning
+                            for warning in adjusted['warnings']))
+        previews=[];dialog.preview_requested.connect(previews.append)
+        dialog.table.selectRow(0);dialog.preview_button.click()
+        self.assertEqual(previews[0]['id'],'candidate-1')
+        dialog.close();panel.close()
+
+    def test_clipador_inserts_selected_source_interval_non_destructively_with_undo(self):
+        import wave
+        from berofel.core.project import Clip
+        win=MainWindow()
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_insert_') as folder:
+            source=Path(folder)/'source.wav'
+            with wave.open(str(source),'wb') as audio:
+                audio.setnchannels(1);audio.setsampwidth(2);audio.setframerate(16000)
+                audio.writeframes(b'\x00\x00'*16000*10)
+            original=win.project.add_clip(Clip(str(source),0.,10.,kind='audio',
+                track_id=win.project.tracks[-1].id,timeline_start=2.))
+            original_bounds=(original.start,original.end,original.timeline_start)
+            win.refresh([original.id])
+            dialog=ClipperDialog(win)
+            candidate={'clip_id':original.id,'title':original.title,
+                'source_start':2.,'source_end':5.,'score':80.}
+            win.insert_clipper_candidates(dialog,[candidate])
+            self.assertEqual(len(win.project.clips),2)
+            inserted=next(clip for clip in win.project.clips if clip.id!=original.id)
+            self.assertEqual((original.start,original.end,original.timeline_start),original_bounds)
+            self.assertEqual((inserted.start,inserted.end),(2.,5.))
+            self.assertAlmostEqual(inserted.timeline_start,12.)
+            self.assertEqual(inserted.generated_by,'clipper')
+            win.undo()
+            self.assertEqual(len(win.project.clips),1)
+            dialog.close();win.close()
+
+    def test_clipador_event_markers_map_source_time_to_timeline_and_undo(self):
+        from berofel.core.project import Clip
+        win=MainWindow()
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_marker_') as folder:
+            source=Path(folder)/'source.wav';source.write_bytes(b'fake')
+            clip=win.project.add_clip(Clip(str(source),10.,20.,kind='audio',speed=2.,
+                track_id=win.project.tracks[-1].id,timeline_start=3.))
+            win.refresh([clip.id])
+            dialog=ClipperDialog(win)
+            win.mark_clipper_events(dialog,[{'clip_id':clip.id,'start_ms':12000,
+                                             'rise_db':8.5}])
+            self.assertEqual(len(win.project.markers),1)
+            self.assertAlmostEqual(win.project.markers[0]['time'],4.)
+            self.assertIn('energia +8.5 dB',win.project.markers[0]['label'])
+            win.undo()
+            self.assertEqual(win.project.markers,[])
+            dialog.close();win.close()
+
+    def test_clipador_ui_reuses_saved_transcript_and_dispatches_background_task(self):
+        from unittest.mock import patch
+        from berofel.core.project import Clip
+        win=MainWindow()
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_ui_flow_') as folder:
+            source=Path(folder)/'talk.wav'
+            source.write_bytes(b'audio fixture')
+            clip=win.project.add_clip(Clip(str(source),0.,6.,kind='audio',
+                track_id=win.project.tracks[-1].id))
+            from tests.test_clipper import transcript
+            words=transcript(source,count=48,step=.1)
+            win.project.transcripts=words
+            win.refresh([clip.id])
+            win.open_clipper()
+            dialog=win._clipper_dialog
+            self.assertIsNotNone(dialog)
+            dialog.minimum.setValue(3);dialog.maximum.setValue(5)
+            with patch('berofel.ui.window.analyze_clip_candidates',return_value={
+                    'clips':[],'candidates':[],'events':[],
+                    'stats':{'elapsed_seconds':.01,'cache_hits':0,'cache_misses':0,
+                             'decoded_seconds':0.,'candidate_count':0,'rss_mb':None}}) as analyze:
+                dialog._analyze()
+                deadline=time.monotonic()+5
+                while time.monotonic()<deadline and dialog.cancel_button.isEnabled():
+                    QTest.qWait(25)
+            self.assertFalse(dialog.cancel_button.isEnabled(),dialog.status.text())
+            analyze.assert_called_once()
+            self.assertEqual(analyze.call_args.args[0][0].id,clip.id)
+            self.assertEqual(analyze.call_args.args[1],words)
+            dialog.close();win.close()
 
     def test_custom_voice_panel_explains_one_time_model_activation(self):
         panel=NarrationPanel()
