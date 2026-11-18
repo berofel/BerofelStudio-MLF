@@ -28,3 +28,11 @@ Registros de decisões confirmadas pelo código atual. Uma decisão não substit
 - **Consequências:** o worker Qwen não recebe mídia nem timestamps; os cortes continuam sugestões desmarcadas até aprovação. O modelo pode analisar contexto com sobreposição sem reprocessar áudio.
 - **Evidência:** `services/ai_pipeline.py::qwen_removal_interval`, `services/ai_worker.py::_qwen_prompt`, `docs/FLUXO_QWEN_TEXTO_E_TIMESTAMPS.md`.
 - **Limite:** resultado sintético demonstra transporte/JSON e não prova precisão semântica em vídeos reais.
+
+## ADR-004 — Pocket TTS local, preparação explícita e migração condicionada
+
+- **Estado:** Aceita para a linha 0.10.0-alpha.1; migração ainda incompleta.
+- **Decisão:** novas configurações de clonagem usam Pocket TTS. O worker de inferência opera apenas com cache local e falha claramente quando o checkpoint de clonagem não existe. Download e validação ficam no autorizador explícito, que respeita a autorização/termos do Hugging Face. Preferências Qwen preexistentes e os arquivos dos usuários não são apagados durante esta etapa.
+- **Motivo:** o modelo e o processamento são locais; a rede serve apenas para obter o checkpoint gated na primeira configuração. Uma chamada escondida durante a geração contradiz o requisito offline e pode travar o editor em rede bloqueada.
+- **Evidência:** `services/pocket_tts_worker.py::require_local_voice_cloning_weights`, `_offline_model_access`, `scripts/preparar_modelo_pocket.py`, `AUTORIZAR_POCKET_TTS.bat`; síntese de catálogo offline passou, mas o teste de clonagem pessoal não concluiu porque o checkpoint não está no cache e não há sessão HF autenticada.
+- **Limite:** não remover Qwen3-TTS nem declarar a migração concluída até validar clonagem Pocket local com pesos completos, WAV/MP4 e projeto/timeline no Windows. O binário Rust standalone oficial ainda não foi executado ou comparado com o backend Python instalado.
