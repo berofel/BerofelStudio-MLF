@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QDoubleSpinBox,
-    QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton, QSpinBox,
+from PySide6.QtWidgets import (QAbstractItemView, QDialog,
+    QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout)
+from .wheel_controls import (WheelGuardComboBox as QComboBox,
+    WheelGuardDoubleSpinBox as QDoubleSpinBox, WheelGuardSpinBox as QSpinBox)
 
 from berofel.services.clipper import ClipperOptions
 

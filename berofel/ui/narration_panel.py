@@ -6,10 +6,12 @@ import subprocess
 
 from PySide6.QtCore import QUrl, QTimer, QSettings, Qt
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QComboBox, QTextEdit,
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QTextEdit,
                                QPushButton, QCheckBox, QFileDialog, QLineEdit, QHBoxLayout,
-                               QMessageBox, QScrollArea, QSlider, QDoubleSpinBox, QInputDialog,
+                               QMessageBox, QScrollArea, QInputDialog,
                                QGroupBox)
+from .wheel_controls import (WheelGuardComboBox as QComboBox,
+    WheelGuardDoubleSpinBox as QDoubleSpinBox, WheelGuardSlider as QSlider)
 
 from berofel.services.pocket_tts_service import LANGUAGES, VOICE_PRESETS, NarrationRequest, preset_voice
 from berofel.services.voice_dsp import VOICE_EQ_PRESETS, clip_voice_eq
@@ -71,7 +73,7 @@ class NarrationPanel(QScrollArea):
         self.choose_sample = choose
         self.authorized = QCheckBox('Confirmo autorização expressa para clonar esta voz.')
         layout.addWidget(self.authorized)
-        self.activate_cloning = QPushButton('🔐 Ativar clonagem de voz…')
+        self.activate_cloning = QPushButton('🔐 Preparar clonagem local…')
         self.activate_cloning.clicked.connect(self._activate_cloning)
         layout.addWidget(self.activate_cloning)
         self.clone_status = QLabel('')
@@ -509,10 +511,11 @@ class NarrationPanel(QScrollArea):
         selected = self.voice.currentData()
         if custom:
             self.license_note.setText(
-                'Clonagem requer ativação única dos pesos: aceite os termos em '
+                'A amostra e a síntese são processadas no seu PC. Para a primeira clonagem, baixe uma vez '
+                'os pesos oficiais e aceite os termos em '
                 '<a href="https://huggingface.co/kyutai/pocket-tts">Hugging Face · Pocket TTS</a>, '
-                'depois execute <b>AUTORIZAR_POCKET_TTS.bat</b> na pasta do editor. '
-                'O app confirma quando a clonagem estiver disponível. Use somente sua voz '
+                'depois execute <b>AUTORIZAR_POCKET_TTS.bat</b>. Com os pesos em cache, a geração funciona '
+                'offline, sem enviar sua gravação. O app confirma a capacidade real do encoder. Use somente sua voz '
                 'ou uma amostra com autorização expressa.' )
         elif selected == 'rafael':
             self.license_note.setText('Preset oficial português (Kyutai). A amostra não é redistribuída no ZIP.')
@@ -579,7 +582,7 @@ class NarrationPanel(QScrollArea):
         self._clone_activation_process=None
         self.activate_cloning.setEnabled(True)
         if return_code==0:
-            self._set_clone_status('Clonagem ativada e validada: o encoder aceitou uma amostra sintética. Selecione sua gravação autorizada e gere a narração.')
+            self._set_clone_status('Clonagem local ativada: o encoder aceitou uma amostra sintética. Selecione sua gravação autorizada; o perfil de voz será guardado no cache local para reutilização.')
         else:
             log_path=getattr(self,'_clone_activation_log',None)
             try:

@@ -3,8 +3,9 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QScrollArea, QWidget, QVBoxLayout, QHBoxLayout,
-    QBoxLayout, QSizePolicy, QLabel, QComboBox, QLineEdit, QPushButton,
+    QBoxLayout, QSizePolicy, QLabel, QLineEdit, QPushButton,
     QTextEdit, QFrame, QCheckBox)
+from .wheel_controls import WheelGuardComboBox as QComboBox
 
 from berofel.services.action_scope import ScopeSpec, resolve_scope, scope_summary
 from berofel.services.batch_editing import plan_actions

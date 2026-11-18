@@ -12,7 +12,7 @@ from berofel.services.pocket_tts_service import (NarrationRequest, generate_narr
     persistent_folder, preset_voice, validate_request, VOICE_PRESETS,
     _prune_tts_cache, _tts_cache_limit_bytes)
 from berofel.services.pocket_tts_worker import (create_voice_prompt_state,
-    load_model_for_request,prepare_audio_prompt,require_voice_cloning,
+    create_or_load_voice_state,load_model_for_request,prepare_audio_prompt,require_voice_cloning,
     run as run_pocket_tts_worker)
 
 
@@ -207,7 +207,8 @@ class PocketTTSOfflineTests(unittest.TestCase):
                     return FakeAudio()
 
             model=FakeCloneModel()
-            with patch('berofel.services.pocket_tts_worker.load_model_for_request',
+            with patch.dict(os.environ,{'BEROFEL_VOICE_STATE_CACHE':str(root/'voice_cache')}), \
+                 patch('berofel.services.pocket_tts_worker.load_model_for_request',
                        return_value=model) as load_model:
                 run_pocket_tts_worker(str(request_file),str(result_file))
 
@@ -306,6 +307,51 @@ class PocketTTSOfflineTests(unittest.TestCase):
         voice,cleanup=prepare_audio_prompt('my_voice.safetensors','unused.wav')
         self.assertEqual(voice,'my_voice.safetensors')
         self.assertIsNone(cleanup)
+
+    def test_personal_voice_state_is_cached_locally_and_invalidated_by_source_bytes(self):
+        import sys
+        from types import ModuleType
+        with tempfile.TemporaryDirectory(prefix='bfs_local_voice_state_') as folder:
+            root=Path(folder);sample=root/'rafael_reference.wav';sample.write_bytes(b'voice A')
+            cache=root/'local_cache';encoded=[];normalized=[];saved=[]
+            class Model:
+                def get_state_for_audio_prompt(self,path,truncate=False):
+                    if str(path).endswith('.safetensors'):
+                        return ('loaded',Path(path).read_bytes())
+                    encoded.append((path,truncate));return {'state':'generated'}
+            fake_package=ModuleType('pocket_tts')
+            def export(state,path):
+                saved.append(state);Path(path).write_bytes(b'local-state')
+            fake_package.export_model_state=export
+            with patch.dict(os.environ,{'BEROFEL_VOICE_STATE_CACHE':str(cache)}), \
+                 patch('berofel.services.pocket_tts_worker._model_voice_fingerprint',
+                       return_value={'version':'fixture','weights':'local'}), \
+                 patch('berofel.services.pocket_tts_worker.prepare_audio_prompt',
+                       side_effect=lambda voice,target:(normalized.append((voice,target)) or (voice,None))), \
+                 patch.dict(sys.modules,{'pocket_tts':fake_package}):
+                model=Model()
+                first=create_or_load_voice_state(model,str(sample),'portuguese')
+                second=create_or_load_voice_state(model,str(sample),'portuguese')
+                self.assertEqual((first,second[0]),({'state':'generated'},'loaded'))
+                self.assertEqual(len(encoded),1)
+                self.assertEqual(len(normalized),1)
+                self.assertEqual(len(saved),1)
+                sample.write_bytes(b'voice B')
+                third=create_or_load_voice_state(model,str(sample),'portuguese')
+                self.assertEqual(third,{'state':'generated'})
+                self.assertEqual(len(encoded),2)
+            self.assertEqual(sample.read_bytes(),b'voice B')
+            self.assertEqual(len(list(cache.glob('*.safetensors'))),2)
+
+    def test_safetensors_personal_voice_still_requires_clone_enabled_weights(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_local_voice_state_') as folder:
+            profile=Path(folder)/'profile.safetensors';profile.write_bytes(b'state')
+            from pocket_tts import TTSModel
+            with patch('berofel.services.pocket_tts_worker.ensure_voice_cloning_weights') as preflight, \
+                 patch.object(TTSModel,'load_model',return_value=SimpleNamespace(has_voice_cloning=True)):
+                load_model_for_request({'voice':str(profile),'consent':True,
+                                        'language':'portuguese'})
+            preflight.assert_called_once_with('portuguese')
 
     def test_builtin_rafael_voice_id_is_not_treated_as_a_file_path(self):
         voice,cleanup=prepare_audio_prompt('rafael','unused.wav')

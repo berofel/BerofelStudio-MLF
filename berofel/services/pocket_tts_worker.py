@@ -1,10 +1,13 @@
 """Processo isolado que carrega/descarta Pocket TTS sem afetar memória do Qt."""
 from __future__ import annotations
 import json
+import hashlib
+import importlib.metadata
 import os
 from pathlib import Path
 import subprocess
 import sys
+import re
 
 from .pocket_tts_service import _PRECOMPUTED_VOICE_IDS
 
@@ -44,24 +47,26 @@ def ensure_voice_cloning_weights(language='portuguese'):
 def require_voice_cloning(model, request: dict) -> None:
     """Fail clearly when HF silently supplied the catalog-only model weights."""
     voice = str(request.get('voice', ''))
-    is_precomputed = (Path(voice).suffix.lower() == '.safetensors' or
-                      voice == 'rafael' or voice in _PRECOMPUTED_VOICE_IDS)
+    is_precomputed = _is_catalog_voice(voice)
     # Fail closed when a future/older Pocket TTS API does not expose the
     # capability flag. Do not claim cloning support based on an unknown API.
     if request.get('consent') and not is_precomputed and not bool(
             getattr(model, 'has_voice_cloning', False)):
         raise RuntimeError(
-            'Este Pocket TTS está usando pesos somente de catálogo; clonagem de áudio está desativada. '
-            'Abra https://huggingface.co/kyutai/pocket-tts, entre na conta e aceite os termos do modelo. '
-            'Depois execute AUTORIZAR_POCKET_TTS.bat para baixar/preparar os pesos de clonagem e gere novamente.'
+            'Este Pocket TTS está usando pesos somente de catálogo; clonagem de áudio está desativada até preparar os pesos oficiais completos. '
+            'Eles precisam ser autorizados e baixados uma vez. Depois ficam no PC e a amostra/geração são processadas localmente. '
+            'Execute AUTORIZAR_POCKET_TTS.bat para preparar o modelo e tente novamente.'
         )
+
+
+def _is_catalog_voice(voice: str) -> bool:
+    return voice == 'rafael' or voice in _PRECOMPUTED_VOICE_IDS
 
 
 def load_model_for_request(request: dict):
     """Preflight personal-audio checkpoints before loading TTS or its fallback."""
     voice=str(request.get('voice',''))
-    is_precomputed=(Path(voice).suffix.lower()=='.safetensors' or voice=='rafael' or
-                    voice in _PRECOMPUTED_VOICE_IDS)
+    is_precomputed=_is_catalog_voice(voice)
     if request.get('consent') and not is_precomputed:
         ensure_voice_cloning_weights(request.get('language','portuguese'))
     from pocket_tts import TTSModel
@@ -117,19 +122,111 @@ def create_voice_prompt_state(model,voice_prompt):
     return model.get_state_for_audio_prompt(voice_prompt,truncate=True)
 
 
+def voice_state_cache_dir() -> Path:
+    """Private per-user cache; cloned voice embeddings never enter the project."""
+    override=os.environ.get('BEROFEL_VOICE_STATE_CACHE')
+    if override:
+        return Path(override).expanduser().resolve()
+    local=os.environ.get('LOCALAPPDATA')
+    return (Path(local)/'BFS'/'cache'/'pocket_tts'/'voice_states' if local else
+            Path.home()/'.cache'/'BerofelStudio'/'pocket_tts'/'voice_states')
+
+
+def _model_voice_fingerprint(language: str) -> dict:
+    try:
+        version=importlib.metadata.version('pocket-tts')
+    except importlib.metadata.PackageNotFoundError:
+        version='not-installed'
+    try:
+        from pocket_tts.utils.config import CONFIGS_DIR,load_config
+        config=load_config(CONFIGS_DIR/f'{language}.yaml')
+        weights=str(config.weights_path or '')
+    except Exception:
+        weights='unknown'
+    return {'package':version,'language':language,'weights':weights}
+
+
+def _voice_state_key(source: Path,language: str) -> str:
+    content=hashlib.sha256()
+    with source.open('rb') as stream:
+        for block in iter(lambda:stream.read(1024*1024),b''):
+            content.update(block)
+    identity={'source_sha256':content.hexdigest(),
+        'model':_model_voice_fingerprint(language),'truncate_seconds':30,
+        'schema':1}
+    return hashlib.sha256(json.dumps(identity,sort_keys=True,separators=(',',':'))
+        .encode('utf-8')).hexdigest()
+
+
+def _prune_voice_state_cache(folder: Path,protected: Path | None=None):
+    """Bound only our hash-named state files, keeping biometric cache local."""
+    try:limit=max(64,int(os.environ.get('BEROFEL_VOICE_STATE_CACHE_MAX_MB','512')))*1024*1024
+    except ValueError:limit=512*1024*1024
+    if not folder.is_dir() or folder.is_symlink():return
+    valid=re.compile(r'^[0-9a-f]{64}\.safetensors$')
+    files=[];total=0
+    for path in folder.iterdir():
+        if path.is_symlink() or not path.is_file() or not valid.fullmatch(path.name):continue
+        try:
+            stat=path.stat();files.append((path,stat.st_size,stat.st_mtime_ns));total+=stat.st_size
+        except OSError:continue
+    protected_path=Path(protected).resolve() if protected else None
+    for path,size,_mtime in sorted(files,key=lambda item:item[2]):
+        if total<=limit:break
+        try:
+            if protected_path and path.resolve()==protected_path:continue
+            path.unlink();total-=size
+        except OSError:continue
+
+
+def create_or_load_voice_state(model,voice: str,language: str):
+    """Encode an authorized local reference once, then reuse its local latent state."""
+    if _is_catalog_voice(voice) or voice.startswith('hf://'):
+        return create_voice_prompt_state(model,voice)
+    source=Path(voice)
+    if source.suffix.lower()=='.safetensors':
+        if not source.is_file():raise FileNotFoundError(f'Perfil vocal não encontrado: {source}')
+        return create_voice_prompt_state(model,str(source))
+    if not source.is_file():raise FileNotFoundError(f'Amostra da voz não encontrada: {source}')
+    folder=voice_state_cache_dir()
+    key=_voice_state_key(source,language)
+    cached=folder/f'{key}.safetensors'
+    if cached.is_file():
+        try:return create_voice_prompt_state(model,str(cached))
+        except Exception:
+            # Only delete this app-owned hash file; the reference remains untouched.
+            try:cached.unlink(missing_ok=True)
+            except OSError:pass
+    voice_prompt,prepared=prepare_audio_prompt(
+        str(source),folder/f'{key}.reference.wav')
+    try:
+        state=create_voice_prompt_state(model,voice_prompt)
+        try:
+            from pocket_tts import export_model_state
+            folder.mkdir(parents=True,exist_ok=True)
+            temporary=cached.with_name(cached.name+f'.{os.getpid()}.tmp')
+            try:
+                export_model_state(state,temporary)
+                os.replace(temporary,cached)
+                _prune_voice_state_cache(folder,protected=cached)
+            finally:
+                temporary.unlink(missing_ok=True)
+        except Exception:
+            # A read-only cache must not prevent this one synthesis from completing.
+            pass
+        return state
+    finally:
+        if prepared is not None:prepared.unlink(missing_ok=True)
+
+
 def run(request_path: str, result_path: str):
     request = json.loads(Path(request_path).read_text(encoding='utf-8'))
     from scipy.io import wavfile
     import numpy as np
 
     model = load_model_for_request(request)
-    voice_prompt, prepared = prepare_audio_prompt(
-        request['voice'], Path(request['output']).with_name('voice_conditioning.wav'))
-    try:
-        voice_state = create_voice_prompt_state(model,voice_prompt)
-    finally:
-        if prepared is not None:
-            prepared.unlink(missing_ok=True)
+    voice_state = create_or_load_voice_state(model,request['voice'],
+                                             request.get('language','portuguese'))
     audio = model.generate_audio(voice_state, request['text'])
     samples = audio.detach().cpu().numpy().reshape(-1)
     if not samples.size:

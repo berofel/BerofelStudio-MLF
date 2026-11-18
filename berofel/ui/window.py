@@ -14,11 +14,14 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QPushButton,
     QLabel, QFileDialog, QMessageBox, QScrollArea,
-    QSlider, QCheckBox, QDialog, QDialogButtonBox, QProgressBar, QDoubleSpinBox,
-    QSpinBox, QComboBox, QToolButton, QFrame, QStackedWidget, QLineEdit,
+    QCheckBox, QDialog, QDialogButtonBox, QProgressBar,
+    QToolButton, QFrame, QStackedWidget, QLineEdit,
     QTextEdit, QSizePolicy, QInputDialog, QApplication, QTabWidget,
     QAbstractScrollArea
 )
+from .wheel_controls import (WheelGuardComboBox as QComboBox,
+    WheelGuardDoubleSpinBox as QDoubleSpinBox, WheelGuardSpinBox as QSpinBox,
+    WheelGuardSlider as QSlider)
 from berofel import __version__
 from berofel.core.project import Project, Clip, new_id
 from berofel.core.motion import ANIMATABLE, value_at, put_keyframe, delete_keyframe

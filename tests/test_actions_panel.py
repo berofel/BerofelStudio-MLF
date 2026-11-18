@@ -46,6 +46,45 @@ class ActionsUITests(unittest.TestCase):
     def tearDownClass(cls):
         cls.settings_dir.cleanup()
 
+    def test_mouse_wheel_scroll_does_not_change_unfocused_controls(self):
+        from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
+        from berofel.ui.wheel_controls import (WheelGuardComboBox,
+            WheelGuardDoubleSpinBox, WheelGuardSlider)
+        area=QScrollArea();area.resize(260,120)
+        content=QWidget();layout=QVBoxLayout(content)
+        combo=WheelGuardComboBox();combo.addItems(['Português','English','Español'])
+        spin=WheelGuardDoubleSpinBox();spin.setRange(0,10);spin.setValue(5)
+        slider=WheelGuardSlider(Qt.Orientation.Horizontal);slider.setRange(0,10);slider.setValue(5)
+        layout.addWidget(combo);layout.addWidget(spin);layout.addWidget(slider)
+        for _ in range(12):layout.addWidget(QLabel('rolagem'))
+        area.setWidget(content);area.show();self.app.processEvents()
+        area.setFocus();combo.clearFocus();spin.clearFocus();slider.clearFocus()
+        self.assertFalse(combo.hasFocus())
+        area.verticalScrollBar().setValue(0)
+        event=QWheelEvent(QPointF(10,10),QPointF(10,10),QPoint(0,0),QPoint(0,-120),
+            Qt.MouseButton.NoButton,Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.ScrollUpdate,False)
+        before_index=combo.currentIndex()
+        before_spin=spin.value();before_slider=slider.value()
+        QApplication.sendEvent(combo,event)
+        self.assertEqual(combo.currentIndex(),before_index)
+        QApplication.sendEvent(spin,QWheelEvent(QPointF(10,10),QPointF(10,10),
+            QPoint(0,0),QPoint(0,-120),Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,Qt.ScrollPhase.ScrollUpdate,False))
+        QApplication.sendEvent(slider,QWheelEvent(QPointF(10,10),QPointF(10,10),
+            QPoint(0,0),QPoint(0,-120),Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,Qt.ScrollPhase.ScrollUpdate,False))
+        self.assertEqual((combo.currentIndex(),spin.value(),slider.value()),
+                         (before_index,before_spin,before_slider))
+        self.assertGreater(area.verticalScrollBar().value(),0,
+                           'A roda deve continuar rolando o painel sob o controle.')
+        combo.setFocus();self.app.processEvents()
+        QApplication.sendEvent(combo,QWheelEvent(QPointF(10,10),QPointF(10,10),
+            QPoint(0,0),QPoint(0,-120),Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,Qt.ScrollPhase.ScrollUpdate,False))
+        self.assertNotEqual(combo.currentIndex(),before_index)
+        area.close()
+
     def test_timecode_and_scope_ui(self):
         self.assertEqual(parse_timecode('01:02:03.500'),3723.5)
         self.assertEqual(parse_timecode('00:12.5'),12.5)

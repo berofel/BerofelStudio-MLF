@@ -6,10 +6,11 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal, QUrl
 from PySide6.QtGui import QColor, QDrag
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QPushButton, QScrollArea, QStackedWidget, QToolButton, QVBoxLayout,
     QWidget,
 )
+from .wheel_controls import WheelGuardComboBox as QComboBox
 
 
 class MediaList(QListWidget):

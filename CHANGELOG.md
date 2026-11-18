@@ -1,5 +1,7 @@
 ## 0.10.0-alpha.1 — atualização local de prévia
 
+- Combos, controles numéricos e sliders da interface não mudam ao rolar um painel: a roda só altera o controle focado e, sem foco, segue para o painel rolável pai.
+- O worker Pocket TTS distingue IDs de catálogo de perfis `.safetensors` do usuário, mantém a validação dos pesos de clonagem e salva o estado derivado da amostra em cache privado local para não reexecutar o encoder a cada narração. O áudio de referência não é alterado nem enviado. O gate/aceite dos pesos oficiais continua obrigatório na primeira preparação.
 - Adiciona o Clipador Inteligente: ranking revisável de candidatos a partir de transcrições existentes e análise PCM streaming (RMS/pico/clipping), cache persistente, prévia pelo monitor do editor, ajuste de limites em palavras e inserção/marcadores reversíveis na timeline. Não dispara Whisper/Qwen nem modifica arquivos-fonte. Detalhes e limitações em `docs/CLIPADOR_INTELIGENTE.md`.
 - Testes sintéticos cobrem limites e timestamps absolutos, cache/invalidação, fallback sem áudio/transcrição, sinais RMS/eventos, streaming FFmpeg, integração do botão/diálogo, fila em segundo plano, inserção com Undo e marcadores com Undo.
 - A ativação de clonagem agora pré-verifica o checkpoint completo antes do carregamento do Pocket TTS, que poderia cair silenciosamente nos pesos de catálogo. O diagnóstico separa bloqueio de rede/firewall de falta de login/aceite HF e aparece no próprio painel; não registra token nem envia áudio de usuário.

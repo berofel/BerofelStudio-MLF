@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider, QWidget,
+    QHBoxLayout, QLabel, QPushButton, QWidget,
 )
+from .wheel_controls import (WheelGuardComboBox as QComboBox,
+    WheelGuardSlider as QSlider)
 
 
 def format_frame_time(seconds,fps,compact=False):
