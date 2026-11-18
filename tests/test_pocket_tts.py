@@ -17,6 +17,27 @@ from berofel.services.pocket_tts_worker import (create_voice_prompt_state,
 
 
 class PocketTTSOfflineTests(unittest.TestCase):
+    def test_ai_workers_emit_utf8_even_when_windows_console_is_cp1252(self):
+        import subprocess
+        import sys
+        root=Path(__file__).resolve().parents[1]
+        env=os.environ.copy()
+        env['PYTHONIOENCODING']='cp1252'
+        for module,arguments,expected in (
+            ('berofel.services.ai_worker',['extract',str(root/'não_existe_á.json'),
+                                           str(root/'saida.json')],1),
+            ('berofel.services.pocket_tts_worker',
+             [str(root/'não_existe_á.json'),str(root/'resultado.json')],1),
+        ):
+            with self.subTest(module=module):
+                result=subprocess.run([sys.executable,'-m',module,*arguments],
+                    cwd=str(root),env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                    timeout=30,check=False)
+                self.assertEqual(result.returncode,expected,result.stderr)
+                error=result.stderr.decode('utf-8')
+                self.assertIn('não_existe_á.json',error)
+                self.assertNotIn('UnicodeEncodeError',error)
+
     def test_voice_authorizer_uses_the_installed_hf_cli(self):
         script=Path(__file__).resolve().parents[1]/'AUTORIZAR_POCKET_TTS.bat'
         content=script.read_text(encoding='utf-8')

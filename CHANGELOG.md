@@ -6,6 +6,7 @@
 - Checkpoints de lote Qwen agora incluem fingerprint do texto do lote, IDs, modelo e executáveis llama.cpp (caminho/tamanho/data), versão do prompt, ação e parâmetros de inferência; texto editado com IDs preservados ou atualização do backend não reutilizam uma decisão antiga. O cache da etapa também inclui esses fingerprints.
 - O diagnóstico do autorizador Pocket TTS reconhece `LocalEntryNotFoundError` como ausência de checkpoint no cache quando o Hub não está acessível, orientando a verificar rede antes de repetir a ativação.
 - Workers do Pocket TTS/Qwen e o teste de narração configuram stdout/stderr para UTF-8 no Windows, evitando que erros com acentos virem `UnicodeEncodeError` quando o console usa CP1252.
+- Adiciona regressão automatizada que inicializa os dois workers sob CP1252 e confirma que mensagens de erro com caracteres acentuados continuam em UTF-8.
 - O instalador Pocket TTS agora informa separadamente se a clonagem pessoal foi validada ou se apenas as vozes de catálogo estão prontas, evitando mensagem de sucesso ambígua quando os pesos gated não estão disponíveis.
 - Adiciona teste de integração do worker de clonagem com amostra e modelo sintéticos, verificando normalização mono/24 kHz, condicionamento, geração do WAV final, remoção do temporário e preservação byte a byte da referência original.
 - `TESTAR_POCKET_TTS.bat --clone` agora executa, após a autorização dos pesos, uma síntese real pela rota de voz personalizada com referência sintética local, sem gravação pessoal.
