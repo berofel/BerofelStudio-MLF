@@ -144,10 +144,33 @@ try {
     Step '5/7 - FFmpeg e FFprobe (progresso e fonte alternativa)'
     & (Join-Path $PSScriptRoot 'instalar_ffmpeg.ps1') -ProjectRoot $root
 
-    Step '6/7 - Autoteste do motor FFmpeg (dois videos + audio)'
+    Step '6/8 - Autoteste do motor FFmpeg (dois videos + audio)'
     Run-Python @((Join-Path $root 'scripts\diagnostico_motor.py'))
 
-    Step '7/7 - Verificacao final da instalacao principal'
+    Step '7/8 - Pocket TTS local (instalacao automatica)'
+    Write-Host 'O Pocket TTS usa PyTorch para CPU e pode exigir um download grande. O instalador baixara apenas dependencias ausentes.'
+    $installPocket = Read-Host 'Instalar Pocket TTS agora? [S/n]'
+    if ($installPocket -notmatch '^(n|nao|no)$') {
+        $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'instalar_pocket.ps1') -CatalogOnly
+        if ($LASTEXITCODE -ne 0) { throw 'A instalacao local do Pocket TTS falhou. Consulte o log proprio do Pocket TTS.' }
+
+        $prepareClone = Read-Host 'Voce ja aceitou os termos oficiais e quer baixar agora os pesos gated de clonagem? [s/N]'
+        if ($prepareClone -match '^(s|sim|y|yes)$') {
+            Write-Host 'Preparando e validando os pesos de clonagem com uma amostra sintetica, sem usar audio pessoal...'
+            & $venvExe (Join-Path $PSScriptRoot 'preparar_modelo_pocket.py')
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning 'A clonagem pessoal nao foi ativada. As vozes locais de catalogo continuam instaladas.'
+                Write-Host 'Depois aceite os termos/verifique a rede e use Narracao > Preparar clonagem local.' -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host 'Clonagem pessoal ficou pendente de autorizacao; a sintese local de catalogo foi instalada.' -ForegroundColor Yellow
+        }
+    } else {
+        Write-Warning 'Pocket TTS foi adiado. Execute instalar_dependencias.bat novamente para inclui-lo.'
+    }
+
+    Step '8/8 - Verificacao final da instalacao principal'
     Run-Python @((Join-Path $root 'scripts\verificar.py'),'--strict','--quick','--editor-only')
     $env:BEROFEL_APP_ROOT = $root
     $versionCode = 'import os,sys;sys.path.insert(0,os.environ["BEROFEL_APP_ROOT"]);from berofel import __version__;print(__version__)'
@@ -156,7 +179,8 @@ try {
         throw 'Instalacao terminou, mas nao foi possivel ler a versao do codigo local.'
     }
     Write-Host "`n[OK] Instalacao do BerofelStudio $($appVersion.Trim()) concluida." -ForegroundColor Green
-    Write-Host 'IAs: INSTALAR_TODAS_AS_IAS.bat (Whisper + Silero + Qwen + Pocket TTS).'
+    Write-Host 'Pocket TTS local: preparado pelo instalador principal quando confirmado.'
+    Write-Host 'Whisper/Silero e Qwen de compatibilidade: INSTALAR_TODAS_AS_IAS.bat.'
     Write-Host "Abra: $root\ABRIR_BEROFELSTUDIO.bat" -ForegroundColor Green
     Write-Host "Log de instalacao: $logFile"
     exit 0

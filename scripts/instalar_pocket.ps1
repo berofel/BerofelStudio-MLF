@@ -1,4 +1,5 @@
-# Complementa o ambiente existente; executado também por INSTALAR_TODAS_AS_IAS.bat.
+param([switch]$CatalogOnly)
+# Complementa o ambiente existente; executado também pelo instalador principal.
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 $venvDir=Join-Path $env:LOCALAPPDATA 'BFS\venv'
@@ -22,20 +23,28 @@ try {
     Write-Host '[3/4] Verificando biblioteca e dependencias...' -ForegroundColor Cyan
     & $venv (Join-Path $PSScriptRoot 'testar_pocket.py')
     if ($LASTEXITCODE -ne 0) { throw 'Pocket TTS nao pode ser importado.' }
-    Write-Host '[4/4] Preparando modelo portugues. Pode exigir aceite pessoal no Hugging Face...' -ForegroundColor Cyan
-    $cloneReady=$true
-    & $venv (Join-Path $PSScriptRoot 'preparar_modelo_pocket.py')
-    if ($LASTEXITCODE -ne 0) {
-        $cloneReady=$false
-        Write-Warning 'Biblioteca instalada; os pesos ainda precisam de autorizacao no site da Kyutai/Hugging Face.'
-        Write-Host 'Acesse: https://huggingface.co/kyutai/pocket-tts' -ForegroundColor Yellow
-        Write-Host 'Depois execute AUTORIZAR_POCKET_TTS.bat. O editor continua funcional.' -ForegroundColor Yellow
+    Write-Host '[4/4] Validacao de clonagem pessoal...' -ForegroundColor Cyan
+    $cloneReady=$false
+    if ($CatalogOnly) {
+        Write-Host 'Preparacao dos pesos gated adiada para o fluxo explicito no editor.' -ForegroundColor Yellow
+    } else {
+        Write-Host 'Esta etapa pode baixar o checkpoint oficial de clonagem, que e grande e requer aceite dos termos.' -ForegroundColor Yellow
+        $accepted=Read-Host 'Voce ja aceitou os termos em https://huggingface.co/kyutai/pocket-tts e quer preparar a clonagem agora? [s/N]'
+        if ($accepted -match '^(s|sim|y|yes)$') {
+            $cloneReady=$true
+            & $venv (Join-Path $PSScriptRoot 'preparar_modelo_pocket.py')
+            if ($LASTEXITCODE -ne 0) {
+                $cloneReady=$false
+                Write-Warning 'Os pesos nao foram validados; voz de catalogo continua instalada.'
+                Write-Host 'Tente depois em Narracao > Preparar clonagem local ou AUTORIZAR_POCKET_TTS.bat.' -ForegroundColor Yellow
+            }
+        }
     }
     if ($cloneReady) {
         Write-Host '[OK] Pocket TTS e clonagem de voz foram validados. Veja TESTAR_POCKET_TTS.bat.' -ForegroundColor Green
     } else {
         Write-Host '[OK] Pocket TTS de catalogo instalado; clonagem de voz pessoal continua pendente.' -ForegroundColor Yellow
-        Write-Host 'Conclua o login/aceite e execute AUTORIZAR_POCKET_TTS.bat quando o Hugging Face estiver acessivel.' -ForegroundColor Yellow
+        Write-Host 'Conclua o aceite e use Narração > Preparar clonagem local (ou AUTORIZAR_POCKET_TTS.bat) quando o Hugging Face estiver acessivel.' -ForegroundColor Yellow
     }
     exit 0
 } catch {

@@ -1,5 +1,11 @@
 ## 0.10.0-alpha.1 — atualização local de prévia
 
+- O instalador principal agora oferece configurar o Pocket TTS local no mesmo fluxo. A confirmação antecede a instalação das dependências CPU potencialmente grandes; os pesos gated de clonagem só são baixados após confirmação separada de que os termos oficiais já foram aceitos. O BAT dedicado continua disponível para instalação/reparo.
+- O worker Pocket TTS passou a operar em modo estritamente offline durante a geração: pesos ausentes causam instrução clara para ativar a clonagem, sem download de rede implícito. A aquisição continua no autorizador explícito.
+- Pocket TTS agora é a opção inicial para novas configurações de clonagem; preferências Qwen já salvas são mantidas durante a etapa de transição.
+- `docs/CLONAGEM_LOCAL_POCKET_TTS.md` registra a auditoria do backend Qwen no ZIP antigo, a diferença entre síntese local e download inicial de modelo e o estado real de validação da clonagem pessoal.
+- Ações IA e Narração saem do cabeçalho e permanecem na navegação lateral; Legendas abre um inspector fixo à direita, sem diálogo de texto, com lista de cues, edição, estilo, posição e presets.
+- O instalador Qwen prepara `imageio-ffmpeg` também no ambiente Python isolado, necessário ao worker para normalizar a amostra de referência; a validação de TorchAudio respeita a ABI estável oficial.
 - Qwen agora tenta uma vez novamente quando a resposta não segue o JSON esperado, reconhece alguns formatos equivalentes e mantém a validação estrita dos IDs de palavra. Se continuar inválida, reporta lote/tamanho sem expor a transcrição; outras etapas permanecem preservadas.
 
 - Adiciona motor opcional Qwen3-TTS Base 0.6B para clonar voz de referência localmente em CPU, sem login ou gate; download inicial explícito, ambiente Python isolado e botão de preparação na aba Narração.
@@ -316,3 +322,5 @@
   reaproveitamento do cache após interrupção e segurança da exportação.
 - Interface Qt e comportamento com modelos reais continuam precisando de
   validação num computador Windows com o programa instalado.
+- O diagnóstico de ativação do Pocket TTS agora separa checkpoint ausente no cache sem acesso ao Hub, conexão bloqueada, token inválido, aceite gated pendente, arquivo/revisão incorreta e transferência interrompida.
+- A ativação iniciada pelo painel de Narração não abre mais CMD: pede confirmação dos termos e token mascarado no editor, envia o token ao worker local por stdin e não o coloca em argumentos ou logs.

@@ -12,8 +12,9 @@ ACESSO E ATUALIZAÇÕES:
   editor. O instalador para e informa PIDs se o venv ainda estiver ativo; não
   encerra processos automaticamente.
 
-Instalação: instalar_dependencias.bat > ABRIR_BEROFELSTUDIO.bat
-IAs opcionais: INSTALAR_TODAS_AS_IAS.bat (pesos baixados separadamente)
+Instalação: instalar_dependencias.bat (oferece Pocket TTS local) > ABRIR_BEROFELSTUDIO.bat
+Whisper/Silero e Qwen de compatibilidade: INSTALAR_TODAS_AS_IAS.bat
+Pocket TTS avulso/reparo: INSTALAR_POCKET_TTS.bat
 Testes: TESTAR_EDITOR_08.bat e TESTAR_INTERFACE_ACOES_08.bat
 
 1. Importe a mídia, coloque na timeline. Nada é analisado automaticamente.

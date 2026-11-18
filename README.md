@@ -66,8 +66,8 @@ Cada botão executa apenas o necessário:
 ## Instalação em Windows 10/11 x64
 
 1. Extraia em `C:\BerofelStudio` (ou pasta curta equivalente).
-2. Execute **`instalar_dependencias.bat`** e depois **`ABRIR_BEROFELSTUDIO.bat`**.
-3. Para usar IA de verdade, execute **`INSTALAR_TODAS_AS_IAS.bat`** (Whisper/Silero, Qwen/llama.cpp e Pocket TTS com modelos baixados pela internet), ou instale os componentes opcionalmente em separado. Pode haver autorização manual para os pesos do Pocket TTS no Hugging Face.
+2. Execute **`instalar_dependencias.bat`**. O instalador prepara o editor e oferece instalar o Pocket TTS local (PyTorch/CPU, download potencialmente grande); a opção recomendada é `S`. A clonagem pessoal só baixa pesos gated após outra confirmação, e somente se você já aceitou os termos oficiais.
+3. Execute **`ABRIR_BEROFELSTUDIO.bat`**. Para Whisper/Silero e Qwen de compatibilidade, execute **`INSTALAR_TODAS_AS_IAS.bat`**; Pocket TTS também pode ser instalado separadamente por `INSTALAR_POCKET_TTS.bat`.
 4. Execute **`TESTAR_EDITOR_08.bat`** e **`TESTAR_INTERFACE_ACOES_08.bat`**. Veja **`docs/TESTE_EDITOR_08.md`** para roteiro completo.
 
 Modelos não vêm embutidos no arquivo ZIP; arquivos e transcrições podem continuar no cache `%LOCALAPPDATA%\BFS\cache\ai` caso já use uma versão anterior com o mesmo ambiente. A instalação dos modelos não é obrigatória para abrir o editor ou criar legendas manuais.
@@ -305,12 +305,12 @@ já transcritos e clicar em **Trazer transcrição dos blocos selecionados**.
 
 ### Instalação no Windows 10/11 x64
 
-1. `instalar_dependencias.bat` — estrutura do editor e FFmpeg.
-2. `INSTALAR_TODAS_AS_IAS.bat` — Faster-Whisper, Silero, Qwen e Pocket TTS,
-   **ou** `INSTALAR_POCKET_TTS.bat` — apenas Pocket TTS com suas dependências.
-3. Se aparecer aviso sobre acesso aos pesos, abra
+1. `instalar_dependencias.bat` — estrutura do editor, FFmpeg e oferta para instalar Pocket TTS local; os downloads grandes são informados e confirmados antes de começar.
+2. `INSTALAR_TODAS_AS_IAS.bat` — Faster-Whisper, Silero e Qwen de compatibilidade,
+   **ou** `INSTALAR_POCKET_TTS.bat` — reparar/instalar somente Pocket TTS.
+3. Se você já aceitou os termos e quer clonar a voz durante a instalação, confirme o download dos pesos. Caso contrário, abra
    https://huggingface.co/kyutai/pocket-tts, entre na conta e aceite os termos;
-   depois execute `AUTORIZAR_POCKET_TTS.bat` para autenticar e concluir o cache.
+   depois use Narração → **Preparar clonagem local** para autenticar e concluir o cache sem abrir CMD; `AUTORIZAR_POCKET_TTS.bat` segue disponível como alternativa manual.
    **Este passo pessoal não pode ser executado pelo instalador em seu nome.**
 4. `TESTAR_POCKET_TTS.bat` — testa geração WAV pela voz pronta. Depois de autorizar os pesos completos, use `TESTAR_POCKET_TTS.bat --clone` para testar clonagem com uma referência sintética, sem selecionar uma gravação pessoal.
 5. `ABRIR_BEROFELSTUDIO.bat` — use a aba Narração à direita.
@@ -330,7 +330,7 @@ não foi testada fisicamente neste ambiente; verifique os arquivos de `logs/`.
   `kyutai/tts-voices/voice-zero`. O instalador pré-carrega os estados
   precomputados em português quando a rede permite, sem baixar WAVs de
   referência; outros idiomas podem buscar o estado no primeiro uso.
-- **Voz clonada:** aceite primeiro os termos de acesso ao modelo em `huggingface.co/kyutai/pocket-tts` e execute `AUTORIZAR_POCKET_TTS.bat`; o app confirma se os pesos de clonagem foram realmente liberados. Depois selecione um WAV/MP3/FLAC/OGG/M4A autorizado, confirme a permissão expressa e gere. Formatos comprimidos são convertidos com FFmpeg numa cópia temporária; seu áudio original não é alterado. A qualidade depende da amostra. Não use voz de terceiros
+- **Voz clonada:** aceite primeiro os termos de acesso ao modelo em `huggingface.co/kyutai/pocket-tts` e use Narração → **Preparar clonagem local**; o token é solicitado em campo mascarado e o app confirma se os pesos foram liberados. `AUTORIZAR_POCKET_TTS.bat` segue como alternativa manual. Depois selecione um WAV/MP3/FLAC/OGG/M4A autorizado, confirme a permissão expressa e gere. Formatos comprimidos são convertidos com FFmpeg numa cópia temporária; seu áudio original não é alterado. A qualidade depende da amostra. Não use voz de terceiros
   sem permissão, nem apresente síntese como gravação verdadeira de outra pessoa.
 - **Gerar e adicionar:** cria um WAV separado e uma camada `Narração` na timeline,
   na posição do cursor, sem alterar ou substituir o áudio original.

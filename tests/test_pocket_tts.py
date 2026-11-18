@@ -90,6 +90,15 @@ class PocketTTSOfflineTests(unittest.TestCase):
                       content)
         self.assertIn('Pocket TTS e clonagem de voz foram validados.',content)
 
+    def test_main_windows_installer_offers_pocket_and_gated_clone_with_explicit_confirmation(self):
+        root=Path(__file__).resolve().parents[1]
+        content=(root/'scripts'/'instalar_windows.ps1').read_text(encoding='utf-8')
+        self.assertIn("'instalar_pocket.ps1') -CatalogOnly",content)
+        self.assertIn('Instalar Pocket TTS agora? [S/n]',content)
+        self.assertIn('ja aceitou os termos oficiais',content.lower())
+        self.assertIn("'preparar_modelo_pocket.py')",content)
+        self.assertIn('instalar_dependencias.bat novamente para inclui-lo',content)
+
     def test_authorization_probe_exercises_audio_prompt_encoder_without_user_audio(self):
         import wave
         from scripts.preparar_modelo_pocket import validate_voice_cloning_pipeline

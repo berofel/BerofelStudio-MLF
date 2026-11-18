@@ -69,3 +69,29 @@ O BAT de stress imprime a versão atual a partir de `berofel.__version__` e desc
 
 
 
+# Revalidação da clonagem Pocket TTS — 18/11/2026
+
+| Verificação | Resultado |
+|---|---|
+| `python -m unittest tests.test_pocket_tts -v` | 33 testes passaram, incluindo preflight local-only, modo offline temporário no worker, restauração das variáveis do processo, cache de estado de voz e preservação da amostra-fonte. |
+| `python scripts/testar_pocket.py --real --offline` | Passou no PC: Pocket TTS 4.0.1 / PyTorch 2.15.0+cpu gerou WAV de voz de catálogo em português (3,36 s) e reutilizou o cache na segunda geração. Confirma síntese local de catálogo, não clonagem pessoal. |
+| `python scripts/testar_pocket.py --clone --offline` | Falhou de forma esperada e sem acesso à rede: o checkpoint completo de clonagem não está no cache. A mensagem pede `AUTORIZAR_POCKET_TTS.bat`; o encoder pessoal continua sem validação real nesta máquina. |
+| Estado HF/modelo | `hf auth whoami`: sem login. `TTSModel.load_model(language='portuguese').has_voice_cloning`: `False`. Tentativa de HEAD anterior foi bloqueada por `WinError 10013`. Isso explica a falha atual. |
+| `python -m unittest tests.test_actions_panel -v` | 66 testes Qt passaram, incluindo o padrão Pocket TTS para novas configurações de clonagem e a preservação de preferências Qwen já existentes. |
+| `python -m unittest discover -s tests -v` (18/11/2026, venv Windows, Qt offscreen) | 317 testes passaram em 52,9 s, incluindo interface de ativação sem CMD/token em argumentos e correção do contrato do timecode compacto. Não executa inferência de clone com modelo gated autorizado. |
+
+## Fluxo de instalação Pocket TTS — 18/11/2026
+
+| Verificação | Resultado |
+|---|---|
+| PowerShell 5.1 parser: `scripts/instalar_windows.ps1` e `scripts/instalar_pocket.ps1` | Passou sem erros sintáticos. |
+| Testes focados do instalador | 2 passaram: o instalador principal encaminha Pocket TTS ao fluxo de instalação e pede confirmação separada antes de tentar os pesos gated. |
+| `python -m unittest discover -s tests -v` (venv Windows, Qt offscreen) | 318 testes passaram em 53,4 s. |
+| Instalação Windows limpa com downloads | Não executada; os arquivos de instalação e modelos são grandes e o teste acionaria mudanças no ambiente Windows. A instalação real continua exigindo validação no computador-alvo. |
+
+O instalador principal agora oferece o runtime Pocket CPU no primeiro fluxo; o BAT dedicado segue para reparo/instalação avulsa. A preparação do checkpoint de clonagem não ocorre sem confirmação do usuário de que os termos já foram aceitos. A clonagem real permanece pendente porque o usuário precisa liberar os pesos gated na própria conta e a sessão local anterior não conseguiu acessar o Hugging Face.
+
+Revalidação atual: `python -m unittest tests.test_pocket_tts -v` — 36 testes passaram. Inclui o worker de ativação sem eco de token e a garantia estática de que o botão no editor usa processo oculto, stdin e campo mascarado em vez de CMD/argumentos. O classificador separa cache ausente/offline, rede bloqueada, falta de autenticação, token rejeitado, autorização gated e download interrompido. Isso valida fluxo e diagnóstico; não substitui o acesso ao checkpoint nem uma clonagem real.
+
+O worker de inferência foi alterado para validar o checkpoint somente no cache e executar com `HF_HUB_OFFLINE=1` e `TRANSFORMERS_OFFLINE=1`, restaurando as variáveis no encerramento do processamento. O download continua restrito à instalação/ativação explícita. Não se removeu Qwen, pois o critério definido para migrar/remover o fallback é validar a clonagem Pocket com sucesso primeiro.
+
