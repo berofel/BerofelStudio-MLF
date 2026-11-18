@@ -1,0 +1,64 @@
+__pycache__/
+*.pyc
+.venv/
+logs/
+tools/
+*.autosave
+
+# Runtime builds, local caches and model weights (install/download on demand).
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+/build/
+/dist/
+/cache/
+/models/
+*.gguf
+*.safetensors
+*.pt
+*.pth
+*.onnx
+*.part
+*.tmp
+
+# Secrets and local credentials.
+.env
+.env.*
+!.env.example
+*.token
+credentials.json
+secrets.json
+
+# User projects, media, exports and local install archives.
+*.bfs
+*.bfsproject
+*.bfsproj
+*.autosave
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.aac
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.srt
+*.ass
+*.vtt
+exports/
+Projetos/
+*_arquivos/
+*.zip
+/BerofelStudio_0_9_1_Patch_Whisper_Qwen/
+
+# These public sample WAVs are optional at runtime; the installer uses
+# precomputed voice IDs and the CC0 license does not require bundling audio.
+assets/voices/*.wav
+
+# Windows/macOS/editor noise.
+Thumbs.db
+Desktop.ini
+.DS_Store

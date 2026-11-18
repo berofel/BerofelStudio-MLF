@@ -1,0 +1,22 @@
+test_cannot_overwrite_original (test_export_multitrack.ExportTests.test_cannot_overwrite_original) ... ok
+test_export_emits_progress_and_no_leftover (test_export_multitrack.ExportTests.test_export_emits_progress_and_no_leftover) ... ok
+test_mix_with_overlays (test_export_multitrack.ExportTests.test_mix_with_overlays) ... ok
+test_same_time_audio_video_and_z_order (test_preview_pipeline.PreviewTests.test_same_time_audio_video_and_z_order) ... ok
+test_seek_and_silent_timeline (test_preview_pipeline.PreviewTests.test_seek_and_silent_timeline) ... ok
+test_window_preserves_source_times (test_preview_pipeline.PreviewTests.test_window_preserves_source_times) ... ok
+test_hidden_image_no_longer_covers_video (test_preview_pipeline.VideoOnlyPreviewTests.test_hidden_image_no_longer_covers_video) ... ok
+test_image_without_audio_has_silent_pcm (test_preview_pipeline.VideoOnlyPreviewTests.test_image_without_audio_has_silent_pcm) ... ok
+test_layer_order_and_arbitrary_types (test_project.ProjectTests.test_layer_order_and_arbitrary_types) ... ok
+test_middle_selected_only (test_project.ProjectTests.test_middle_selected_only) ... ok
+test_migration_v1 (test_project.ProjectTests.test_migration_v1) ... ok
+test_save_load_v2 (test_project.ProjectTests.test_save_load_v2) ... ok
+test_split_preserves_track_and_timeline_position (test_project.ProjectTests.test_split_preserves_track_and_timeline_position) ... ok
+test_trim_extension (test_project.ProjectTests.test_trim_extension) ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 2.830s
+
+OK
+[OK] Dois vídeos em camadas simultâneas (azul sobre vermelho)
+[OK] Áudio da composição recebido: 134400 bytes; pico 6055
+[OK] Quadros BGRA recebidos: 9

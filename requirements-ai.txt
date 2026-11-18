@@ -1,0 +1,5 @@
+# Opcional: transcrição/repetições. Não bloqueia a abertura do editor.
+# Silero ONNX via faster-whisper; Pocket TTS tem instalador separado, incluso em INSTALAR_TODAS_AS_IAS.bat.
+numpy>=1.26,<3
+faster-whisper>=1.1,<2
+onnxruntime>=1.20,<2

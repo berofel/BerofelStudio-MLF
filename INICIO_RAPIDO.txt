@@ -1,0 +1,111 @@
+BEROFELSTUDIO STUDIO 0.10.0-alpha.1 — INTERFACE LEGADA, MOTOR ATUAL
+
+ACESSO E ATUALIZAÇÕES:
+- Na raiz BerofelStudio_codigo_base_alpha, abra ABRIR_BEROFELSTUDIO.bat.
+- Esse atalho procura instalações válidas abaixo da pasta BerofelStudio, lê
+  berofel\__init__.py e escolhe a maior versão antes de iniciar o editor.
+- O caminho do módulo carregado aparece na validação para confirmar a origem.
+- Para validar sem abrir a janela, execute ABRIR_BEROFELSTUDIO.bat --verificar.
+- Continue usando o atalho da raiz após atualizações; ele também encontra uma
+  nova pasta de versão sem depender do sufixo do nome da pasta.
+- Antes de instalar/atualizar dependências, FFmpeg ou IAs opcionais, feche o
+  editor. O instalador para e informa PIDs se o venv ainda estiver ativo; não
+  encerra processos automaticamente.
+
+Instalação: instalar_dependencias.bat > ABRIR_BEROFELSTUDIO.bat
+IAs opcionais: INSTALAR_TODAS_AS_IAS.bat (pesos baixados separadamente)
+Testes: TESTAR_EDITOR_08.bat e TESTAR_INTERFACE_ACOES_08.bat
+
+1. Importe a mídia, coloque na timeline. Nada é analisado automaticamente.
+2. Clique ⚙ Ações IA no topo ou na aba da direita.
+3. Escolha um bloco, vários, faixa, intervalo In/Out ou projeto.
+4. Confira a contagem e duração exibidas antes de executar.
+5. Clique só na ação desejada: transcrição, legenda, silêncios, vícios, contexto, SRT ou narração.
+6. Para legenda sem IA: escreva no campo manual e clique criar.
+7. Para narrar qualquer texto sem transcrição: abra a aba 🎙 Narração.
+8. Para cancelar/pausar, use o painel Batata Quente na faixa entre prévia e timeline.
+9. Na revisão, marque cortes individualmente ou clique “Aprovar e aplicar TODOS”; o Undo continua disponível.
+
+Veja docs/TESTE_EDITOR_08.md para testes e README.md para detalhes.
+
+--- HISTÓRICO ---
+
+BEROFELSTUDIO STUDIO 0.7 — WINDOWS 10/11 64-BIT
+
+INSTALACAO DO EDITOR:
+1. EXTRAIA o ZIP para C:\BerofelStudio (ou outra pasta curta).
+2. Execute instalar_dependencias.bat.
+3. Execute ABRIR_BEROFELSTUDIO.bat.
+
+INSTALACAO DAS IAS (opcional, uma unica vez com internet):
+4. Execute INSTALAR_IA_OPCIONAL.bat para Silero VAD ONNX + Faster-Whisper Base.
+5. Execute INSTALAR_QWEN_OPCIONAL.bat para Qwen3 1.7B + llama-cli.
+   Ou use INSTALAR_TODAS_AS_IAS.bat para instalar os tres conjuntos, incluindo Pocket TTS.
+   O Qwen pede download grande de aproximadamente 1,3 GB.
+
+ANALISE DE BLOCOS:
+- Importe o video, arraste para a timeline e selecione um ou varios blocos.
+- Clique no menu "☰ Ferramentas".
+- "Transcrever IA" salva a transcricao sem fazer cortes.
+- "Silero + Whisper" identifica pausas e mostra as propostas para REVISAO.
+- "Qwen Contextual" analisa o texto da fala e sugere remocoes (requer Qwen).
+- "Exportar SRT" sincroniza legendas com a timeline ATUAL, depois dos cortes.
+- O video original nunca e alterado e nenhuma analise roda automaticamente.
+
+BATATA QUENTE:
+Cada etapa roda num processo Python separado, grava JSON no cache, fecha
+com seu modelo descarregado e entrega ao seguinte.
+Cache: %LOCALAPPDATA%\BFS\cache\ai (no Windows).
+Nao ha limite fixo de 4 GB: o modelo/threads pode usar hardware disponivel.
+
+VALIDACAO:
+- TESTAR_BATATA_QUENTE.bat (teste real dos processos/Whisper/Silero e cache).
+- TESTAR_PREVIEW_WINDOWS.bat (preview Qt fisico no seu Windows).
+- VERIFICAR_MOTOR.bat (render do FFmpeg).
+- Testes de qualidade em voz brasileira e Qwen ainda dependem de rodar no Windows.
+
+PROBLEMAS:
+- Consulte docs/VALIDACAO_IA.md e README.md.
+- Uma falha na IA nao impede importar, editar e exportar videos.
+
+[STUDIO 0.5] NARRAÇÃO POCKET TTS
+1. instalar_dependencias.bat
+2. INSTALAR_TODAS_AS_IAS.bat (ou INSTALAR_POCKET_TTS.bat para só voz)
+3. Se o modelo solicitar autorização: aceite os termos em
+   https://huggingface.co/kyutai/pocket-tts e execute AUTORIZAR_POCKET_TTS.bat
+4. TESTAR_POCKET_TTS.bat (gera WAV real de teste)
+5. ABRIR_BEROFELSTUDIO.bat > botão/aba NARRAÇÃO à direita
+Vozes CC0: Bill, Caro, Peter e Stuart (download automático); Rafael oficial PT.
+Texto livre, clonagem autorizada, salvar WAV, ouvir e inserir na timeline.
+
+[STUDIO 0.6] PAINEL DE PROCESSOS BATATA QUENTE
+- Área FIXA entre a prévia e a timeline: nenhuma sobreposição.
+- Mostra etapa, percentual real por trechos/etapas, tempo ativo,
+  previsão aproximada (quando disponível), CPU, RAM e processos.
+- Botão PAUSAR: suspende subprocessos; CONTINUAR: retoma de onde parou.
+- Botão CANCELAR: encerra a tarefa e os subprocessos, sem apagar cache concluído.
+- Botão DETALHES e COPIAR RELATÓRIO para compartilhar feedback.
+- Uma tarefa pesada de cada vez (Batata Quente 2.0).
+- Se já usa 0.5, execute instalar_dependencias.bat de novo para instalar psutil.
+- TESTAR_PROCESSOS.bat testa suspensão, cancelamento e reaproveitamento do cache.
+- Pausar um processo não é o mesmo que pausar a reprodução: o vídeo tem Play/Pause.
+
+[STUDIO 0.7] EDICAO PRECISA E DESEMPENHO
+- Imã/S: encaixar blocos nas bordas, marcadores e cursor.
+- Ctrl+Shift+Delete: apagar com fechamento de espaco (ripple) nas faixas afetadas.
+- M: inserir marcador; F: ajustar timeline; Ctrl+roda: zoom da timeline.
+- B: lamina; V: selecionar; Ctrl+K: dividir; Ctrl+clique: selecionar varios.
+- J/K/L: voltar 2 segundos / pausar / reproduzir.
+- Selecione video e em PROPRIEDADES ajuste velocidade 0,25x...10x.
+- PROPRIEDADES > KEYFRAMES: escolha parametro, curva e clique Adicionar.
+- Transicoes: selecione dois clipes vizinhos e acione Dissolvencia/slide/zoom.
+- Separar audio: cria faixa de audio vinculada; Ctrl+G agrupa blocos.
+- PROPRIEDADES: fades, recorte, brilho, contraste, saturacao, rotacao e limpeza de audio.
+- PREVIEW: arraste camada selecionada para reposicionar; Ctrl+roda redimensiona.
+- PROXY LEVE: selecione videos e clique o botao; faz MP4 leve via Batata Quente.
+  O proxy vale SOMENTE para preview; exportacao usa SEMPRE original.
+- Thumbnails e waveform sao gerados por demanda para a regiao visivel e vao ao cache.
+- TESTAR_EDITOR_07.bat executa testes de sincronizacao, FFmpeg, cache e proxies.
+
+OBSERVACAO: a interface no Windows e os modelos reais de IA ainda precisam
+ser testados no computador do usuario. A versao 0.7 e uma Alpha.

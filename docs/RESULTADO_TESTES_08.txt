@@ -1,0 +1,27 @@
+BerofelStudio Studio 0.8 — Resultado de validação (ambiente Linux do desenvolvimento)
+
+Comando: python -m unittest discover -s tests -v
+Total: 60 testes
+Aprovados: 57
+Ignorados: 3 (exigem PySide6/Qt indisponível no ambiente Linux de teste)
+Falhas: 0
+
+Exemplos de rotinas validadas:
+- Escopo um bloco, vários blocos em trilhas distintas, faixa inteira,
+  intervalo global In/Out, intervalo In/Out de uma faixa e projeto inteiro
+- Edição com velocidade 2x/10x e proteção dos limites de origem
+- Dependências específicas: só VAD; só Whisper; só Qwen se transcrição
+  válida; processamento em lote e cache persistente
+- Reaproveitamento de transcrição após divisão do bloco e invalidação
+  ao modificar a fonte
+- Evitar transcrição repetida do mesmo áudio em vídeo/faixa de áudio
+- Legendas automáticas e manuais, SRT filtrado por alcance, projeto salvo
+- Exportação real de um MP4 contendo legenda manual sobreposta
+- Prévia/exportação FFmpeg e controles pausa/cancelamento testados anteriormente
+
+Não foram executados aqui:
+- interface PySide6 em Windows real (3 testes Qt foram ignorados)
+- inferência com pesos reais do Silero / Faster-Whisper / Qwen / Pocket TTS
+- testes de carga de 80 min / RAM/CPU e aceleração GPU
+
+Execute TESTAR_EDITOR_08.bat no Windows para completar a validação.

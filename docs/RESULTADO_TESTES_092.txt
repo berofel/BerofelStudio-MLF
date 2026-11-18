@@ -1,0 +1,6 @@
+BerofelStudio 0.9.2 — testes locais
+Comando: python -m unittest discover -s tests -v
+79 testes encontrados, 75 aprovados, 4 ignorados (PySide6 não instalado neste ambiente).
+Inclui execução real de FFmpeg para áudio/vídeo em projeto cortado e exportação MP4
+com 65 blocos fragmentados, além de verificação de prévia com 300 cortes.
+A interface gráfica e a passagem automática entre janelas ainda requerem teste Windows.

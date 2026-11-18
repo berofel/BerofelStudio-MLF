@@ -1,0 +1,10 @@
+# Apenas o necessário para abrir, editar, pré-visualizar e exportar.
+# PySide6_Addons inclui Qt Widgets, Qt Multimedia e as dependências Qt.
+PySide6_Addons==6.12.0
+imageio-ffmpeg>=0.6,<1
+Pillow>=11,<13
+# Monitoramento de CPU/RAM e pausa/cancelamento da árvore de processos
+psutil>=6,<8
+# Live EQ during playback through FFmpeg azmq; the editor falls back to a
+# restarted preview when the bundled FFmpeg does not expose azmq.
+pyzmq>=26,<28
