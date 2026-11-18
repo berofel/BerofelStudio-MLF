@@ -31,7 +31,7 @@ class NarrationPanel(QScrollArea):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(9)
-        label = QLabel('🎙 NARRAÇÃO · POCKET TTS')
+        label = QLabel('🎙 NARRAÇÃO · VOZ LOCAL')
         label.setStyleSheet('color:#9cc7ff;font-weight:800;font-size:13px;')
         layout.addWidget(label)
         note = QLabel('Escreva qualquer texto — não precisa existir na transcrição. '
@@ -76,6 +76,22 @@ class NarrationPanel(QScrollArea):
         self.activate_cloning = QPushButton('🔐 Preparar clonagem local…')
         self.activate_cloning.clicked.connect(self._activate_cloning)
         layout.addWidget(self.activate_cloning)
+        layout.addWidget(QLabel('Motor para voz personalizada'))
+        self.clone_engine = QComboBox()
+        self.clone_engine.addItem('Qwen3-TTS local · CPU · baixar uma vez', 'qwen3-tts-local')
+        self.clone_engine.addItem('Pocket TTS · precisa de pesos autorizados', 'pocket-tts')
+        self.clone_engine.currentIndexChanged.connect(self._update_custom)
+        layout.addWidget(self.clone_engine)
+        self.reference_text = QLineEdit()
+        self.reference_text.setPlaceholderText('Texto falado na amostra (melhora a clonagem Qwen)')
+        layout.addWidget(self.reference_text)
+        self.install_qwen = QPushButton('⬇ Preparar Qwen3 local (download explícito)')
+        self.install_qwen.clicked.connect(self._install_qwen)
+        layout.addWidget(self.install_qwen)
+        self.qwen_status = QLabel('')
+        self.qwen_status.setWordWrap(True)
+        self.qwen_status.setStyleSheet('color:#8b9db3;font-size:11px;')
+        layout.addWidget(self.qwen_status)
         self.clone_status = QLabel('')
         self.clone_status.setWordWrap(True)
         self.clone_status.setStyleSheet('color:#8b9db3;font-size:11px;')
@@ -247,6 +263,11 @@ class NarrationPanel(QScrollArea):
         self.language.currentIndexChanged.connect(self._schedule_preferences_save)
         self.voice.currentIndexChanged.connect(self._schedule_preferences_save)
         self.sample_path.textChanged.connect(self._schedule_preferences_save)
+        self.clone_engine.currentIndexChanged.connect(self._schedule_preferences_save)
+        self.reference_text.textChanged.connect(self._schedule_preferences_save)
+        from berofel.services.qwen3_tts_local import is_ready as qwen_local_ready
+        if qwen_local_ready():
+            self.qwen_status.setText('Qwen3-TTS local pronto. As referências e gerações ficam no PC.')
         self.quantize.toggled.connect(self._schedule_preferences_save)
         self.name.textChanged.connect(self._schedule_preferences_save)
         self._update_custom()
@@ -479,6 +500,10 @@ class NarrationPanel(QScrollArea):
         language_index=self.language.findData(language)
         if language_index>=0:self.language.setCurrentIndex(language_index)
         self.sample_path.setText(str(settings.value('narration/sample_path','')))
+        engine=str(settings.value('narration/clone_engine','qwen3-tts-local'))
+        index=self.clone_engine.findData(engine)
+        if index>=0:self.clone_engine.setCurrentIndex(index)
+        self.reference_text.setText(str(settings.value('narration/reference_text','')))
         self.text.setPlainText(str(settings.value('narration/draft','')))
         self.name.setText(str(settings.value('narration/title','Narração')))
         self.quantize.setChecked(bool(settings.value('narration/quantize',False,type=bool)))
@@ -491,6 +516,8 @@ class NarrationPanel(QScrollArea):
         settings.setValue('narration/voice',self.voice.currentData() or 'rafael')
         settings.setValue('narration/language',self.language.currentData() or 'portuguese')
         settings.setValue('narration/sample_path',self.sample_path.text())
+        settings.setValue('narration/clone_engine',self.clone_engine.currentData())
+        settings.setValue('narration/reference_text',self.reference_text.text())
         settings.setValue('narration/draft',self.text.toPlainText())
         settings.setValue('narration/title',self.name.text())
         settings.setValue('narration/quantize',self.quantize.isChecked())
@@ -506,17 +533,24 @@ class NarrationPanel(QScrollArea):
         self.sample_path.setVisible(custom)
         self.choose_sample.setVisible(custom)
         self.authorized.setVisible(custom)
-        self.activate_cloning.setVisible(custom)
-        self.clone_status.setVisible(custom and bool(self.clone_status.text()))
+        qwen = custom and self.clone_engine.currentData() == 'qwen3-tts-local'
+        pocket_clone = custom and self.clone_engine.currentData() == 'pocket-tts'
+        self.activate_cloning.setVisible(pocket_clone)
+        self.clone_engine.setVisible(custom)
+        self.reference_text.setVisible(qwen)
+        self.install_qwen.setVisible(qwen)
+        self.qwen_status.setVisible(qwen and bool(self.qwen_status.text()))
+        self.quantize.setVisible(not qwen)
+        self.clone_status.setVisible(pocket_clone and bool(self.clone_status.text()))
         selected = self.voice.currentData()
         if custom:
-            self.license_note.setText(
-                'A amostra e a síntese são processadas no seu PC. Para a primeira clonagem, baixe uma vez '
-                'os pesos oficiais e aceite os termos em '
-                '<a href="https://huggingface.co/kyutai/pocket-tts">Hugging Face · Pocket TTS</a>, '
-                'depois execute <b>AUTORIZAR_POCKET_TTS.bat</b>. Com os pesos em cache, a geração funciona '
-                'offline, sem enviar sua gravação. O app confirma a capacidade real do encoder. Use somente sua voz '
-                'ou uma amostra com autorização expressa.' )
+            if qwen:
+                self.license_note.setText('Qwen3-TTS Base 0.6B: pesos públicos Apache-2.0; preparação baixa o modelo (~2,5 GB) e cria ambiente isolado. Depois, referência e síntese rodam localmente, sem enviar sua gravação. Forneça o texto exato da amostra para melhor resultado; sem ele, o modo só pelo vetor de voz pode reduzir a qualidade. Use somente voz autorizada.')
+            else:
+                self.license_note.setText(
+                    'Pocket TTS: a amostra e a síntese são processadas localmente, mas a clonagem pessoal exige aceitar os termos e obter os pesos oficiais em '
+                    '<a href="https://huggingface.co/kyutai/pocket-tts">Hugging Face · Pocket TTS</a>. '
+                    'Use AUTORIZAR_POCKET_TTS.bat. Confirme autorização expressa para a voz. Os pesos apenas de catálogo não clonam voz pessoal.')
         elif selected == 'rafael':
             self.license_note.setText('Preset oficial português (Kyutai). A amostra não é redistribuída no ZIP.')
         else:
@@ -558,6 +592,31 @@ class NarrationPanel(QScrollArea):
             self._clone_activation_process=None
             QMessageBox.warning(self,'Ativar clonagem',
                 f'Não foi possível abrir o autorizador. Execute AUTORIZAR_POCKET_TTS.bat manualmente.\n{exc}')
+
+    def _install_qwen(self):
+        from berofel.services.qwen3_tts_local import is_ready
+        if is_ready():
+            self.qwen_status.setText('Qwen3 local pronto. A referência e a síntese permanecem no PC.')
+            self.qwen_status.setVisible(True)
+            return
+        answer=QMessageBox.question(self,'Preparar clonagem local Qwen3',
+            'Será criado um ambiente Python isolado e baixados cerca de 2,5 GB de pesos públicos, além das dependências. É necessária internet apenas durante a preparação. A gravação escolhida não será enviada. Continuar?',
+            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer!=QMessageBox.StandardButton.Yes:return
+        app_root=Path(__file__).resolve().parents[2]
+        installer=app_root/'INSTALAR_QWEN3_TTS_LOCAL.bat'
+        if not installer.is_file():
+            QMessageBox.warning(self,'Qwen3 local',f'Instalador ausente: {installer}')
+            return
+        try:
+            self._qwen_install_process=subprocess.Popen(
+                ['cmd.exe','/d','/c','call',str(installer)],cwd=str(app_root),
+                creationflags=getattr(subprocess,'CREATE_NEW_CONSOLE',0))
+            self.qwen_status.setText('Instalação iniciada em console separado. Quando terminar, feche e reabra o BerofelStudio.')
+            self.qwen_status.setVisible(True)
+        except OSError as exc:
+            QMessageBox.warning(self,'Qwen3 local',f'Não foi possível iniciar o instalador: {exc}')
 
     def _set_clone_status(self,text):
         self.clone_status.setText(text)
@@ -605,11 +664,14 @@ class NarrationPanel(QScrollArea):
                                 'Para usar uma voz personalizada, confirme que possui autorização expressa.')
             return
         voice = self.sample_path.text().strip() if custom else preset_voice(self.voice.currentData())
+        engine=self.clone_engine.currentData() if custom else 'pocket-tts'
         req = NarrationRequest(text=self.text.toPlainText(), voice=voice,
                                language=self.language.currentData(),
                                consent=custom and self.authorized.isChecked(),
                                quantize=self.quantize.isChecked(),
-                               title=self.name.text().strip() or 'Narração')
+                               title=self.name.text().strip() or 'Narração',
+                               engine=engine,
+                               reference_text=self.reference_text.text().strip() if custom and engine=='qwen3-tts-local' else '')
         if self.on_generate:
             self.on_generate(req, add_to_timeline)
 

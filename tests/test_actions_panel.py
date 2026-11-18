@@ -218,6 +218,7 @@ class ActionsUITests(unittest.TestCase):
     def test_custom_voice_panel_explains_one_time_model_activation(self):
         panel=NarrationPanel()
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+        panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('pocket-tts'))
         self.assertFalse(panel.sample_path.isHidden())
         self.assertFalse(panel.activate_cloning.isHidden())
         self.assertIn('huggingface.co/kyutai/pocket-tts',panel.license_note.text())
@@ -250,6 +251,28 @@ class ActionsUITests(unittest.TestCase):
         self.assertTrue(panel.activate_cloning.isEnabled())
         panel.close()
 
+    def test_qwen_voice_clone_request_routes_locally_with_optional_reference_transcript(self):
+        panel=NarrationPanel()
+        panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+        panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
+        panel.sample_path.setText(r'C:\Audio\minha_voz.wav')
+        panel.authorized.setChecked(True)
+        panel.text.setPlainText('Olá, esta é uma narração de teste.')
+        panel.reference_text.setText('Este texto foi falado na gravação original.')
+        requests=[]
+        panel.on_generate=lambda request,insert:requests.append((request,insert))
+        panel._generate(False)
+        self.assertEqual(len(requests),1)
+        request,insert=requests[0]
+        self.assertEqual(request.engine,'qwen3-tts-local')
+        self.assertEqual(request.reference_text,'Este texto foi falado na gravação original.')
+        self.assertTrue(request.consent)
+        self.assertFalse(insert)
+        self.assertIn('Apache-2.0',panel.license_note.text())
+        self.assertTrue(panel.activate_cloning.isHidden())
+        self.assertFalse(panel.install_qwen.isHidden())
+        panel.close()
+
     def test_narration_draft_voice_and_sample_path_persist_but_consent_does_not(self):
         panel=NarrationPanel()
         panel.text.setPlainText('Meu roteiro salvo localmente.')
@@ -257,6 +280,8 @@ class ActionsUITests(unittest.TestCase):
         panel.language.setCurrentIndex(panel.language.findData('portuguese'))
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
         panel.sample_path.setText(r'C:\Audio\minha_voz.m4a')
+        panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
+        panel.reference_text.setText('Texto de referência persistido.')
         panel.quantize.setChecked(True)
         panel.authorized.setChecked(True)
         QTest.qWait(500)  # gravação automática depois que a edição fica ociosa
@@ -269,6 +294,8 @@ class ActionsUITests(unittest.TestCase):
         self.assertEqual(restored.name.text(),'Minha voz')
         self.assertEqual(restored.voice.currentData(),'__custom__')
         self.assertEqual(restored.sample_path.text(),r'C:\Audio\minha_voz.m4a')
+        self.assertEqual(restored.clone_engine.currentData(),'qwen3-tts-local')
+        self.assertEqual(restored.reference_text.text(),'Texto de referência persistido.')
         self.assertTrue(restored.quantize.isChecked())
         self.assertFalse(restored.authorized.isChecked())
         restored.close()

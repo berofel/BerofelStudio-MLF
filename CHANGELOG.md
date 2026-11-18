@@ -1,5 +1,9 @@
 ## 0.10.0-alpha.1 — atualização local de prévia
 
+- Adiciona motor opcional Qwen3-TTS Base 0.6B para clonar voz de referência localmente em CPU, sem login ou gate; download inicial explícito, ambiente Python isolado e botão de preparação na aba Narração.
+- A interface permite transcrever opcionalmente o áudio de referência para melhorar a clonagem, preserva a confirmação de autorização e separa essa rota da voz rápida de catálogo Pocket TTS.
+- Adiciona cache local por conteúdo, worker offline após a instalação, saída WAV durável e testes sintéticos de fluxo, cache e privacidade. Não baixou nem executou os pesos reais nesta sessão; desempenho/qualidade ficam pendentes de validação no PC após a preparação.
+
 - Combos, controles numéricos e sliders da interface não mudam ao rolar um painel: a roda só altera o controle focado e, sem foco, segue para o painel rolável pai.
 - O worker Pocket TTS distingue IDs de catálogo de perfis `.safetensors` do usuário, mantém a validação dos pesos de clonagem e salva o estado derivado da amostra em cache privado local para não reexecutar o encoder a cada narração. O áudio de referência não é alterado nem enviado. O gate/aceite dos pesos oficiais continua obrigatório na primeira preparação.
 - Adiciona o Clipador Inteligente: ranking revisável de candidatos a partir de transcrições existentes e análise PCM streaming (RMS/pico/clipping), cache persistente, prévia pelo monitor do editor, ajuste de limites em palavras e inserção/marcadores reversíveis na timeline. Não dispara Whisper/Qwen nem modifica arquivos-fonte. Detalhes e limitações em `docs/CLIPADOR_INTELIGENTE.md`.

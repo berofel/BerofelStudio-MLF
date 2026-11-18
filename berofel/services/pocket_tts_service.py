@@ -193,6 +193,8 @@ class NarrationRequest:
     quantize: bool = False
     project_path: str = ''
     title: str = 'Narração'
+    engine: str = 'pocket-tts'
+    reference_text: str = ''
 
 
 def _process_flags() -> int:
@@ -205,6 +207,10 @@ def generate_narration(request: NarrationRequest, progress: Callable | None = No
 
     runner é injetável nos testes; a produção usa sys.executable do venv do editor.
     """
+    if request.engine=='qwen3-tts-local':
+        from .qwen3_tts_local import generate_local_clone
+        return generate_local_clone(request,progress=progress,runner=runner,
+                                    control=control,stage=stage)
     if control:control.checkpoint()
     if stage:stage('Pocket TTS • preparando texto e voz')
     validate_request(request.text, request.voice, request.language, request.consent)

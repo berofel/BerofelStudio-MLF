@@ -1269,7 +1269,8 @@ class MainWindow(QMainWindow):
         position=self.timeline.view.cursor_time
         self._ai_busy=True
         self.narration_panel.busy(True)
-        self.statusBar().showMessage('Batata Quente: Pocket TTS gerando em processo isolado...')
+        engine_label='Qwen3-TTS local' if request.engine=='qwen3-tts-local' else 'Pocket TTS'
+        self.statusBar().showMessage(f'Batata Quente: {engine_label} gerando em processo isolado...')
         def ready(result):
             path=result['path']
             duration=result['duration']
@@ -1291,7 +1292,7 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f'Narração adicionada à timeline ({duration:.1f}s).')
             else:
                 self.statusBar().showMessage('Narração WAV salva. Clique em Ouvir para conferir.')
-        task=self._task(generate_narration,ready,request,label='Pocket TTS · narração')
+        task=self._task(generate_narration,ready,request,label=f'{engine_label} · narração')
         if task is None:
             self._ai_busy=False
             self.narration_panel.busy(False)
