@@ -58,6 +58,53 @@ class PocketTTSOfflineTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'somente vozes do catálogo'):
             validate_voice_cloning_pipeline(SimpleNamespace(has_voice_cloning=False))
 
+    def test_clone_smoke_generates_only_a_short_synthetic_reference(self):
+        from scipy.io import wavfile
+        from scripts.testar_pocket import create_synthetic_voice_reference
+        with tempfile.TemporaryDirectory(prefix='bfs_clone_smoke_') as folder:
+            sample=create_synthetic_voice_reference(Path(folder)/'synthetic.wav',wavfile)
+            rate,pcm=wavfile.read(str(sample))
+        self.assertEqual(rate,24000)
+        self.assertEqual((pcm.dtype.kind,pcm.dtype.itemsize),('i',2))
+        self.assertEqual(len(pcm),28800)
+
+    def test_clone_smoke_cli_sends_synthetic_voice_with_explicit_consent(self):
+        import contextlib
+        import io
+        import sys
+        from scripts import testar_pocket
+        batch=Path(__file__).resolve().parents[1]/'TESTAR_POCKET_TTS.bat'
+        self.assertIn('%*',batch.read_text(encoding='utf-8'),
+                      'The BAT must forward --clone to the smoke-test script.')
+        requests=[]
+        generated=Path(tempfile.gettempdir())/'bfs_clone_smoke_output.wav'
+        def fake_generate(request):
+            requests.append(request)
+            with wave.open(request.voice,'rb') as reference:
+                self.assertEqual((reference.getframerate(),reference.getnchannels()),(24000,1))
+                self.assertEqual(reference.getnframes(),28800)
+            with wave.open(str(generated),'wb') as output:
+                output.setnchannels(1);output.setsampwidth(2);output.setframerate(24000)
+                output.writeframes(b'\x00\x00'*24000)
+            return {'path':str(generated),'duration':1.0,'cache_hit':len(requests)>1}
+        fake_pocket=SimpleNamespace(TTSModel=object())
+        fake_torch=SimpleNamespace(__version__='test')
+        try:
+            with patch.dict(sys.modules,{'pocket_tts':fake_pocket,'torch':fake_torch}), \
+                 patch.object(sys,'argv',['testar_pocket.py','--clone','--offline']), \
+                 patch('berofel.services.pocket_tts_service.generate_narration',
+                       side_effect=fake_generate), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(testar_pocket.main(),0)
+            self.assertEqual(len(requests),2)
+            self.assertTrue(all(request.consent for request in requests))
+            self.assertTrue(all(Path(request.voice).name=='referencia_clone_sintetica.wav'
+                                for request in requests))
+            self.assertFalse(Path(requests[0].voice).exists(),
+                             'The synthetic reference must be removed with the temp workspace.')
+        finally:
+            generated.unlink(missing_ok=True)
+
     def test_activation_distinguishes_network_block_from_huggingface_gate(self):
         from scripts.preparar_modelo_pocket import activation_failure_message
         network=activation_failure_message(OSError('[WinError 10013] socket access denied'))

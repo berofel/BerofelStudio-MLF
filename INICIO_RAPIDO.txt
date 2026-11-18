@@ -73,7 +73,9 @@ PROBLEMAS:
 2. INSTALAR_TODAS_AS_IAS.bat (ou INSTALAR_POCKET_TTS.bat para só voz)
 3. Se o modelo solicitar autorização: aceite os termos em
    https://huggingface.co/kyutai/pocket-tts e execute AUTORIZAR_POCKET_TTS.bat
-4. TESTAR_POCKET_TTS.bat (gera WAV real de teste)
+4. TESTAR_POCKET_TTS.bat (gera WAV com voz pronta)
+   Depois de autorizar pesos completos: TESTAR_POCKET_TTS.bat --clone
+   (testa clonagem com referência sintética, sem usar gravação pessoal)
 5. ABRIR_BEROFELSTUDIO.bat > botão/aba NARRAÇÃO à direita
 Vozes CC0: Bill, Caro, Peter e Stuart (download automático); Rafael oficial PT.
 Texto livre, clonagem autorizada, salvar WAV, ouvir e inserir na timeline.

@@ -32,6 +32,8 @@ $py = Join-Path $env:LOCALAPPDATA 'BFS\venv\Scripts\python.exe'
 & $py scripts\testar_batata_quente.py
 & $py scripts\testar_whisper_real.py
 & $py scripts\testar_pocket.py --real --offline
+# Após autorizar e baixar os pesos completos, teste a rota de clonagem sem áudio pessoal:
+& $py scripts\testar_pocket.py --clone --offline
 & $py scripts\testar_qwen_real.py --words 100
 # Teste mais longo opcional: padrão de 800 palavras
 & $py scripts\testar_qwen_real.py

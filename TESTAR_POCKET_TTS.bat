@@ -8,7 +8,7 @@ if not exist "%PY_EXE%" (
  pause
  exit /b 1
 )
-"%PY_EXE%" scripts\testar_pocket.py --real --offline
+"%PY_EXE%" scripts\testar_pocket.py --real --offline %*
 if errorlevel 1 (
  echo [ERRO] Teste de voz falhou. Aceite os termos e execute AUTORIZAR_POCKET_TTS.bat.
  pause
