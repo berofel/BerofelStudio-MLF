@@ -12,7 +12,8 @@ from berofel.services.pocket_tts_service import (NarrationRequest, generate_narr
     persistent_folder, preset_voice, validate_request, VOICE_PRESETS,
     _prune_tts_cache, _tts_cache_limit_bytes)
 from berofel.services.pocket_tts_worker import (create_voice_prompt_state,
-    load_model_for_request,prepare_audio_prompt,require_voice_cloning)
+    load_model_for_request,prepare_audio_prompt,require_voice_cloning,
+    run as run_pocket_tts_worker)
 
 
 class PocketTTSOfflineTests(unittest.TestCase):
@@ -97,6 +98,65 @@ class PocketTTSOfflineTests(unittest.TestCase):
                                         'language':'portuguese'})
         preflight.assert_called_once_with('portuguese')
         load_model.assert_not_called()
+
+    def test_personal_voice_worker_uses_normalized_reference_and_preserves_original(self):
+        import numpy as np
+        from scipy.io import wavfile
+        with tempfile.TemporaryDirectory(prefix='bfs_personal_voice_worker_') as folder:
+            root=Path(folder)
+            sample_rate=48000
+            source=root/'authorized_synthetic_reference.wav'
+            t=np.arange(sample_rate//2,dtype=np.float64)/sample_rate
+            pcm=(np.sin(2*np.pi*220*t)*10000).astype('<i2')
+            wavfile.write(str(source),sample_rate,pcm)
+            original=source.read_bytes()
+            output=root/'narration.wav'
+            request_file=root/'request.json'
+            result_file=root/'worker_result.json'
+            request={'voice':str(source),'text':'Teste de clonagem sintética.',
+                     'language':'portuguese','consent':True,'quantize':False,
+                     'output':str(output)}
+            request_file.write_text(json.dumps(request),encoding='utf-8')
+
+            class FakeAudio:
+                def detach(self):return self
+                def cpu(self):return self
+                def numpy(self):return np.array([.1,-.1,.2,-.2],dtype=np.float32)
+
+            class FakeCloneModel:
+                sample_rate=24000
+                has_voice_cloning=True
+                def get_state_for_audio_prompt(self,path,truncate=False):
+                    self.reference=Path(path)
+                    self.truncate=truncate
+                    with wave.open(str(path),'rb') as prompt:
+                        self.prompt_rate=prompt.getframerate()
+                        self.prompt_channels=prompt.getnchannels()
+                        self.prompt_frames=prompt.getnframes()
+                    return 'synthetic-voice-state'
+                def generate_audio(self,state,text):
+                    self.generation=(state,text)
+                    return FakeAudio()
+
+            model=FakeCloneModel()
+            with patch('berofel.services.pocket_tts_worker.load_model_for_request',
+                       return_value=model) as load_model:
+                run_pocket_tts_worker(str(request_file),str(result_file))
+
+            load_model.assert_called_once_with(request)
+            self.assertEqual(model.generation,('synthetic-voice-state',request['text']))
+            self.assertTrue(model.truncate)
+            self.assertEqual((model.prompt_rate,model.prompt_channels),(24000,1))
+            self.assertGreater(model.prompt_frames,0)
+            self.assertFalse(model.reference.exists(),
+                             'Temporary conditioning audio must be deleted after encoding.')
+            self.assertEqual(source.read_bytes(),original,
+                             'The original authorized reference must remain unchanged.')
+            self.assertTrue(output.is_file())
+            rate,generated=wavfile.read(str(output))
+            self.assertEqual(rate,24000)
+            self.assertGreater(len(generated),0)
+            self.assertTrue(result_file.is_file())
 
     def test_precomputed_preset_skips_personal_clone_preflight(self):
         from pocket_tts import TTSModel
