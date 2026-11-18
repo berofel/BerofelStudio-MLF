@@ -48,6 +48,39 @@ class PocketTTSOfflineTests(unittest.TestCase):
         self.assertIn('"%HF_EXE%" auth login',content)
         self.assertNotIn('huggingface_hub.commands.huggingface_cli',content)
 
+    def test_gui_activation_worker_reads_token_from_stdin_without_echo_or_cli_args(self):
+        import contextlib
+        import io
+        import sys
+        from scripts import ativar_pocket_tts
+        import huggingface_hub
+        calls=[]
+        output=io.StringIO()
+        with (
+            patch.object(huggingface_hub,'login',
+                         side_effect=lambda **kwargs:calls.append(kwargs)),
+            patch('scripts.preparar_modelo_pocket.main',return_value=0) as prepare,
+            patch.object(sys,'stdin',io.StringIO('secret-token\n')),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(ativar_pocket_tts.main(),0)
+        self.assertEqual(calls,[{'token':'secret-token','add_to_git_credential':False}])
+        self.assertNotIn('secret-token',output.getvalue())
+        prepare.assert_called_once_with()
+
+    def test_gui_activation_does_not_open_cmd_or_expose_token_in_arguments(self):
+        panel=Path(__file__).resolve().parents[1]/'berofel'/'ui'/'narration_panel.py'
+        content=panel.read_text(encoding='utf-8')
+        start=content.index('    def _activate_cloning(self):')
+        end=content.index('    def _install_qwen(self):',start)
+        activation=content[start:end]
+        self.assertNotIn('cmd.exe',activation)
+        self.assertNotIn('CREATE_NEW_CONSOLE',activation)
+        self.assertIn('QLineEdit.EchoMode.Password',activation)
+        self.assertIn('stdin=subprocess.PIPE',activation)
+        self.assertIn('CREATE_NO_WINDOW',activation)
+        self.assertIn('https://huggingface.co/kyutai/pocket-tts',activation)
+
     def test_pocket_installer_does_not_claim_personal_cloning_when_weights_are_missing(self):
         script=Path(__file__).resolve().parents[1]/'scripts'/'instalar_pocket.ps1'
         content=script.read_text(encoding='utf-8')
