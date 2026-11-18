@@ -13,7 +13,7 @@ Data: 18/11/2026. Esta auditoria registra o estado encontrado no workspace Windo
 | Contrato persistente | `AGENTS.md` foi copiado para esta raiz e seus caminhos foram ajustados para o pacote de planejamento/ZIP legado no diretório pai. | Presente no código atual |
 | Configuração do pacote Python | `requirements.txt`, `requirements-core.txt`, `requirements-ai.txt` e `requirements-pocket-tts.txt` existem; `pyproject.toml` não existe. | A instalação usa BAT/venv; não há configuração pyproject para lint/build |
 | Repositório local | Git inicializado na pasta do app, branch `codex/consolidacao-berofelstudio-010`, baseline `a7716eb7332885977bb5c9c66bb9c466c0c42750`, árvore limpa; `.gitignore` protege projetos, mídia, credenciais, modelos e runtime. | Histórico local criado como snapshot de `0.10.0-alpha.1`; sem histórico anterior para comparar |
-| Repositório remoto oficial | Consulta pelo conector GitHub: `berofel/BerofelStudio-MLF`, `size=0`, branch padrão `main`, permissão `pull=true`, `push=false`. | Vazio e sem permissão de escrita disponível; push/PR continuam indisponíveis |
+| Repositório remoto oficial | Consulta pelo conector GitHub: `berofel/BerofelStudio-MLF`; `main` contém apenas o commit inicial `3aa2841f0560c4e389186af6f9e8bca81c511e05` com README placeholder, sem código do editor; permissão `pull=true`, `push=false`. `git fetch origin main` falhou por bloqueio de conexão a `github.com:443`. | Conteúdo-fonte não estava no remoto; a branch local ainda não compartilha o ancestral Git do remoto; push/PR indisponíveis |
 
 ## Arquitetura observada
 
