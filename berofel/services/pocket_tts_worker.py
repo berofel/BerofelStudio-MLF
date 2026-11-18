@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import re
+from contextlib import contextmanager
 
 from .pocket_tts_service import _PRECOMPUTED_VOICE_IDS
 
@@ -31,7 +32,7 @@ def activation_failure_message(exc):
 
 
 def ensure_voice_cloning_weights(language='portuguese'):
-    """Fetch the full checkpoint before Pocket TTS can silently use catalog weights."""
+    """Download the full checkpoint during the explicit first-time activation only."""
     from pocket_tts.utils.config import CONFIGS_DIR, load_config
     from pocket_tts.utils.utils import download_if_necessary
 
@@ -42,6 +43,40 @@ def ensure_voice_cloning_weights(language='portuguese'):
         return download_if_necessary(config.weights_path)
     except Exception as exc:
         raise RuntimeError(activation_failure_message(exc)) from exc
+
+
+def require_local_voice_cloning_weights(language='portuguese'):
+    """Verify clone weights already exist locally; synthesis must never fetch them."""
+    from huggingface_hub import hf_hub_download
+    from pocket_tts.utils.config import CONFIGS_DIR, load_config
+
+    config=load_config(CONFIGS_DIR/f'{language}.yaml')
+    source=str(config.weights_path or '')
+    if not source.startswith('hf://'):
+        path=Path(source).expanduser()
+        if path.is_file():return path
+        raise RuntimeError('O checkpoint local de clonagem não foi encontrado. '
+                           'Execute AUTORIZAR_POCKET_TTS.bat uma vez com internet.')
+    address=source[5:]
+    address,separator,revision=address.rpartition('@')
+    if not separator:
+        address=source[5:]
+        revision=None
+    parts=address.split('/',2)
+    if len(parts)!=3 or not parts[0] or not parts[1] or not parts[2]:
+        raise RuntimeError(f'Endereço de pesos Pocket TTS inválido: {source}')
+    repo_id='/'.join(parts[:2])
+    filename=parts[2]
+    try:
+        return Path(hf_hub_download(repo_id=repo_id,filename=filename,
+                                    revision=revision,local_files_only=True))
+    except Exception as exc:
+        raise RuntimeError(
+            'Os pesos completos de clonagem do Pocket TTS ainda não estão neste PC. '
+            'A geração normal não acessa a internet. Conecte-se, aceite os termos oficiais '
+            'e execute AUTORIZAR_POCKET_TTS.bat para baixar e validar o modelo uma vez. '
+            f'Detalhe local: {type(exc).__name__}: {str(exc)[:400]}'
+        ) from exc
 
 
 def require_voice_cloning(model, request: dict) -> None:
@@ -64,16 +99,31 @@ def _is_catalog_voice(voice: str) -> bool:
 
 
 def load_model_for_request(request: dict):
-    """Preflight personal-audio checkpoints before loading TTS or its fallback."""
+    """Load from local files only; model downloads belong to explicit setup actions."""
     voice=str(request.get('voice',''))
     is_precomputed=_is_catalog_voice(voice)
     if request.get('consent') and not is_precomputed:
-        ensure_voice_cloning_weights(request.get('language','portuguese'))
+        require_local_voice_cloning_weights(request.get('language','portuguese'))
     from pocket_tts import TTSModel
     model=TTSModel.load_model(language=request['language'],
                               quantize=bool(request.get('quantize',False)))
     require_voice_cloning(model,request)
     return model
+
+
+@contextmanager
+def _offline_model_access():
+    """Prevent Hugging Face/network access while serving an inference request."""
+    keys=('HF_HUB_OFFLINE','TRANSFORMERS_OFFLINE','HF_HUB_DISABLE_TELEMETRY')
+    previous={key:os.environ.get(key) for key in keys}
+    os.environ.update({'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1',
+                       'HF_HUB_DISABLE_TELEMETRY':'1'})
+    try:
+        yield
+    finally:
+        for key,value in previous.items():
+            if value is None:os.environ.pop(key,None)
+            else:os.environ[key]=value
 
 
 def prepare_audio_prompt(voice: str, output_path: str | Path,
@@ -224,10 +274,13 @@ def run(request_path: str, result_path: str):
     from scipy.io import wavfile
     import numpy as np
 
-    model = load_model_for_request(request)
-    voice_state = create_or_load_voice_state(model,request['voice'],
-                                             request.get('language','portuguese'))
-    audio = model.generate_audio(voice_state, request['text'])
+    # Inference is local-only. Model acquisition is performed by the explicit
+    # installer/authorization flow, never as a hidden side effect of Generate.
+    with _offline_model_access():
+        model = load_model_for_request(request)
+        voice_state = create_or_load_voice_state(model,request['voice'],
+                                                 request.get('language','portuguese'))
+        audio = model.generate_audio(voice_state, request['text'])
     samples = audio.detach().cpu().numpy().reshape(-1)
     if not samples.size:
         raise RuntimeError('Pocket TTS retornou áudio vazio.')

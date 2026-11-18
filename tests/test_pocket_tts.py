@@ -13,6 +13,7 @@ from berofel.services.pocket_tts_service import (NarrationRequest, generate_narr
     _prune_tts_cache, _tts_cache_limit_bytes)
 from berofel.services.pocket_tts_worker import (create_voice_prompt_state,
     create_or_load_voice_state,load_model_for_request,prepare_audio_prompt,require_voice_cloning,
+    require_local_voice_cloning_weights,
     run as run_pocket_tts_worker)
 
 
@@ -158,14 +159,29 @@ class PocketTTSOfflineTests(unittest.TestCase):
 
     def test_personal_sample_fails_before_catalog_fallback_model_is_loaded(self):
         from pocket_tts import TTSModel
-        with patch('berofel.services.pocket_tts_worker.ensure_voice_cloning_weights',
-                   side_effect=RuntimeError('rede indisponível')) as preflight, \
+        with patch('berofel.services.pocket_tts_worker.require_local_voice_cloning_weights',
+                   side_effect=RuntimeError('pesos ausentes localmente')) as preflight, \
              patch.object(TTSModel,'load_model') as load_model:
-            with self.assertRaisesRegex(RuntimeError,'rede indisponível'):
+            with self.assertRaisesRegex(RuntimeError,'pesos ausentes localmente'):
                 load_model_for_request({'voice':'C:/voice.wav','consent':True,
                                         'language':'portuguese'})
         preflight.assert_called_once_with('portuguese')
         load_model.assert_not_called()
+
+    def test_clone_runtime_preflight_never_downloads_missing_weights(self):
+        import pocket_tts.utils.config as ptc
+        import huggingface_hub
+        with (patch.object(ptc,'load_config',return_value=SimpleNamespace(
+                  weights_path='hf://kyutai/pocket-tts/languages/portuguese/model.safetensors@rev123')),
+              patch.object(huggingface_hub,'hf_hub_download',
+                           side_effect=RuntimeError('offline cache miss')) as download):
+            with self.assertRaisesRegex(RuntimeError,'não estão neste PC'):
+                require_local_voice_cloning_weights('portuguese')
+        self.assertEqual(download.call_args.kwargs['repo_id'],'kyutai/pocket-tts')
+        self.assertEqual(download.call_args.kwargs['filename'],
+                         'languages/portuguese/model.safetensors')
+        self.assertEqual(download.call_args.kwargs['revision'],'rev123')
+        self.assertTrue(download.call_args.kwargs['local_files_only'])
 
     def test_personal_voice_worker_uses_normalized_reference_and_preserves_original(self):
         import numpy as np
@@ -207,12 +223,21 @@ class PocketTTSOfflineTests(unittest.TestCase):
                     return FakeAudio()
 
             model=FakeCloneModel()
+            hub_environment={key:os.environ.get(key) for key in
+                ('HF_HUB_OFFLINE','TRANSFORMERS_OFFLINE','HF_HUB_DISABLE_TELEMETRY')}
+            def load_offline(_request):
+                self.assertEqual(os.environ.get('HF_HUB_OFFLINE'),'1')
+                self.assertEqual(os.environ.get('TRANSFORMERS_OFFLINE'),'1')
+                self.assertEqual(os.environ.get('HF_HUB_DISABLE_TELEMETRY'),'1')
+                return model
             with patch.dict(os.environ,{'BEROFEL_VOICE_STATE_CACHE':str(root/'voice_cache')}), \
                  patch('berofel.services.pocket_tts_worker.load_model_for_request',
-                       return_value=model) as load_model:
+                       side_effect=load_offline) as load_model:
                 run_pocket_tts_worker(str(request_file),str(result_file))
 
             load_model.assert_called_once_with(request)
+            self.assertEqual({key:os.environ.get(key) for key in hub_environment},
+                             hub_environment)
             self.assertEqual(model.generation,('synthetic-voice-state',request['text']))
             self.assertTrue(model.truncate)
             self.assertEqual((model.prompt_rate,model.prompt_channels),(24000,1))
@@ -347,7 +372,7 @@ class PocketTTSOfflineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='bfs_local_voice_state_') as folder:
             profile=Path(folder)/'profile.safetensors';profile.write_bytes(b'state')
             from pocket_tts import TTSModel
-            with patch('berofel.services.pocket_tts_worker.ensure_voice_cloning_weights') as preflight, \
+            with patch('berofel.services.pocket_tts_worker.require_local_voice_cloning_weights') as preflight, \
                  patch.object(TTSModel,'load_model',return_value=SimpleNamespace(has_voice_cloning=True)):
                 load_model_for_request({'voice':str(profile),'consent':True,
                                         'language':'portuguese'})

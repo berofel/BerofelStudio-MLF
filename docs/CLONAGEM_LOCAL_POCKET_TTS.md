@@ -1,32 +1,47 @@
-# Clonagem local de voz: Pocket TTS e Qwen3-TTS
+# Clonagem de voz local no BerofelStudio
 
-## Opção sem login: Qwen3-TTS local
+## Estado confirmado em 18/11/2026
 
-Na aba **Narração**, selecione **Minha voz / amostra com autorização**, mantenha **Qwen3-TTS local** como motor, escolha uma gravação e marque a confirmação de autorização. Para melhor semelhança, informe no campo de texto a transcrição exata do áudio de referência. A primeira preparação pede confirmação, cria um ambiente Python isolado e baixa os pesos públicos Qwen3-TTS Base 0.6B (cerca de 2,5 GB, além das dependências) pelo botão **Preparar Qwen3 local**. Não é necessário entrar no Hugging Face nem aceitar um gate. Após a preparação, a clonagem e a síntese usam CPU e arquivos locais; o áudio de referência nunca é enviado. Se o texto de referência ficar vazio, o motor usa apenas o vetor de falante, que pode reduzir a qualidade.
+O ambiente `C:\Users\Berofel\AppData\Local\BFS\venv` tem `pocket-tts 4.0.1` e `torch 2.15.0`. A voz de catálogo carrega em CPU. Neste computador, o modelo reportou `has_voice_cloning=False`; o comando `hf auth whoami` retornou “Not logged in” e o acesso ao checkpoint português foi bloqueado com `WinError 10013`. Portanto, a clonagem pessoal ainda não está habilitada nem validada aqui. O botão/fluxo de ativação não pode substituir esse requisito de acesso.
 
-O serviço preserva a gravação, usa cache privado por conteúdo da amostra/texto/idioma/modelo e copia cada WAV gerado para a pasta durável do projeto. A inferência real não foi executada nesta sessão porque o modelo de 2,5 GB não foi baixado. Portanto, a integração foi validada com worker e sinais sintéticos; velocidade, qualidade de clonagem e consumo em CPU ainda precisam ser medidos nesta máquina após a instalação.
+O erro não significa que Pocket TTS dependa de uma API de geração. A inferência, o condicionamento da amostra, a síntese e o WAV são locais. A conexão com Hugging Face serve para obter uma vez o checkpoint autorizado; o aceite é controlado pelo titular da conta. Depois do checkpoint completo e dos demais arquivos necessários no cache local, a síntese pode funcionar sem conexão.
 
-O instalador usa Python 3.12 de 64 bits em um `venv` isolado, PyTorch CPU e `qwen-tts==0.1.1` (pacote Apache-2.0). Os modelos do projeto Qwen3-TTS e o checkpoint Base 0.6B declaram Apache-2.0. Os artefatos ficam em `%LOCALAPPDATA%\BFS\qwen3_tts`, fora do repositório e do ambiente principal do editor. A instalação usa rede apenas para pacotes/pesos; o worker do editor aponta para o diretório local e usa `local_files_only=True`.
+## Evitar downloads escondidos durante geração
 
-## O que roda localmente
+O download e a validação do checkpoint completo pertencem ao passo explícito `AUTORIZAR_POCKET_TTS.bat`. A geração agora exige que o checkpoint de clonagem esteja no cache local e configura o worker em modo offline enquanto carrega pesos, codifica a amostra e sintetiza. Se faltar o checkpoint, o editor deve instruir o usuário a concluir a ativação, sem fazer uma busca de rede implícita nem trocar silenciosamente para uma voz de catálogo.
 
-O BerofelStudio envia o texto e a referência ao worker local do Pocket TTS. O áudio é normalizado por FFmpeg no PC; o encoder extrai o estado de voz e o TTS gera WAV no PC. A gravação de referência não é enviada a um serviço de síntese. O estado derivado da voz é salvo em `%LOCALAPPDATA%\BFS\cache\pocket_tts\voice_states`, separado dos projetos e logs, para reutilização; a chave usa o conteúdo da amostra, idioma, versão do pacote e checkpoint. Se a amostra ou o checkpoint mudar, o estado é reconstruído. O WAV de origem não é alterado.
+O áudio de referência é normalizado por FFmpeg em arquivo temporário, sem alterar o original. O estado derivado é armazenado no cache privado `%LOCALAPPDATA%\BFS\cache\pocket_tts\voice_states`, com chave por conteúdo, idioma e modelo; o arquivo pessoal não é enviado nem incluído no projeto/repositório.
 
-## Preparação inicial e requisito do modelo
+## Ativar a clonagem pessoal
 
-O caminho de clonagem do checkpoint oficial requer o modelo completo. O pacote Pocket TTS instalado pode cair para pesos sem clonagem quando os pesos completos não estão disponíveis; nesse modo, apenas as vozes predefinidas funcionam. O repositório oficial exige que o usuário aceite as condições da página gated do modelo. Portanto, o aplicativo não tenta contornar o gate nem afirmar que clonagem funciona com o modelo de catálogo.
+1. Instale o Pocket TTS pelo `INSTALAR_POCKET_TTS.bat`.
+2. Acesse [kyutai/pocket-tts no Hugging Face](https://huggingface.co/kyutai/pocket-tts), entre na conta e aceite os termos do modelo.
+3. Execute `AUTORIZAR_POCKET_TTS.bat` com internet disponível. O script baixa os pesos e valida o encoder com uma amostra sintética, nunca com o áudio pessoal.
+4. No editor, selecione **Minha voz / amostra com autorização**, importe uma gravação autorizada e gere a narração.
+5. Confirme que a voz gerada é a desejada. Se houver falha, envie o erro/log apresentado; não é necessário compartilhar a gravação.
 
-Depois de autorizado e baixado, `TTSModel` carrega os pesos do cache local e a inferência é executada localmente. Para a primeira instalação/ativação, a rede e o aceite são necessários. Se esses pesos não estiverem disponíveis, escolha explicitamente o motor Qwen3 local acima; Qwen3 não substitui a voz Rafael de catálogo do Pocket TTS e sua velocidade no CPU ainda não está medida.
+Após a ativação, use `TESTAR_POCKET_TTS.bat --clone --offline` para verificar a rota real com referência sintética, se os pesos estiverem presentes. Esse teste não substitui uma comparação auditiva com a voz do usuário.
 
-## Como usar
+## O que o editor antigo fazia com Qwen3-TTS
 
-1. Na narração, escolha **Minha voz / amostra com autorização** e selecione um WAV/MP3/FLAC/OGG/M4A.
-2. Marque a autorização expressa, use **Preparar clonagem local…** uma vez e conclua o aceite/obtenção dos pesos oficiais quando solicitado.
-3. Quando o painel confirmar o encoder com uma amostra sintética, gere a narração. Somente a primeira vez para cada amostra/idioma/checkpoint será calculado e guardado o estado vocal; as próximas execuções reaproveitam o arquivo `.safetensors` local.
-4. Depois que o checkpoint estiver no cache, a geração pode operar sem rede. Os perfis derivados ficam no cache do usuário e não são versionados.
+O ZIP `C:\Users\Berofel\Desktop\BerofelStudio_codigo_base_alpha\Berofel-Studio Python.zip` foi lido como arquivo ZIP; `Berofel-Studio-main` é uma pasta interna do ZIP, não um caminho de diretório independente no Windows. A implementação antiga tinha um worker oficial `qwen-tts` que chamava `create_voice_clone_prompt(ref_audio, ref_text)` e depois `generate_voice_clone`. Sem transcrição da gravação, usava `x_vector_only_mode=True`. Também separava o TTS em ambiente, mantinha modelos/processos e caches para reuso e implementava timeout, progresso e retomada.
 
-O estado de voz é dado biométrico sensível: mantenha acesso à sua conta Windows e apague os arquivos em `voice_states` se quiser remover os perfis derivados. Não apague o arquivo de referência por meio do editor.
+Além do backend PyTorch, o legado roteava para duas opções externas ao Python: `qwentts.cpp` nativo no Windows (requer executável e modelos fornecidos à parte) e um backend comunitário em WSL2/INT4 que compilava/instalava seu próprio runtime. O ZIP contém código e scripts para essas rotas, mas não contém `qwentts.exe`, pesos `.gguf` ou checkpoints `.safetensors`; portanto, não é uma instalação autônoma pronta para clonar. O código antigo demonstra uma arquitetura de backends e cache, não prova que os modelos estivessem instalados ou que a clonagem funcionasse neste PC.
 
-## Proteção do wheel mouse
+No checkout atual, o worker Qwen carrega pesos Base em CPU com `local_files_only=True`; sua falha relatada no screenshot era a dependência `imageio_ffmpeg` ausente no ambiente isolado, anterior à inferência. O instalador atual passou a incluir essa dependência. Qwen permanece opcional enquanto a migração para Pocket não tiver clonagem pessoal real validada; não removemos checkpoints, projetos, áudios ou configurações do usuário.
 
-Combos, spins e sliders dos módulos de interface só recebem alteração por roda quando estão com foco (selecionados). Sem foco, a roda é encaminhada ao painel rolável ancestral. Para alterar um valor, clique/focalize o controle; para percorrer o painel, mantenha o ponteiro sobre os controles e role sem selecioná-los.
+## Pocket TTS nativo/standalone versus integração Python
+
+O projeto oficial publica um binário standalone para Windows x86, além da biblioteca Python. O binário executa em CPU e não exige Python/PyTorch; o upstream indica AVX2 para o build x86 principal (AMD Zen ou mais novo) e documenta clonagem por WAV e perfil de voz exportado. Esse executável continua precisando dos modelos e das permissões correspondentes; “standalone” não significa que o modelo de clonagem esteja embutido nem que haja uma API de inferência remota.
+
+O BerofelStudio atual usa a biblioteca Python `pocket-tts==4.0.1` dentro do ambiente do aplicativo, chamando o worker local por subprocesso. Isso usa o PC e não requer uma API HTTP. O binário standalone é uma alternativa plausível para reduzir o ambiente de runtime, mas requer uma avaliação/integração própria de versão, passagem de parâmetros, cancelamento, cache de perfis, streaming, localização do cache e diferenças numéricas; ainda não substituímos o backend Python sem essa validação.
+
+Referências oficiais consultadas:
+
+- [Pocket TTS: execução CPU, clonagem, CLI, biblioteca e binários standalone Windows](https://github.com/kyutai-labs/pocket-tts)
+- [Comando oficial export-voice e limite de 30 segundos da amostra](https://github.com/kyutai-labs/pocket-tts/blob/main/docs/CLI%20Commands/export_voice.md)
+- [Comportamento do modelo quando os pesos de clonagem não estão disponíveis](https://github.com/kyutai-labs/pocket-tts/blob/main/pocket_tts/models/tts_model.py)
+
+## Limite da validação
+
+Os testes automatizados e a síntese de catálogo não provam clonagem pessoal. Enquanto a conta Hugging Face não autorizar e baixar o checkpoint, uma síntese real com voz de referência permanece pendente. Não declarar a migração concluída nem remover a rota Qwen até validar a amostra sintética offline e uma amostra própria autorizada no Windows, além da saída WAV/MP4 sincronizada.
