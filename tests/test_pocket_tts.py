@@ -127,21 +127,46 @@ class PocketTTSOfflineTests(unittest.TestCase):
         finally:
             generated.unlink(missing_ok=True)
 
-    def test_activation_distinguishes_network_block_from_huggingface_gate(self):
+    def test_activation_distinguishes_missing_local_checkpoint_from_network_and_gate(self):
         from scripts.preparar_modelo_pocket import activation_failure_message
         network=activation_failure_message(OSError('[WinError 10013] socket access denied'))
-        self.assertIn('pela rede',network)
+        self.assertIn('estabelecer conexão',network)
         self.assertIn('WinError 10013',network)
         class LocalEntryNotFoundError(Exception):
             pass
         missing_local=activation_failure_message(
             LocalEntryNotFoundError('checkpoint absent from local cache while offline'))
-        self.assertIn('pela rede',missing_local)
-        self.assertIn('não ativa clonagem',missing_local)
+        self.assertIn('não está no cache local',missing_local)
+        self.assertIn('não pôde ser consultado',missing_local)
         class GatedRepoError(Exception):
             pass
         gated=activation_failure_message(GatedRepoError('access denied'))
         self.assertIn('aceite os termos',gated)
+
+    def test_activation_distinguishes_invalid_token_and_interrupted_download(self):
+        from scripts.preparar_modelo_pocket import activation_failure_message
+        import huggingface_hub
+        class Response:
+            status_code=401
+        class InvalidToken(Exception):
+            response=Response()
+        with patch.object(huggingface_hub,'get_token',return_value='secret-token'):
+            invalid_token=activation_failure_message(InvalidToken('request contained secret-token'))
+        self.assertIn('inválido ou expirado',invalid_token)
+        self.assertNotIn('secret-token',invalid_token)
+        self.assertIn('[redigido]',invalid_token)
+        with patch.object(huggingface_hub,'get_token',return_value=None):
+            unauthenticated=activation_failure_message(InvalidToken('no token'))
+        self.assertIn('não há token salvo',unauthenticated)
+        self.assertNotIn('secret-token',unauthenticated)
+        class LocalTokenNotFoundError(Exception):
+            pass
+        missing_token=activation_failure_message(LocalTokenNotFoundError('no token'))
+        self.assertIn('Nenhuma autenticação',missing_token)
+        class IncompleteDownloadError(Exception):
+            pass
+        interrupted=activation_failure_message(IncompleteDownloadError('partial transfer'))
+        self.assertIn('foi interrompido',interrupted)
 
     def test_activation_preflights_voice_clone_checkpoint_before_loading_model(self):
         from scripts.preparar_modelo_pocket import ensure_voice_cloning_weights

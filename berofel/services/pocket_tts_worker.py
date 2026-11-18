@@ -18,14 +18,41 @@ def activation_failure_message(exc):
     response=getattr(exc,'response',None)
     status=getattr(response,'status_code',None)
     detail=str(exc).replace('\n',' ')[:600]
-    if kind in {'GatedRepoError','RepositoryNotFoundError'} or status in {401,403}:
+    try:
+        from huggingface_hub import get_token
+        saved_token=get_token()
+    except Exception:
+        saved_token=None
+    if saved_token:
+        detail=detail.replace(saved_token,'[redigido]')
+    if kind == 'LocalEntryNotFoundError':
+        reason=('O checkpoint de clonagem não está no cache local e o Hugging Face não pôde ser consultado. '
+                'Conecte-se à internet e tente novamente; se ainda não autorizou o modelo, aceite os termos '
+                'oficiais e entre na conta antes de repetir a ativação.')
+    elif kind == 'LocalTokenNotFoundError':
+        reason=('Nenhuma autenticação do Hugging Face foi encontrada para o usuário do BerofelStudio. '
+                'Use o botão de ativação para entrar na conta; o token não é incluído no relatório.')
+    elif status == 401:
+        if saved_token:
+            reason=('O Hugging Face recusou o token salvo. Ele pode estar inválido ou expirado; faça login '
+                    'novamente pelo botão de ativação. O token não é incluído no relatório.')
+        else:
+            reason=('O Hugging Face exige autenticação, mas não há token salvo para este usuário. '
+                    'Use o botão de ativação para entrar na conta; o token não é incluído no relatório.')
+    elif kind == 'GatedRepoError' or status == 403:
         reason=('O Hugging Face recusou o checkpoint de clonagem. Entre na conta usada pelo editor '
                 'e aceite os termos de kyutai/pocket-tts; depois repita a ativação.')
     elif kind in {'HfHubConnectionError','ConnectTimeout','ReadTimeout','ConnectionError',
-                  'LocalEntryNotFoundError'} or \
+                  'Timeout'} or \
             'WinError 10013' in detail or 'Network is unreachable' in detail:
-        reason=('Não foi possível acessar o Hugging Face pela rede. Verifique internet/firewall/proxy '
-                'e tente novamente; o Pocket TTS pode usar voz de catálogo offline, mas isso não ativa clonagem.')
+        reason=('Não foi possível estabelecer conexão com o Hugging Face. Verifique internet, firewall ou proxy '
+                'e tente novamente; a voz de catálogo offline continua disponível, mas não habilita clonagem pessoal.')
+    elif kind in {'IncompleteDownloadError','IncompleteSnapshotError','XetDownloadError'}:
+        reason=('O download do modelo de clonagem foi interrompido ou ficou incompleto. Os arquivos válidos '
+                'foram preservados; conecte-se e repita a ativação para retomar/verificar o download.')
+    elif kind in {'EntryNotFoundError','RemoteEntryNotFoundError','RevisionNotFoundError'}:
+        reason=('A versão do Pocket TTS solicitou um arquivo ou revisão que não foi encontrado no repositório oficial. '
+                'Não altere os arquivos do cache; registre o diagnóstico para corrigirmos o manifesto.')
     else:
         reason='Não foi possível validar/baixar os pesos completos de clonagem.'
     return f'{reason}\nDetalhe: {kind}: {detail}'
