@@ -12,8 +12,8 @@ Data: 18/11/2026. Esta auditoria registra o estado encontrado no workspace Windo
 | Planejamento | `BerofelStudio_Plano_Mestre_Codex\AGENTS.md`, plano mestre, checklist e auditoria de migração foram lidos. | Disponível fora da raiz do app |
 | Contrato persistente | `AGENTS.md` foi copiado para esta raiz e seus caminhos foram ajustados para o pacote de planejamento/ZIP legado no diretório pai. | Presente no código atual |
 | Configuração do pacote Python | `requirements.txt`, `requirements-core.txt`, `requirements-ai.txt` e `requirements-pocket-tts.txt` existem; `pyproject.toml` não existe. | A instalação usa BAT/venv; não há configuração pyproject para lint/build |
-| Repositório local | A árvore do app não contém `.git`; `git status` falha com “not a git repository”. | Sem branch ou commits locais |
-| Repositório remoto oficial | Consulta pelo conector GitHub: `berofel/BerofelStudio-MLF`, `size=0`, branch padrão `main`, permissão `pull=true`, `push=false`. | Vazio e sem permissão de escrita disponível |
+| Repositório local | Git inicializado na pasta do app, branch `codex/consolidacao-berofelstudio-010`, baseline `a7716eb7332885977bb5c9c66bb9c466c0c42750`, árvore limpa; `.gitignore` protege projetos, mídia, credenciais, modelos e runtime. | Histórico local criado como snapshot de `0.10.0-alpha.1`; sem histórico anterior para comparar |
+| Repositório remoto oficial | Consulta pelo conector GitHub: `berofel/BerofelStudio-MLF`, `size=0`, branch padrão `main`, permissão `pull=true`, `push=false`. | Vazio e sem permissão de escrita disponível; push/PR continuam indisponíveis |
 
 ## Arquitetura observada
 

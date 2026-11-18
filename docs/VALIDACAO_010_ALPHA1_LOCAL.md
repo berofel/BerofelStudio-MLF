@@ -56,7 +56,7 @@ O BAT de stress imprime a versão atual a partir de `berofel.__version__` e desc
 - O processamento integral da gravação original de 80 minutos continua pendente.
 - O ZIP especificado `BerofelStudio_Studio_0_9_2_Previa_Cortes_Windows.zip` não foi localizado na área de trabalho; a validação incidiu sobre o código 0.10.0-alpha.1 presente nesta pasta, sem afirmar que aquele arquivo foi reimportado nesta etapa.
 - Reproduzir, pausar, buscar e ouvir material real no desktop Windows ainda requer conferência manual; a integração automatizada testou geração/avanço dos pipes e duração/streams do MP4.
-- O caminho de publicação Git permanece separado: esta cópia não contém `.git` e a conexão GitHub disponível não possui permissão de push.
+- O baseline Git local foi criado na branch `codex/consolidacao-berofelstudio-010`, commit `a7716eb7332885977bb5c9c66bb9c466c0c42750`; a árvore está limpa. O remoto oficial continua vazio (`size=0`) e a integração informa `push=false`, então push, PR e release não foram feitos.
 
 
 
