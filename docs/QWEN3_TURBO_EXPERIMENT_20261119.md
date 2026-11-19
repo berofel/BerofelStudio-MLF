@@ -1185,3 +1185,21 @@ um modo. WER mede apenas erros de transcrição e não avalia naturalidade, timb
 prosódia ou ruído. O resultado detalhado/transcrições estão em
 `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_PureCStages_20261119\asr_wer_results.json`,
 fora do Git e sem gravações de referência. A escuta humana continua necessária.
+
+#### Gate para quantização sub-4 do Code Predictor
+
+A fonte v0.23 tem `QWEN_CP_Q2_FFN`, mas a auditoria do código mostra que a
+variável só é consultada dentro de `qwen_cp_quantize_q4`; combiná-la com `--int8`
+não aplica Q2. Confirmei isso em uma execução de smoke: o log registrou apenas
+quantização INT8 e não registrou Q2, portanto o WAV não é uma amostra Q2 e não
+entrou nas tabelas. A opção exigiria `--quant-mixed-cpu`/ramo de CP Q4.
+
+Não avancei para essa configuração porque a avaliação de qualidade upstream
+v0.23 no Base 0.6B fechou sub-4 com **NO GO**: acordo teacher-forced por
+codebook foi 9% no experimento anterior de Q2 FFN híbrido; os candidatos Q2_K/Q2_0
+mais recentes chegaram a 4,9%/1,3%, contra 46,3% para Q4_0 e ~79,4% para INT8.
+São métricas de códigos do modelo, não WER nem escuta, mas mostram degradação muito
+maior do que uma pequena concessão de qualidade. Mantive essa técnica fora da
+produção e não consumi tempo de benchmark em um candidato já reprovado pelo gate
+de compatibilidade de código acústico. Evidência primária, versão fixada:
+[docs/quant-sub4.md no upstream v0.23.0](https://github.com/gabriele-mastrapasqua/qwen3-tts/blob/e391ec5467b0218eeb175f4888ad65b259d1e7c7/docs/quant-sub4.md#L1).
