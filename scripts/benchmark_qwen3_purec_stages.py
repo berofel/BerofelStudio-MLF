@@ -153,6 +153,9 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--lengths", nargs="+", choices=tuple(TEXTS), default=("short", "medium"))
     parser.add_argument("--threads", type=int, choices=(2, 4, 6, 8), default=6)
+    parser.add_argument("--pool-spin", type=int, choices=(0, 1024, 4096, 8192, 16384, 65536),
+                        default=None,
+                        help="Override QWEN_POOL_SPIN; omitted uses the engine's x86 default.")
     parser.add_argument("--repeats", type=int, choices=(1, 2, 3, 4, 5), default=3)
     parser.add_argument("--modes", nargs="+", choices=("mixed", "int8"), default=("mixed", "int8"))
     args = parser.parse_args()
@@ -181,6 +184,10 @@ def main() -> int:
     environment["HF_HUB_OFFLINE"] = "1"
     environment["TRANSFORMERS_OFFLINE"] = "1"
     environment["OPENBLAS_NUM_THREADS"] = "1"
+    if args.pool_spin is None:
+        environment.pop("QWEN_POOL_SPIN", None)
+    else:
+        environment["QWEN_POOL_SPIN"] = str(args.pool_spin)
     records = []
     try:
         # Interleave precision order on successive repetitions to reduce ordering bias.
@@ -203,6 +210,7 @@ def main() -> int:
                         raise RuntimeError("O CLI não imprimiu o tempo interno de geração; consulte o log local.")
                     record = {"mode": mode, "length": length, "characters": len(text),
                         "repetition": repetition, "seed": seed, "threads": args.threads,
+                        "pool_spin": args.pool_spin if args.pool_spin is not None else "engine_default",
                         "wall_seconds_including_startup": round(wall, 3), **timings,
                         "precision_log_lines": [line.strip() for line in raw.splitlines()
                             if any(marker in line for marker in (
@@ -233,7 +241,9 @@ def main() -> int:
         "profile_cache_hit": bool(prepared.get("cache_hit")),
         "profile_prepare_seconds": prepared.get("profile_prepare_seconds"),
         "model_load_server_seconds": prepared.get("model_load_seconds"),
-        "threads": args.threads, "lengths": list(args.lengths), "repeats": args.repeats,
+        "threads": args.threads,
+        "pool_spin": args.pool_spin if args.pool_spin is not None else "engine_default",
+        "lengths": list(args.lengths), "repeats": args.repeats,
         "summary_medians": summary, "records": records}
     (output / "results.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[PASSOU] {len(records)} WAVs medidos; evidências locais em {output}")

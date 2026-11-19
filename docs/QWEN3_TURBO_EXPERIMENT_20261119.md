@@ -1203,3 +1203,32 @@ maior do que uma pequena concessão de qualidade. Mantive essa técnica fora da
 produção e não consumi tempo de benchmark em um candidato já reprovado pelo gate
 de compatibilidade de código acústico. Evidência primária, versão fixada:
 [docs/quant-sub4.md no upstream v0.23.0](https://github.com/gabriele-mastrapasqua/qwen3-tts/blob/e391ec5467b0218eeb175f4888ad65b259d1e7c7/docs/quant-sub4.md#L1).
+
+#### Varredura de `QWEN_POOL_SPIN` no Ryzen 7 5700G (19/11/2026)
+
+A fonte upstream documenta `QWEN_POOL_SPIN` como número de ciclos de spin
+antes do worker estacionar e alerta que o ótimo depende da CPU. Adicionei a
+opção `--pool-spin` ao benchmark interno; sem ela, a variável é removida do
+ambiente filho para medir o default do executável. Fiz 3 repetições por valor,
+6 threads, perfil autorizado já preparado, seeds repetíveis, Mixed CPU, offline;
+curto foi testado com default/0/1024/4096/8192/16384/65536 e médio com
+default/1024/4096. A fonte upstream define 4096 em builds x86, e os resultados
+de default e 4096 explícito foram praticamente iguais.
+
+| Pool spin | Curto: geração / RTF / TTFA / CP / CPU | Médio: geração / RTF / TTFA / CP / CPU |
+|---:|---|---|
+| default (x86=4096) | 4,30 s / 0,83 / 1,27 s / 2,58 s / 71,1% | 14,40 s / 0,77 / 1,41 s / 8,99 s / 75,3% |
+| 0 | 4,60 s / 0,86 / 1,29 s / 2,74 s / 63,6% | — |
+| 1024 | 4,30 s / 0,81 / 1,23 s / 2,56 s / 67,2% | 14,50 s / 0,78 / 1,34 s / 9,11 s / 70,8% |
+| 4096 | 4,40 s / 0,83 / 1,25 s / 2,62 s / 70,8% | 14,40 s / 0,77 / 1,38 s / 8,96 s / 73,7% |
+| 8192 | 4,50 s / 0,85 / 1,24 s / 2,75 s / 75,3% | — |
+| 16384 | 4,70 s / 0,88 / 1,34 s / 2,88 s / 75,3% | — |
+| 65536 | 4,50 s / 0,85 / 1,25 s / 2,78 s / 74,4% | — |
+
+Nenhum valor superou o default em ambos os tamanhos. `1024` empatou no curto,
+mas ficou 0,1 s mais lento no médio; TTFA foi marginalmente menor e CPU/RSS
+não mostraram ganho prático para edição. Valores 0, 16384 e 65536 foram mais
+lentos no curto. Recomendação: conservar o default do runtime (4096 neste x86)
+e não expor outro controle no editor. WAVs, logs e JSONs por repetição ficam
+fora do Git em `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_PoolSpin_20261119`
+e `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_PoolSpinMedium_20261119`.
