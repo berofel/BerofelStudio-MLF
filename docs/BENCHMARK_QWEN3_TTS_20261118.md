@@ -22,7 +22,8 @@ O pico agregado de RSS amostrado do processo de teste e seus filhos foi 6,41 GiB
 | Recarregar modelo por pedido | Testes anteriores em processo isolado comprovaram síntese, mas não houve A/B controlado no mesmo texto/condições. | Evitado no app; um worker persistente carrega uma vez por sessão. |
 | Recalcular/reutilizar prompt | Primeira chamada miss e a seguinte hit, mesmo PID e um carregamento do modelo. Não foi comparada a igualdade da saída nem a latência isolada da mesma frase. | Prompt versionado em NPZ sem pickle e invalidado por chave/fingerprint. |
 | Threads | Mesmo texto curto e mesmo PC: 8 threads 66,776 s/RTF 6,47 e 4 threads 62,530 s/RTF 6,06; RSS amostrado 6,41 vs 5,73 GiB. Uma execução por configuração, sem ordem aleatória ou repetição estatística. | Padrão conservador alterado para 4 threads; comparação 1/2/8/12 e repetição controlada ainda pendentes. |
-| INT8 / INT4 | A/B de tempo, RAM e qualidade não executado; a distribuição Python não ativa essas quantizações. | Não ativar sem validar clonagem e qualidade. INT4 exige outro backend ou conversão. |
+| INT8 | A/B controlado de uma frase curta realizado em 19/11/2026; a conversão dinâmica melhorou o tempo de inferência, mas reduziu o indicador cosine do encoder de speaker. | Permanece experimental; float32 continua padrão pela prioridade de fidelidade. |
+| INT4 | Sem backend Qwen Base compatível validado; não foi baixado nem convertido. | Não habilitar. |
 | Streaming de áudio | A API Python instalada não possui `generate_voice_clone_streaming`; geração entrega resultado após `generate_voice_clone`. | Nenhum preview incremental comprovado neste backend. |
 | Backend nativo | Não compilado nem validado no Windows deste projeto. | Não substituir antes de validar API, qualidade, licença, distribuição e prompt de clonagem. |
 
@@ -106,24 +107,32 @@ Execute `scripts/benchmark_qwen3_warm_cpu.py` no venv da distribuição após co
 
 ## Investigação isolada de INT8 — 19/11/2026
 
-Foi testada a quantização dinâmica INT8 do PyTorch 2.15.0+cpu, num processo
-temporário e sem alterar o worker ou o modelo armazenado. A primeira tentativa
-`inplace=False` falhou porque o `deepcopy` interno do PyTorch não consegue
-serializar um `dict_keys` presente no objeto Qwen. Com `inplace=True`, a
-conversão levou 15,86 s, quantizou 249 camadas lineares e o caminho real
-`create_voice_clone_prompt` → `generate_voice_clone` produziu áudio finito e
-com sinal: 10,16 s a 24 kHz em 48,09 s de inferência (RTF 4,73). A preparação
-da referência levou 1,06 s; o carregamento observado em uma inicialização
-separada do mesmo ensaio levou 6,05 s. O teste usou a referência local já
-autorizada, manteve texto e caminho privados e operou offline.
+Foi testada a quantização dinâmica INT8 do PyTorch 2.15.0+cpu, em processos
+temporários e sem alterar worker ou modelo armazenado. `inplace=False` falhou
+porque o `deepcopy` interno não serializa um `dict_keys` do objeto Qwen. Com
+`inplace=True`, 249 camadas lineares foram quantizadas e o caminho de clonagem
+gerou áudio finito e com sinal. Uma comparação controlada usou o mesmo texto
+curto em português, referência autorizada, prompt preparado, semente 42 e o
+mesmo speaker encoder FP32 para pontuar as saídas:
 
-Esse resultado prova compatibilidade funcional pontual da clonagem com INT8,
-mas **não** prova qualidade vocal equivalente: ainda falta comparação A/B
-perceptiva e de sinal com a precisão original, repetição de medições, RSS sob
-quantização e texto longo. A conversão também impõe custo inicial significativo
-e usa uma API PyTorch marcada como depreciada. Portanto, INT8 permanece somente
-uma variante experimental de diagnóstico; a distribuição continua em float32,
-única precisão validada integralmente no fluxo do editor. INT4, backend nativo
-e streaming de áudio incremental continuam sem implementação/teste apropriados
-para o prompt de clonagem. Não foi feita quantização persistente nem foi alterado
-qualquer perfil/cache do usuário.
+| Variante | Duração WAV | Inferência | RTF | Cosine speaker ↔ referência | Pico RSS do processo |
+|---|---:|---:|---:|---:|---:|
+| Float32 | 10,16 s | 54,478 s | 5,362 | 0,977502 | 5,006 GiB |
+| Dynamic INT8 | 10,16 s | 47,448 s | 4,670 | 0,944985 | 4,095 GiB |
+
+A conversão INT8 levou 15,805 s; logo, o ganho de 12,9% é do tempo de inferência
+com o modelo já convertido, não do caminho frio de primeira geração. O score
+cosine caiu 0,032517. Esse score é um indicador automatizado de semelhança do
+speaker, não uma avaliação perceptiva/MOS, e cada variante teve uma única
+amostra; o resultado sugere um trade-off mensurável, não prova uma degradação
+audível nem equivalência de qualidade. Não foram medidos textos longos ou
+repetições estatísticas. A tentativa anterior isolada registrou 1,06 s para
+preparar a referência e 48,09 s de inferência INT8; ela não é combinada com esta
+comparação pareada.
+
+O PyTorch emitiu avisos de depreciação para a API dinâmica usada. Por prioridade
+de fidelidade e por não haver validação perceptiva/texto longo, INT8 permanece
+experimental e não foi ligado à distribuição. A versão do editor segue em
+float32. INT4, backend nativo e streaming incremental continuam sem
+implementação/teste apropriado para o prompt de clonagem. Nenhuma quantização
+persistente foi feita nem qualquer perfil/cache do usuário foi alterado.
