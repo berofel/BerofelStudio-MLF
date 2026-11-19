@@ -14,9 +14,9 @@ O editor tem uma rota opcional `qwen3-tts-native-q4` para narração rápida. O 
 
 A rota Turbo usa exclusivamente Qwen3-TTS 12Hz 0.6B Base, convertido para GGUF Q4_0 misto, com speaker encoder preservado em F16. A primeira utilização de uma gravação autorizada normaliza a referência e cria um x-vector com o próprio encoder nativo; esse vetor versionado é guardado localmente e reutilizado. O prompt nativo não é intercambiável com o embedding calculado pelo worker PyTorch em todas as precisões: o teste misto encontrou regressão de inteligibilidade com esse embedding, por isso o adaptador usa o encoder compatível do runtime experimental.
 
-O servidor nativo persiste durante a sessão, carrega o modelo uma vez e devolve WAV completo. **Não existe streaming de áudio para o player neste adaptador**; o primeiro áudio tocável só fica disponível quando a geração termina. Cache de frase idêntica existe, mas não é contado como ganho para texto novo.
+O servidor nativo persiste durante a sessão e carrega o modelo uma vez. Para o modo Turbo, o build experimental recebe PCM float32 por callback nativo, o grava em arquivo temporário incremental e o worker encaminha chunks à thread Qt; `QAudioSink` converte para PCM16 mono 24 kHz e toca enquanto a síntese continua. O WAV final completo continua sendo validado e salvo normalmente. O modo Original não abre nem toca o stream Turbo. O callback usa 6 frames (~0,5 s por chunk); chamadas sem callback mantêm o caminho sem streaming. Cache de frase idêntica existe, mas não é contado como ganho para texto novo.
 
-A conversão Q4 é experimental: `scripts/prepare_qwen3_tts_cpp_q4_mixed.py` cria conversor separado e nunca modifica o conversor upstream. Tensor shapes incompatíveis voltam para F16. A distribuição oficial do conversor investigado documenta F16/F32/Q8_0 e não declara suporte upstream a K-quants; Q4 é uma alteração local e deve ser tratada como tal. O código nativo investigado é MIT; preservar notices do upstream e das bibliotecas de runtime. Nenhum modelo/runtime foi incluído no Git.
+A conversão Q4 é experimental: `scripts/prepare_qwen3_tts_cpp_q4_mixed.py` cria conversor separado e nunca modifica o conversor upstream. Tensor shapes incompatíveis voltam para F16. `scripts/enable_qwen3_tts_cpp_stream_file.py` habilita o arquivo PCM incremental no servidor e mantém um backup do `main.cpp` do checkout nativo. Para reconstruir o servidor experimental, aplique esse script ao checkout separado e execute `cmake --build <diretório-build> --target qwen3-tts-cli`; depois instale o executável pelo instalador verificado. A distribuição oficial do conversor investigado documenta F16/F32/Q8_0 e não declara suporte upstream a K-quants; Q4 e o stream-file são alterações locais e devem ser tratados como tal. O código nativo investigado é MIT; preservar notices do upstream e das bibliotecas de runtime. Nenhum modelo/runtime foi incluído no Git.
 
 ## Resultados medidos
 
@@ -28,9 +28,12 @@ Máquina: Windows x64, Ryzen 7 5700G, 16 GB RAM; modelo e referências já em di
 | Nativo Q8_0, perfil x-vector preparado | 3 | 6,099 s | 5,04 s | 1,210 | 2,209 GiB | 0,1 |
 | Nativo Q4_0 misto, x-vector preparado | 3 | 4,995 s | 4,88 s | 1,047 | 1,947 GiB | 0,2 |
 | Nativo Q4_0, integração do serviço | 1 | 4,634 s | 4,56 s | 1,016 | 2,085 GiB | n/a |
+| Nativo Q4_0, callback incremental | 2 | 8,313 s* | 7,20 s* | 1,155* | n/a | n/a |
 
 
 a) WER é apenas comparação ASR local por Faster-Whisper base/Português/beam 1, não métrica perceptiva. Amostras curtas e estocásticas; não comprova naturalidade nem semelhança biométrica. O áudio oficial de referência teve WER elevado nesta execução, por isso não trate a tabela como superioridade acústica conclusiva. É necessária avaliação auditiva comparativa.
+
+* Mediana das duas medições com callback incremental.
 
 Q4 foi ~13,5% mais rápido em RTF e usou ~12% menos RSS que Q8 nas medianas observadas; em relação ao oficial medido, RTF caiu cerca de 79,8%. A duração de saída variou entre gerações, então RTF é mais informativo que comparar tempo bruto. Modelo nativo frio carregou em ~0,78–0,99 s; reutilização de x-vector custa 0 s no cache. Preparação de novo perfil ficou em ~6,6–7,0 s, separada da síntese.
 
@@ -43,7 +46,10 @@ Não foram obtidas métricas separadas de prefill/talker/code predictor para o r
 - `tests.test_qwen3_native_tts` e testes Turbo do painel: testes focados passaram; teste opcional real passou usando modelo/perfil local.
 - Fluxo Qt real em modo offscreen e ambiente offline (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`): ação Gerar no painel → WAV não silencioso → media source/player em reprodução → clipe inserido na timeline → export WAV e MP4 com streams de áudio/vídeo. WAV: 2.880.102 bytes; MP4: 122.415 bytes; 10 s. Artefatos privados de teste ficaram fora do repositório em `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119`.
 - O playback foi iniciado pelo player Qt; o teste foi offscreen e não prova que o som foi ouvido nos alto-falantes.
-- Nenhum teste de streaming incremental foi declarado. Avaliação auditiva, comparação subjetiva da voz clonada e teste com firewall de rede continuam pendentes.
+- Streaming real pelo callback nativo: primeiro chunk PCM em 3,053 s após modelo/perfil prontos; 16 chunks, 698.880 bytes PCM, WAV final 7,28 s. O tempo não inclui eventual preparo inicial de perfil/modelo; retorno da chamada inclui métricas separadas para esses tempos.
+- Segunda medição do serviço após a correção de ordenação: geração 8,218 s para 7,12 s de áudio; primeiro chunk 3,062 s depois de modelo/perfil prontos e 3,849 s desde o início da solicitação, incluindo 0,787 s de carga. 15 chunks totalizaram 683.520 bytes, exatamente `frames × 4` do WAV float32 intermediário; a interface recebe PCM16, metade desse tamanho.
+- Fluxo real de geração via ação do editor, offscreen e com sink de áudio simulado: 453.120 bytes PCM16 foram escritos para um WAV de 9,44 s (mesma contagem de amostras mono/24 kHz); o clipe foi inserido na timeline. O teste não emitiu gravação nos alto-falantes. Separadamente, o dispositivo Windows reportou suporte a 24 kHz mono e o `QAudioSink` real processou 150 ms de amostras silenciosas. A avaliação auditiva comparativa da voz ainda depende do usuário.
+- Avaliação auditiva, comparação subjetiva da voz clonada e teste com firewall de rede continuam pendentes.
 
 ## Limitações e restauração
 
