@@ -248,6 +248,76 @@ O ensaio foi executado por uma cópia temporária do benchmark em diretório
 externo; o WAV temporário foi apagado após a validação de sinal. Não houve
 mudança no runtime, modelo, cache persistente ou configuração do editor.
 
+### Compilação portátil Windows e comparação de revisões C++
+
+Preparei um toolchain LLVM-MinGW portátil fora do projeto. O arquivo oficial
+`llvm-mingw-20261117-ucrt-x86_64.zip` (191.082.415 bytes) teve SHA-256
+`4d002e330a0f703625aa5ccbc37e96f8f824413e163bfc7336774aabd2c3a412`, igual
+ao digest publicado pela API de releases. O runtime experimental foi compilado
+como Release com `-march=native` (GGML informou CPU backend nativo), AVX2/FMA/F16C,
+sem CUDA/Vulkan. Construí separadamente CHE3MZ `release-1.0`
+(`1433de988873d289aae097e18f8b2508d507f687`) e `main`
+(`e04c79a2b37be8b4696e918e728edd5e7541a379`), ambos com GGML submodule
+`707321c4cf6d21cb4bc831aa8b687dbf01a521ce`. O build do main precisou apenas
+de `#include <math.h>` em uma cópia externa de `audio_tokenizer_encoder.cpp`
+para os headers do libc++; essa alteração não foi feita no Berofel Studio nem
+commitada. Desativei exemplos/testes GGML opcionais depois de falhas de headers
+em `common.cpp`/`mnist-common.cpp`; os alvos das bibliotecas e do CLI foram
+compilados. Referências: [repositório CHE3MZ](https://github.com/CHE3MZ/qwen3-tts.cpp)
+e [releases LLVM-MinGW](https://github.com/mstorsjo/llvm-mingw/releases).
+
+Comparação de inferência real, offline, mesma referência autorizada e x-vector,
+mesmo modelo Q4/tokenizer, frase curta de 72 caracteres e média de 231, 6 threads,
+temperatura 0,9/top-k 50, duas execuções inéditas por caso. Todos os WAVs foram
+mono PCM16/24 kHz, não silenciosos e sem clipping. RTF é a métrica principal:
+
+| Binário | Curto: parede / duração / RTF | Médio: parede / duração / RTF | RSS mediano curto/médio |
+|---|---:|---:|---:|
+| Atual instalado | 7,172 s / 6,48 s / 1,108 | 20,221 s / 19,92 s / 1,016 | 1,999 / 2,767 GiB |
+| `release-1.0` recompilado AVX2 | 6,407 s / 5,68 s / 1,129 | 18,550 s / 18,14 s / 1,024 | 1,945 / 2,637 GiB |
+| `main` recompilado AVX2 | 7,018 s / 6,32 s / 1,112 | 18,826 s / 18,28 s / 1,031 | 1,998 / 2,675 GiB |
+| release Windows oficial 1.0 | 7,032 s / 5,88 s / 1,197 | 19,763 s / 18,40 s / 1,074 | 1,962 / 2,659 GiB |
+
+Apesar de alguns tempos de parede menores, o RTF dos dois builds AVX2 ficou
+igual ou ligeiramente pior que o instalado: a saída também ficou mais curta.
+O total interno do engine por segundo de áudio foi ~0,954/0,963 no instalado,
+~0,954/0,967 no release recompilado e ~0,959/0,971 no main recompilado (curto/médio).
+Portanto não há evidência de aceleração computacional útil para substituir o
+binário em uso. O release oficial Windows 1.0 foi mais lento no RTF.
+
+Whisper Base/int8 local, beam 1, foi usado apenas como proxy de inteligibilidade
+(n=2 por comprimento): WER mediano curto/médio foi 0,500/0,487 no instalado,
+0,459/0,385 no build `release-1.0` e 0,625/0,513 no build `main`; o release
+oficial teve 0,417/0,359. O cosine do encoder nativo vs referência (também proxy,
+n=2) foi 0,976/0,973 no instalado e 0,967/0,971 no build recompilado. Essas
+métricas são instáveis em frases curtas e não aprovam naturalidade nem identidade.
+As amostras A/B current vs build main estão na pasta externa
+`AB_AVX2_vs_installed` com manifest SHA-256; ficam fora do Git por conterem a voz
+autorizada. A escuta humana ainda é necessária.
+
+O CLI foi testado, mas não conectado ao editor: não superou o runtime atual em
+RTF, e o build alternativo não reproduziu o adaptador de streaming validado.
+Nenhum DLL, modelo, preset, embedding ou configuração do runtime ativo foi
+substituído. Não foi executada a suíte upstream completa do C++.
+
+#### Fast-math e prefill não-streaming
+
+`-ffast-math` sem ressalvas falhou na compilação do GGML porque as rotinas
+exigem aritmética com NaN/Inf. Com `-fno-finite-math-only`, o build compilou,
+mas ficou mais lento que o build `main` normal: RTF mediano curto/médio 1,138/
+1,045 contra 1,112/1,031. Não foi integrado nem submetido a avaliação acústica.
+
+Também comparei `--non-streaming` no CLI atual compilado, mesmo Q4, 6 threads,
+mesmo perfil/textos/parâmetros, n=2, sem cache de frase. RTF mediano padrão vs
+não-streaming: curto 1,155 vs 1,165; médio 1,031 vs 1,061. A opção não trouxe
+ganho de throughput e ficou desativada. WAVs passaram formato/sinal/clipping;
+não foi necessária uma rodada ASR porque nenhum modo venceu em RTF.
+
+Os comandos de benchmark e binários experimentais ficam apenas na pasta externa
+`C:\\Users\\Berofel\\Desktop\\BerofelStudio_QwenTurbo_Benchmark_20261119\\portable_build`.
+As únicas alterações na árvore Git desta rodada são os registros técnicos; o
+backend Original e o Turbo integrado continuam executáveis e intocados.
+
 - `tests.test_qwen3_native_tts` e testes Turbo do painel: testes focados passaram; teste opcional real passou usando modelo/perfil local.
 - Validação real adicional pelo controle **Gerar** na interface, em sessão offline (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`), com perfil autorizado configurado: Turbo Q4 enviou 10 chunks/453.120 bytes e Equilibrado Q4 enviou 10 chunks/460.800 bytes ao callback de prévia. Em ambos, o WAV produzido não estava silencioso, o player reproduziu/pausou e buscou posição (volume silenciado no teste automatizado), o bloco foi inserido na timeline, WAV e MP4 foram exportados com áudio e o projeto foi salvo/reaberto. A checagem do fluxo confirma ainda que o embedding vocal preparado foi reutilizado. O tempo total do smoke test Qt foi 7,2 s (Turbo) e 7,4 s (Equilibrado), incluindo montagem/exportação; não é latência de síntese. Script reproduzível: `scripts/validar_fluxo_qwen3_editor.py --configured-fast-profile --native-engine qwen3-tts-native-q4` ou `qwen3-tts-native-q4-balanced` com `--confirm-own-or-authorized-voice`. A saída física foi silenciada; a escuta subjetiva A/B ainda precisa do usuário.
 - Repetição do fluxo de UI depois de tornar o tamanho do chunk configurável, mantendo o padrão 6: offline, Turbo enviou 12 chunks/552.960 bytes (8,3 s no smoke completo) e Equilibrado 10 chunks/430.080 bytes (7,0 s). Ambos voltaram a passar WAV, player/busca, timeline, exportações e reabertura do projeto.
