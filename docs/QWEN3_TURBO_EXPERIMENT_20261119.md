@@ -74,6 +74,12 @@ Tempo ponta a ponta medido foi 57,121 / 11,983 / 12,713 s, respectivamente. Pico
 
 WAVs pareados, privados, fora do Git: `Matched_qwen3-tts-local_20261119_120619_e4c0206e.wav`, `Matched_qwen3-tts-native-q4_20261119_120632_f127aa95.wav`, `Matched_qwen3-tts-native-q4-balanced_20261119_120645_b219cc66.wav` em `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119\matched_original_comparison_arquivos\narracoes`.
 
+### Alternativa em C puro investigada
+
+O repositório [gabriele-mastrapasqua/qwen3-tts](https://github.com/gabriele-mastrapasqua/qwen3-tts) declara suporte ao Base 0.6B, clonagem por referência, perfis x-vector/`.qvoice`, streaming PCM, INT8/INT4, MIT e SIMD AVX2. A documentação atual chama a rota Windows de beta via WSL2; a evidência de x86 publicada mede um Ryzen 7 6800H sob WSL2, não este Ryzen 7 5700G. As observações desse projeto (incluindo RTF/Q4/threads) não são comparáveis diretamente com as do runtime CHE3MZ, por serem builds, caminhos de inferência e metodologias diferentes.
+
+Verificação local sem instalar componentes: `wsl.exe` existe apenas como launcher de instalação; `wsl --status` e `wsl -l -q` exibiram a ajuda do instalador, e nenhuma distribuição WSL aparece. GCC, Clang, Make, CMake e Ninja também não estão disponíveis no PATH. Assim, não há toolchain/distribuição Linux já pronta para compilar e validar esse backend aqui. Não instalei WSL2 nem outra distribuição. Como alternativa Windows já funcional, o backend CHE3MZ Q4 integrado gerou no fluxo canônico local a RTF 0,944–0,985 nos casos medidos; mantenho-o opt-in e não substituo o Original. A alternativa C puro fica como investigação não executada até existir build suportado nativamente para Windows ou uma decisão explícita de disponibilizar ambiente WSL2 de desenvolvimento.
+
 Não foram obtidas métricas separadas de prefill/talker/code predictor para o runtime nativo. No oficial, o profiler mediu carga 6,008 s, prompt 0,655 s, prefill 0,413 s, 131 chamadas autoregressivas 47,645 s, das quais code predictor aninhado somou ~35,166 s; geração API 54,333 s, primeiro code frame ~0,7 s (não era áudio tocável). Isso aponta o code predictor como parcela dominante no backend oficial, mas não prova a mesma divisão interna no nativo. O script `scripts/benchmark_qwen3_stages.py` registra estágios oficiais.
 
 ## Testes / evidência da integração
