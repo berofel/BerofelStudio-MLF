@@ -160,6 +160,18 @@ Para confirmar o perfil de threads com os tempos internos, repeti o CLI em 2, 4,
 
 6 threads permanece a recomendação Turbo: menor RTF mediano no texto médio e melhor mediana observada do decoder nos dois comprimentos. No curto, 8 threads ficou próximo e ligeiramente abaixo no RTF de parede, mas o estágio interno total foi mais longo; as durações geradas e o startup variam. O decoder continua consumindo aproximadamente 62–65% do total interno em todos os perfis. 2 threads perde vazão, e 4 threads ficou mais lento que 6/8 neste ensaio. São poucas repetições estocásticas; isso confirma uma configuração prática, não uma lei para toda máquina/carga. Todos os WAVs deste sweep foram PCM16 mono 24 kHz, RMS acima de 0,028, sem amostras clipadas. Os resultados, áudio e logs ficam fora do Git em subpastas `native_stages_*` de `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119`; nenhum áudio de referência ou gerado foi adicionado ao repositório.
 
+#### Primeiro chunk por threads no serviço persistente
+
+Também executei `scripts/benchmark_qwen3_native_lengths.py --confirm-own-or-authorized-voice --repeats 1 --lengths curta --chunk-frames 6` com Turbo/Equilibrado em 4, 6 e 8 threads. A referência x-vector foi reaproveitada em todos os casos e nenhum WAV de frase veio do cache. Uma chamada por célula:
+
+| Threads | Turbo: primeiro chunk | Turbo: geração / RTF | Equilibrado: primeiro chunk | Equilibrado: geração / RTF |
+|---:|---:|---:|---:|---:|
+| 4 | 3,579 s | 7,268 s / 1,180 | 2,563 s | 6,386 s / 1,191 |
+| 6 | 3,142 s | 5,969 s / 1,114 | 2,399 s | 6,039 s / 1,094 |
+| 8 | 3,270 s | 6,288 s / 1,139 | 2,741 s | 6,979 s / 1,118 |
+
+No caso Turbo, o primeiro chunk inclui a carga inicial do servidor (0,79–0,81 s); o perfil Equilibrado reutilizou o processo Q4 já carregado na execução pareada, então sua latência é aquecida. 6 threads foi melhor nas duas comparações observadas, mas só houve uma repetição. Os JSONs de cada execução agora usam nomes que incluem os dois limites de threads, para que o sweep não sobrescreva o arquivo anterior: `native_lengths_chunk_6_threads4-4_results.json`, `...threads6-6...` e `...threads8-8...` no diretório externo. As WAVs temporárias são removidas pelo benchmark.
+
 Não foram obtidas métricas separadas de prefill/talker/code predictor para o runtime nativo. No oficial, o profiler mediu carga 6,008 s, prompt 0,655 s, prefill 0,413 s, 131 chamadas autoregressivas 47,645 s, das quais code predictor aninhado somou ~35,166 s; geração API 54,333 s, primeiro code frame ~0,7 s (não era áudio tocável). Isso aponta o code predictor como parcela dominante no backend oficial, mas não prova a mesma divisão interna no nativo. O script `scripts/benchmark_qwen3_stages.py` registra estágios oficiais.
 
 ## Testes / evidência da integração

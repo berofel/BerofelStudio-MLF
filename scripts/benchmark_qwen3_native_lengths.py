@@ -160,7 +160,10 @@ def main()->int:
                 'offline_env':{'HF_HUB_OFFLINE':os.environ.get('HF_HUB_OFFLINE'),
                                'TRANSFORMERS_OFFLINE':os.environ.get('TRANSFORMERS_OFFLINE')},
                 'records_data':records}
-            result_file=Path.home()/'Desktop'/'BerofelStudio_QwenTurbo_Benchmark_20261119'/f'native_lengths_chunk_{args.chunk_frames}_results.json'
+            turbo_threads=os.getenv('BEROFEL_QWEN3_NATIVE_TURBO_THREADS','6')
+            balanced_threads=os.getenv('BEROFEL_QWEN3_NATIVE_BALANCED_THREADS','8')
+            result_file=Path.home()/'Desktop'/'BerofelStudio_QwenTurbo_Benchmark_20261119'/(
+                f'native_lengths_chunk_{args.chunk_frames}_threads{turbo_threads}-{balanced_threads}_results.json')
             result_file.parent.mkdir(parents=True,exist_ok=True)
             result_file.write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
             print(json.dumps({k:v for k,v in summary.items() if k!='records_data'},
