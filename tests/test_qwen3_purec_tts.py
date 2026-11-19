@@ -17,6 +17,13 @@ from berofel.services.narration_service import NarrationRequest, generate_narrat
 
 
 class PureCTests(unittest.TestCase):
+    def test_runtime_caps_openblas_to_one_thread(self):
+        with patch.dict(os.environ, {'OPENBLAS_NUM_THREADS': '16',
+                                    'BEROFEL_QWEN3_PUREC_THREADS': '4'}, clear=False):
+            env = purec._environment(Path('qwen_tts.exe'), [])
+        self.assertEqual(env['OMP_NUM_THREADS'], '4')
+        self.assertEqual(env['OPENBLAS_NUM_THREADS'], '1')
+
     def test_profile_validator_accepts_only_finite_1024_float_vectors(self):
         with tempfile.TemporaryDirectory() as folder:
             profile = Path(folder) / 'voice.bin'

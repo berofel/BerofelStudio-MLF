@@ -746,15 +746,17 @@ backend. As execuções após o preparo carregaram o mesmo perfil reutilizável;
 foram uma amostra por modo, não uma mediana. O modelo foi o único Qwen Base
 0.6B local. O Faster-Whisper Base/int8 offline foi usado só como proxy de
 inteligibilidade; WER é calculado por distância de edição em palavras e não
-substitui audição humana.
+substitui audição humana. Correção: os números de WER originalmente anotados
+na primeira execução usaram o sinal de 24 kHz como se fosse 16 kHz. Eles foram
+descartados e recalculados após reamostrar corretamente o WAV para 16 kHz.
 
 | Perfil v0.23 | Síntese reportada | Áudio | RTF | TTFA | WER proxy | Observação |
 |---|---:|---:|---:|---:|---:|---|
-| Original FP32 | 17,4 s | 11,20 s | 1,56 | 2,275 s | 0,20 | Modelo carregou em 0,431 s; sem amostra PCM no limite |
-| INT8 | 12,3 s | 11,68 s | 1,05 | 1,683 s | 0,30 | WAV íntegro; sem amostra PCM no limite |
-| Misto (`--quant-mixed-cpu`) | 11,1 s | 11,36 s | 0,98 | 1,663 s | 0,50 | WAV íntegro; sem amostra PCM no limite |
-| INT4, amostra livre | 47,1 s | 47,52 s | 0,99 | 1,624 s | 1,00 | Whisper reconheceu 3 palavras; 517 amostras PCM no limite |
-| INT4, `--seed 42` | 24,5 s | 26,56 s | 0,92 | 1,638 s | 0,93 | Whisper reconheceu 15 palavras; sem amostra PCM no limite |
+| Original FP32 | 17,4 s | 11,20 s | 1,56 | 2,275 s | 0,167 | Modelo carregou em 0,431 s; sem amostra PCM no limite |
+| INT8 | 12,3 s | 11,68 s | 1,05 | 1,683 s | 0,167 | WAV íntegro; sem amostra PCM no limite |
+| Misto (`--quant-mixed-cpu`) | 11,1 s | 11,36 s | 0,98 | 1,663 s | 0,500 | WAV íntegro; sem amostra PCM no limite |
+| INT4, amostra livre | 47,1 s | 47,52 s | 0,99 | 1,624 s | 1,933 | Whisper produziu 60 palavras, com repetições; 517 amostras PCM no limite |
+| INT4, `--seed 42` | 24,5 s | 26,56 s | 0,92 | 1,638 s | 0,967 | Whisper reconheceu 3 palavras; sem amostra PCM no limite |
 
 O INT4 tem primeira resposta semelhante, mas EOS/duração e inteligibilidade
 variaram muito entre estas duas amostras e ficaram muito piores que FP32/INT8.
@@ -774,6 +776,58 @@ de forma contínua. Não foi medido CPU/RAM para os outros quatro modos neste
 ensaio. A avaliação auditiva humana e testes do build v0.23 dentro do editor
 continuam pendentes; por isso, a decisão é rejeitar a promoção, não certificar
 qualidade perceptiva geral.
+
+#### Escala de threads nos backends integrados (19/11/2026)
+
+O harness agora aceita `--threads 2|4|6|8`, aplica a escolha aos dois
+backends configuráveis e registra-a no JSON. O adaptador Pure C também fixa
+`OPENBLAS_NUM_THREADS=1`: o servidor Qwen controla seu próprio pool e não deve
+herdar um pool OpenBLAS independente configurado para todos os núcleos. Para
+cada valor, executei uma preparação/aquecimento e três frases inéditas, com o
+mesmo perfil autorizado e o mesmo texto em português, em cache isolado e offline.
+CPU é pico do processo/filhos como percentagem da máquina; RSS é o pico desse
+processo/árvore. A qualidade proxy usa Faster-Whisper Base/int8 offline, WAV
+reamostrado de 24 para 16 kHz, e WER de palavra por distância de edição. São
+três repetições de uma única frase, não uma avaliação ampla de pronúncia.
+
+| Backend | Threads | RTF mediano | Primeiro PCM | Pico CPU máquina | Pico RSS | WER mediano (intervalo) |
+|---|---:|---:|---:|---:|---:|---:|
+| Pure C mixed · Turbo | 2 | 1,194 | 0,892 s | 28,2% | 3,517 GiB | 0,200 (0,167–0,200) |
+| Pure C mixed · Turbo | 4 | 0,842 | 0,653 s | 52,5% | 3,515 GiB | 0,167 (0,100–0,200) |
+| Pure C mixed · Turbo | 6 | 0,751 | 0,595 s | 77,0% | 3,520 GiB | 0,133 (0,133–0,233) |
+| Pure C mixed · Turbo | 8 | **0,712** | **0,572 s** | 96,4% | 3,515 GiB | 0,133 (0,033–0,167) |
+| Pure C INT8 · Equilibrado | 2 | 1,251 | 0,889 s | 28,0% | 3,558 GiB | 0,133 (0,100–0,167) |
+| Pure C INT8 · Equilibrado | 4 | 0,898 | 0,663 s | 54,9% | 3,567 GiB | 0,067 (0,033–0,067) |
+| Pure C INT8 · Equilibrado | 6 | **0,826** | 0,619 s | 81,6% | 3,554 GiB | 0,100 (0,033–0,200) |
+| Pure C INT8 · Equilibrado | 8 | 0,838 | 0,595 s | 98,0% | 3,563 GiB | 0,100 (0,067–0,100) |
+
+Turbo mixed escalou até oito threads, com redução de cerca de 5% no RTF frente
+a seis, ao custo de ocupar quase toda a CPU medida. INT8 não ganhou velocidade
+ao passar de seis para oito e também chegou perto da saturação da máquina.
+Por isso, seis threads continuam o padrão recomendado durante edição manual;
+o usuário pode selecionar oito para acelerar uma geração isolada, sabendo que
+resta pouca folga de CPU para outros trabalhos. O teste Qt real em oito threads
+gerou, inseriu na timeline e exportou WAV/MP4 com áudio e vídeo, mas não mediu
+latência de interação por instrumento externo.
+
+As métricas completas e os WAVs estão apenas nos diretórios locais
+`controlled_threads_2`, `controlled_threads_4`, `controlled_threads_6` e
+`controlled_threads_8`, fora do Git.
+
+Uma consulta direta à DLL OpenBLAS sem o servidor ativo mostrou o padrão de 16
+threads. O servidor Qwen, contudo, assume a propriedade do orçamento BLAS e
+configura a própria biblioteca para uma thread; a comparação repetida com o
+limite explícito no adaptador ficou praticamente igual à execução anterior de
+2 threads (Turbo 1,203→1,194 RTF; INT8 1,250→1,251). O limite explícito foi
+mantido como proteção contra builds que não apliquem essa política interna.
+
+Após essas mudanças, rodei a suíte completa offline, com as integrações reais
+Pure C e Qt habilitadas: **324 testes, 1 ignorado, todos os demais aprovados**.
+Também executei fluxos Qt separados com Turbo mixed em 8 threads e INT8 em 6;
+ambos geraram a narração, inseriram na timeline e exportaram WAV/MP4 com áudio
+e vídeo presentes. No ensaio Turbo/8, WAV e MP4 duraram 6,32/6,33 s; no
+INT8/6, 5,52/5,53 s. Qt rodou offscreen, então esses resultados não medem som
+nos alto-falantes nem latência visual de interação.
 
 Fontes upstream: [repositório Qwen3-TTS Pure C](https://github.com/gabriele-mastrapasqua/qwen3-tts),
 [guia de build](https://github.com/gabriele-mastrapasqua/qwen3-tts/blob/main/docs/building.md)

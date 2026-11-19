@@ -75,6 +75,9 @@ def _environment(exe: Path, paths: list[Path]) -> dict[str, str]:
     env = os.environ.copy()
     env['PATH'] = os.pathsep.join(map(str, paths)) + os.pathsep + env.get('PATH', '')
     env['OMP_NUM_THREADS'] = str(threads_for_engine())
+    # The Pure C server owns the request-level thread pool. Prevent a separate
+    # OpenBLAS pool from expanding to the host-wide default (often all cores).
+    env['OPENBLAS_NUM_THREADS'] = '1'
     return env
 
 

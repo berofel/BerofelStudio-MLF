@@ -5,6 +5,7 @@ outputs and isolated caches stay in the user-selected external output folder.
 Example (PowerShell):
   python scripts/benchmark_qwen3_turbo_backends.py `
     --confirm-own-or-authorized-voice `
+    --threads 6 `
     --output-dir "$env:USERPROFILE\Desktop\BerofelStudio_QwenTurbo_AB"
 """
 from __future__ import annotations
@@ -43,6 +44,8 @@ def parse_args() -> argparse.Namespace:
                         help="Confirma autorização para usar o perfil vocal local.")
     parser.add_argument("--output-dir", type=Path, required=True,
                         help="Pasta externa ao repositório para WAVs e JSON.")
+    parser.add_argument("--threads", type=int, choices=(2, 4, 6, 8), default=6,
+                        help="Threads do motor para cada backend (padrão: 6).")
     parser.add_argument("--repeats", type=int, default=3)
     args = parser.parse_args()
     if not args.confirm_own_or_authorized_voice:
@@ -151,6 +154,8 @@ def main() -> int:
         os.environ["BEROFEL_QWEN3_PUREC_MODEL"] = str(installed / "model")
         os.environ["BEROFEL_QWEN3_PUREC_RUNTIME_PATHS"] = str(purec_home / "bin")
         os.environ["BEROFEL_QWEN3_PUREC_PROFILE_CACHE"] = str(isolated / "purec-profiles")
+        os.environ["BEROFEL_QWEN3_PUREC_THREADS"] = str(args.threads)
+        os.environ["BEROFEL_QWEN3_NATIVE_TURBO_THREADS"] = str(args.threads)
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
@@ -243,7 +248,9 @@ def main() -> int:
                     "repetitions": rows,
                 }
             report = {"model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-                      "text": TEXT, "threads": {"native": 6, "purec": 6},
+                      "text": TEXT,
+                      "threads": {"native": args.threads, "purec": args.threads},
+                      "purec_openblas_threads": 1,
                       "offline": True, "warmup": warmup_results, "summary": summary}
             (output / "results.json").write_text(
                 json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
