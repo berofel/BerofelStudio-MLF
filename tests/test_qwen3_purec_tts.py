@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import numpy as np
@@ -14,6 +15,22 @@ import psutil
 
 from berofel.services import qwen3_purec_tts as purec
 from berofel.services.narration_service import NarrationRequest, generate_narration
+
+
+@contextmanager
+def _isolated_qsettings(folder):
+    """Keep opt-in GUI integration tests from overwriting user preferences."""
+    from PySide6.QtCore import QSettings
+    original=QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
+                       'Berofel','BerofelStudio').fileName()
+    target=Path(folder)/'test_settings'
+    target.mkdir(parents=True,exist_ok=True)
+    QSettings.setPath(QSettings.Format.IniFormat,QSettings.Scope.UserScope,str(target))
+    try:
+        yield
+    finally:
+        QSettings.setPath(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
+                          str(Path(original).parent))
 
 
 class PureCTests(unittest.TestCase):
@@ -186,7 +203,8 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                        if item.get('authorized') and item.get('reference_text'))
         test_engine = os.environ.get('BEROFEL_PUREC_TEST_ENGINE', purec.ENGINE_ID)
         with tempfile.TemporaryDirectory(prefix='bfs_purec_prewarm_test_') as work:
-            with patch.dict(os.environ, {'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work}, clear=False):
+            with patch.dict(os.environ, {'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work}, clear=False), \
+                 _isolated_qsettings(work):
                 app = QApplication.instance() or QApplication([])
                 window = MainWindow()
                 try:
@@ -223,13 +241,15 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                         result = original_start(*args, **kwargs)
                         incremental_loads.append(result[1])
                         return result
+                    from functools import wraps
                     from berofel.services.narration_service import generate_narration as real_generate
+                    @wraps(real_generate)
                     def record_generation(request, **kwargs):
                         result = real_generate(request, **kwargs)
                         generated_results.append(result)
                         return result
                     with patch.object(purec, '_start_server', side_effect=record_load), \
-                         patch('berofel.ui.window.generate_narration',side_effect=record_generation):
+                         patch('berofel.ui.window.generate_narration',new=record_generation):
                         panel._generate(False)
                         deadline = time.monotonic() + 180
                         while (window._ai_busy or window.active_task is not None) and time.monotonic() < deadline:
@@ -245,6 +265,8 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                     self.assertEqual(generated_results[0]['profile_prepare_seconds'],0.0)
                     self.assertEqual(generated_results[0]['model_load_seconds'],0.0)
                     self.assertEqual(purec._PROCESS.pid, server_pid)
+                    self.assertIsNotNone(window.narration_stream.first_chunk_latency_seconds,
+                        'Pure C PCM chunks must reach the editor preview player.')
                     print('PUREC_PREWARM_GUI_RESULT ' + json.dumps({
                         key: generated_results[0].get(key) for key in (
                             'engine','duration','generation_seconds',
@@ -264,7 +286,8 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                        if item.get('authorized') and item.get('reference_text'))
         test_engine = os.environ.get('BEROFEL_PUREC_TEST_ENGINE', purec.ENGINE_ID)
         with tempfile.TemporaryDirectory(prefix='bfs_purec_editor_test_') as work:
-            with patch.dict(os.environ, {'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work}, clear=False):
+            with patch.dict(os.environ, {'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work}, clear=False), \
+                 _isolated_qsettings(work):
                 app = QApplication.instance() or QApplication([])
                 window = MainWindow(); window.project.path = str(Path(work) / 'editor_test.bfsproj')
                 window.show(); app.processEvents()
@@ -304,6 +327,8 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                 self.assertTrue(Path(clips[0].source).is_file())
                 if test_engine == purec.ENGINE_ID:
                     self.assertIn('8 threads',panel.audio_history[-1][1])
+                    self.assertIsNotNone(window.narration_stream.first_chunk_latency_seconds,
+                        'Pure C PCM chunks must reach the editor preview player.')
                 self.assertGreater(clips[0].duration, 1.0)
                 self.assertIn(clips[0].source, window.project.media)
                 from berofel.core.project import Clip

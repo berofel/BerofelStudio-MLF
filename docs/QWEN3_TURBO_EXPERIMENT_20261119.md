@@ -1003,3 +1003,36 @@ Reprodução dos ensaios 2/4: use o comando documentado acima, altere `--threads
 para `2` ou `4` e informe uma nova pasta externa. Os relatórios ASR detalhados
 estão junto de `results.json` em cada pasta; nenhuma gravação ou amostra foi
 adicionada ao repositório.
+
+#### Fluxo Qwen no MainWindow e responsividade Qt (19/11/2026)
+
+Executei a classe de integração opt-in `PureCEditorIntegrationTests` no
+Windows com `QT_QPA_PLATFORM=offscreen`, sem rede e com o perfil local
+autorizado. **2 testes reais passaram**: o usuário selecionou perfil/motor,
+pré-carregou o modelo, gerou áudio inédito, recebeu chunks PCM no
+`NarrationStreamPlayer`, inseriu uma narração na timeline e exportou MP4. A
+exportação verificou áudio e vídeo presentes e duração de 5,84 s. No teste de
+reutilização, o pré-aquecimento levou 4,703 s; a narração de 7,20 s levou
+5,658 s de síntese (RTF 0,786), primeiro chunk em 0,520 s, cache do perfil
+atingido e 0 s de nova preparação/carregamento na geração. Estes tempos
+dependem da execução e não incluem avaliação por alto-falantes.
+
+Também medi o caminho real `MainWindow.generate_narration_ui` com 8 threads e
+o modelo em cache, com timer Qt de 10 ms durante a geração: primeira resposta
+de síntese em 0,491 s, percentil 95 do intervalo do timer de 10,43 ms, máximo
+23,12 ms e nenhum intervalo acima de 50 ms. Não houve diálogo de erro; o WAV
+foi produzido. A plataforma foi offscreen, portanto isso verifica o event loop
+e entrega enfileirada dos chunks, não fluidez visual em monitor nem saída em
+alto-falantes.
+
+Durante a revisão encontrei que o teste de prewarm instrumentava o serviço com
+um `Mock` de assinatura genérica; `Task` inspeciona a assinatura para decidir
+quais callbacks encaminhar e, assim, o próprio teste deixava de passar
+`audio_chunk` ao trabalho. O teste agora usa uma função instrumentada com a
+assinatura preservada, afirma que o primeiro chunk chegou ao player e executa
+as configurações Qt em diretório temporário, para não salvar preferências de
+teste no perfil real do usuário. A classe de integração foi repetida após a
+correção e ambos os testes passaram.
+
+Artefatos de áudio para comparação auditiva local permanecem fora do Git em
+`C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119\ui_responsiveness_prepared_6_8_20261119`.
