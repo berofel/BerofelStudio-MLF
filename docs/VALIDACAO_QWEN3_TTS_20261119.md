@@ -49,3 +49,7 @@ gravação original. Esses testes não substituem a geração real acima.
   desempenho e comparação de qualidade neste hardware.
 - Modelos/caches antigos não são excluídos automaticamente. O usuário pode
   removê-los manualmente depois; nenhuma limpeza é feita pela atualização.
+
+## Aditivo — operação experimental Qwen Turbo (mesma data)
+
+Esta validação registrava o estado antes da etapa experimental do backend nativo. O status foi ampliado em [`QWEN3_TURBO_EXPERIMENT_20261119.md`](QWEN3_TURBO_EXPERIMENT_20261119.md): Q4_0 misto no modelo Base foi integrado como opção Turbo/Equilibrado e gerou offline pelo serviço canônico; a prévia incremental também foi exercitada na interface com sink de áudio simulado. O Oficial Python continua padrão e fallback. Q4 nativo usa x-vector (não ICL); qualidade subjetiva, escuta pelos alto-falantes e bloqueio de rede por firewall seguem sem prova.

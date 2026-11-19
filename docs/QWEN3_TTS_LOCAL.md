@@ -6,7 +6,7 @@ O motor ativo de narração e clonagem é `Qwen/Qwen3-TTS-12Hz-0.6B-Base`, carre
 
 O painel `Narração` exige uma gravação autorizada e o texto exato falado nela. Áudio de referência é normalizado em um arquivo temporário e a fonte não é modificada. Perfis locais guardam cópia privada da referência e sua transcrição. A geração final é um WAV durável adicionado como bloco de áudio na timeline.
 
-O único motor distribuído para narração é `Qwen/Qwen3-TTS-12Hz-0.6B-Base`. O projeto não instala Pocket TTS, Qwen 1.7B ou `CustomVoice` na distribuição padrão. O idioma suportado depende do modelo; a interface oferece apenas idiomas mapeados pelo worker instalado.
+O único modelo de narração é `Qwen/Qwen3-TTS-12Hz-0.6B-Base`. O backend oficial Python float32 continua selecionado por padrão e como fallback. Existe também um backend nativo Q4_0 misto, experimental e opcional, para narração rápida; ele usa o mesmo modelo Base convertido localmente, não é incluído nos instaladores padrão e aparece na interface apenas quando o runtime experimental está instalado. O projeto não instala Pocket TTS, Qwen 1.7B ou `CustomVoice` na distribuição padrão. O idioma suportado depende do modelo; a interface oferece apenas idiomas mapeados pelo worker instalado.
 
 ## Preparar e usar
 
@@ -29,7 +29,7 @@ Não é necessário fazer login no Hugging Face para inferência. A geração n�
 
 ## Validação local
 
-O histórico resumido e as instruções para repetir os testes estão em [`VALIDACAO_QWEN3_TTS_20261118.md`](VALIDACAO_QWEN3_TTS_20261118.md). Os testes de geração real usam uma referência autorizada já configurada localmente e não registram caminho, transcrição ou áudio.
+O histórico resumido e as instruções para repetir os testes estão em [`VALIDACAO_QWEN3_TTS_20261118.md`](VALIDACAO_QWEN3_TTS_20261118.md) e [`VALIDACAO_QWEN3_TTS_20261119.md`](VALIDACAO_QWEN3_TTS_20261119.md). A validação do backend nativo, benchmarks e limitações estão em [`QWEN3_TURBO_EXPERIMENT_20261119.md`](QWEN3_TURBO_EXPERIMENT_20261119.md). Os testes de geração real usam uma referência autorizada já configurada localmente e não registram caminho, transcrição ou áudio.
 
 ## Limitações conhecidas
 
@@ -40,7 +40,7 @@ O histórico resumido e as instruções para repetir os testes estão em [`VALID
 - Perfis preexistentes `.safetensors` Pocket permanecem em disco, mas não são compatíveis com Qwen Base; importe uma gravação de referência em formato de áudio.
 - O worker mantém o modelo em memória até o editor fechar; em 16 GB isso reduz espaço livre enquanto o editor está aberto. O benchmark observou pico agregado de RSS de 6,41 GiB.
 - No benchmark de CPU deste computador, o worker persistente reduziu os carregamentos a um por sessão e reaproveitou o prompt após a primeira geração. A latência, porém, ficou acima da duração do áudio; consulte [`BENCHMARK_QWEN3_TTS_20261118.md`](BENCHMARK_QWEN3_TTS_20261118.md). Não é geração em tempo real.
-- A versão Python instalada (`qwen-tts==0.1.1`) não expõe um método `generate_voice_clone_streaming`; o argumento `non_streaming_mode` da API não significa que áudio incremental esteja disponível. INT8/INT4 e backend nativo ainda não foram medidos/qualificados para o fluxo Windows com clonagem. Não os ativamos por padrão.
+- A versão Python instalada (`qwen-tts==0.1.1`) não expõe um método `generate_voice_clone_streaming`; o argumento `non_streaming_mode` da API não significa que áudio incremental esteja disponível. O caminho Q4 nativo tem streaming experimental de prévia e benchmark no Ryzen 7 5700G, mas não substitui o backend oficial: usa x-vector sem ICL, e a qualidade perceptiva da voz ainda precisa de avaliação humana. A quantização dinâmica INT8 do PyTorch mostrou ganho pequeno e maior RSS neste hardware; não é ativada. INT4 dinâmico do PyTorch falhou por dtype não suportado. Q4 nativo é um formato separado e permanece opt-in.
 
 ## Motor legado Pocket
 
