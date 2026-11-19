@@ -1232,3 +1232,36 @@ lentos no curto. Recomendação: conservar o default do runtime (4096 neste x86)
 e não expor outro controle no editor. WAVs, logs e JSONs por repetição ficam
 fora do Git em `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_PoolSpin_20261119`
 e `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_PoolSpinMedium_20261119`.
+
+#### A/B de `OPENBLAS_NUM_THREADS` no serviço HTTP do editor (19/11/2026)
+
+A recomendação upstream para builds capazes de controlar OpenBLAS é deixar
+`OPENBLAS_NUM_THREADS` ausente, para que o motor dimensione o BLAS. O executável
+Windows deste ambiente, porém, reporta `blas=claimed but no thread control` e
+`openblas threads now -1`; não confirma que o símbolo de controle/consulta BLAS
+esteja disponível. Avaliei o caminho HTTP canônico com o mesmo adaptador e
+modelo, perfil preparado, 6 threads, Pure C mixed, três frases curtas e três
+médias inéditas por condição, cache de narração isolado e resultados externos.
+A única mudança no experimento temporário foi retirar a variável do ambiente do
+processo em vez de fixá-la em 1; nenhum código de produto ou configuração global
+foi alterado.
+
+| OPENBLAS_NUM_THREADS | Geração curta | RTF curto | Primeiro áudio curto | Geração média | RTF médio | Primeiro áudio médio |
+|---|---:|---:|---:|---:|---:|---:|
+| `1` (política do editor) | 4,636 s | 0,783 | 0,535 s | 14,150 s | 0,754 | 0,644 s |
+| ausente (`engine_default`) | 4,941 s | 0,779 | **0,508 s** | 14,380 s | 0,749 | 0,643 s |
+
+A remoção antecipou o primeiro chunk curto em 27 ms, praticamente empatou no
+médio e não melhorou a geração total; os RTFs diferem menos de 0,005. Saídas
+estocásticas tiveram durações distintas, então geração total e RTF não apontam
+um vencedor confiável com apenas três repetições. As medições CLI independentes
+também não mostraram ganho total consistente para 1, 2, 4 ou ambiente ausente.
+Como este build não confirma controle de threads pelo próprio motor, mantive a
+política do editor em uma thread para evitar risco de uma equipe BLAS sem limite
+sobrepor-se ao pool CPU. O resultado não justifica mudar o backend produtivo.
+
+Amostras HTTP e relatório estão fora do Git em
+`C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_ServerOpenBLAS_20261119\results.json`.
+A fonte upstream documenta a política de ownership e a condição de ausência da
+variável para builds com controle efetivo em
+[feature-flags.md v0.23.0](https://github.com/gabriele-mastrapasqua/qwen3-tts/blob/e391ec5467b0218eeb175f4888ad65b259d1e7c7/docs/feature-flags.md#L248).

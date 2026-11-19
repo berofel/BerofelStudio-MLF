@@ -156,6 +156,9 @@ def main() -> int:
     parser.add_argument("--pool-spin", type=int, choices=(0, 1024, 4096, 8192, 16384, 65536),
                         default=None,
                         help="Override QWEN_POOL_SPIN; omitted uses the engine's x86 default.")
+    parser.add_argument("--openblas-threads", choices=("engine_default", "1", "2", "4", "6", "8"),
+                        default="1",
+                        help="OPENBLAS_NUM_THREADS value; engine_default removes it from child environment.")
     parser.add_argument("--repeats", type=int, choices=(1, 2, 3, 4, 5), default=3)
     parser.add_argument("--modes", nargs="+", choices=("mixed", "int8"), default=("mixed", "int8"))
     args = parser.parse_args()
@@ -183,7 +186,10 @@ def main() -> int:
     environment = purec._environment(exe, runtime_paths, args.threads)
     environment["HF_HUB_OFFLINE"] = "1"
     environment["TRANSFORMERS_OFFLINE"] = "1"
-    environment["OPENBLAS_NUM_THREADS"] = "1"
+    if args.openblas_threads == "engine_default":
+        environment.pop("OPENBLAS_NUM_THREADS", None)
+    else:
+        environment["OPENBLAS_NUM_THREADS"] = args.openblas_threads
     if args.pool_spin is None:
         environment.pop("QWEN_POOL_SPIN", None)
     else:
@@ -211,11 +217,14 @@ def main() -> int:
                     record = {"mode": mode, "length": length, "characters": len(text),
                         "repetition": repetition, "seed": seed, "threads": args.threads,
                         "pool_spin": args.pool_spin if args.pool_spin is not None else "engine_default",
+                        "openblas_threads": args.openblas_threads,
                         "wall_seconds_including_startup": round(wall, 3), **timings,
                         "precision_log_lines": [line.strip() for line in raw.splitlines()
                             if any(marker in line for marker in (
                                 "QWEN_CP_PREC=", "Quantizing CP weights", "Code Predictor:",
                                 "talker linear:", "CP linear:"))],
+                        "cpu_config_log_lines": [line.strip() for line in raw.splitlines()
+                            if "execution budget:" in line or "openblas threads now" in line],
                         "peak_rss_gib": round(resources["peak_rss_bytes"] / (1024 ** 3), 3),
                         "peak_cpu_machine_percent": round(resources["peak_cpu_machine_percent"], 1),
                         "audio": audio, "wav": wav_path.name}
@@ -243,6 +252,7 @@ def main() -> int:
         "model_load_server_seconds": prepared.get("model_load_seconds"),
         "threads": args.threads,
         "pool_spin": args.pool_spin if args.pool_spin is not None else "engine_default",
+        "openblas_threads": args.openblas_threads,
         "lengths": list(args.lengths), "repeats": args.repeats,
         "summary_medians": summary, "records": records}
     (output / "results.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
