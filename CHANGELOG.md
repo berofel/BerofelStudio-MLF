@@ -12,6 +12,7 @@
 - Clonagem detalhada pode gerar sem transcrição de referência usando o caminho x-vector-only oficial; transcrição continua exigida ao salvar um perfil para narração rápida reutilizável.
 - O smoke test Qt agora aciona a ação real Gerar no painel Narração, e não injeta diretamente uma requisição no controlador. Com referência sintética, Qwen offline percorreu player, timeline, WAV, MP4 e salvar/reabrir projeto em 35,7 s; isso valida integração, não semelhança vocal.
 - Um segundo smoke test prepara um perfil local temporário pela mesma sessão Qwen e gera pela biblioteca rápida da UI; o metadado confirmou reutilização do prompt, um único worker/modelo, e o fluxo de player/timeline/WAV/MP4/projeto terminou em 32,7 s. Referência sintética não valida identidade vocal.
+- O smoke test rápido agora encerra o worker após preparar o perfil e o reinicia antes da geração; a segunda sessão recuperou o prompt persistido (cache hit; um carregamento do modelo) e concluiu o fluxo offline em 40,4 s. Isso simula a fronteira de sessão do worker, não a avaliação de voz pessoal.
 - Histórico de performance continua em `docs/BENCHMARK_QWEN3_TTS_20261118.md`; clonagem de voz pessoal ainda aguarda confirmação de que a gravação configurada é autorizada.
 
 ## 0.10.0-alpha.1 — restauração do Qwen3-TTS (18/11/2026)

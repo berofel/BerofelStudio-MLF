@@ -89,6 +89,10 @@ def main() -> int:
             app.processEvents()
             if window.active_task is not None:
                 raise TimeoutError('A preparação do perfil rápido excedeu 600 segundos.')
+            # Simulate closing the editor session: stop the resident model
+            # worker, then ensure the saved voice prompt survives its restart.
+            from berofel.services.qwen3_tts_local import stop_local_worker
+            stop_local_worker()
         else:
             panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
             panel.sample_path.setText(str(sample.resolve()))
@@ -114,7 +118,10 @@ def main() -> int:
             raise RuntimeError('A validação da interface esperava uma inferência Qwen nova, não um cache hit.')
         if args.synthetic_fast_profile:
             metadata=list((root/'app_cache'/'qwen3_tts').rglob('result.json'))
-            if not metadata or not any(__import__('json').loads(path.read_text(encoding='utf-8')).get('prompt_cache_hit') is True for path in metadata):
+            entries=[__import__('json').loads(path.read_text(encoding='utf-8'))
+                     for path in metadata]
+            if not any(item.get('prompt_cache_hit') is True and
+                       item.get('model_load_count') == 1 for item in entries):
                 raise RuntimeError('A narração rápida não reutilizou o prompt vocal preparado.')
         rate,pcm=wavfile.read(narration.source)
         signal=np.asarray(pcm,dtype=np.float64)
