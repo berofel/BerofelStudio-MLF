@@ -103,3 +103,27 @@ workers no final.
 ## Reproduzir
 
 Execute `scripts/benchmark_qwen3_warm_cpu.py` no venv da distribuição após configurar uma referência e transcrição no painel Narração. O script imprime somente medições/cache, usa caches de saída temporários e para o worker ao final.
+
+## Investigação isolada de INT8 — 19/11/2026
+
+Foi testada a quantização dinâmica INT8 do PyTorch 2.15.0+cpu, num processo
+temporário e sem alterar o worker ou o modelo armazenado. A primeira tentativa
+`inplace=False` falhou porque o `deepcopy` interno do PyTorch não consegue
+serializar um `dict_keys` presente no objeto Qwen. Com `inplace=True`, a
+conversão levou 15,86 s, quantizou 249 camadas lineares e o caminho real
+`create_voice_clone_prompt` → `generate_voice_clone` produziu áudio finito e
+com sinal: 10,16 s a 24 kHz em 48,09 s de inferência (RTF 4,73). A preparação
+da referência levou 1,06 s; o carregamento observado em uma inicialização
+separada do mesmo ensaio levou 6,05 s. O teste usou a referência local já
+autorizada, manteve texto e caminho privados e operou offline.
+
+Esse resultado prova compatibilidade funcional pontual da clonagem com INT8,
+mas **não** prova qualidade vocal equivalente: ainda falta comparação A/B
+perceptiva e de sinal com a precisão original, repetição de medições, RSS sob
+quantização e texto longo. A conversão também impõe custo inicial significativo
+e usa uma API PyTorch marcada como depreciada. Portanto, INT8 permanece somente
+uma variante experimental de diagnóstico; a distribuição continua em float32,
+única precisão validada integralmente no fluxo do editor. INT4, backend nativo
+e streaming de áudio incremental continuam sem implementação/teste apropriados
+para o prompt de clonagem. Não foi feita quantização persistente nem foi alterado
+qualquer perfil/cache do usuário.
