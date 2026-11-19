@@ -319,6 +319,15 @@ repacking Q4 padrão ligado/desligado. Com repack desligado, RTF mediano foi
 não houve ganho. Os quatro WAVs continuaram válidos e sem clipping, mas a
 variante não foi avaliada por ASR por já perder em desempenho e não foi integrada.
 
+O build com `GGML_LTO=ON` + IPO também compilou. No texto curto, RTF mediano
+foi 1,176 contra 1,112 no `main` normal. Um dos dois textos médios atingiu o
+limite de 512 tokens e produziu 40,96 s de áudio; esse resultado é uma falha de
+geração/cap e foi excluído de qualquer comparação de qualidade. A única execução
+média sem cap não permite inferir ganho; LTO não foi aprovado nem conectado ao
+editor. Os dois arquivos GGUF Q4 locais (`qwen3-tts-0.6b-q4_0.gguf` e
+`qwen3-tts-0.6b-q4_0-exp.gguf`) também foram verificados: mesmo tamanho e SHA-256,
+portanto não constituem duas quantizações para A/B.
+
 Os comandos de benchmark e binários experimentais ficam apenas na pasta externa
 `C:\\Users\\Berofel\\Desktop\\BerofelStudio_QwenTurbo_Benchmark_20261119\\portable_build`.
 As únicas alterações na árvore Git desta rodada são os registros técnicos; o
