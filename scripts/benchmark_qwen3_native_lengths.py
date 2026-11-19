@@ -69,11 +69,15 @@ def main()->int:
     parser.add_argument('--voice-profile-id',default='')
     parser.add_argument('--confirm-own-or-authorized-voice',action='store_true')
     parser.add_argument('--repeats',type=int,default=1)
+    parser.add_argument('--chunk-frames',type=int,choices=range(1,13),
+        default=int(os.getenv('BEROFEL_QWEN3_NATIVE_STREAM_CHUNK_FRAMES','6')))
+    parser.add_argument('--lengths',nargs='+',choices=tuple(TEXTS),default=tuple(TEXTS))
     args=parser.parse_args()
     if not args.confirm_own_or_authorized_voice:
         parser.error('confirme autorização com --confirm-own-or-authorized-voice')
     if not 1<=args.repeats<=3:
         parser.error('--repeats deve ficar entre 1 e 3')
+    os.environ['BEROFEL_QWEN3_NATIVE_STREAM_CHUNK_FRAMES']=str(args.chunk_frames)
     profiles=VoiceProfileManager().list_profiles()
     profile=(next((p for p in profiles if p['id']==args.voice_profile_id and
                    p.get('authorized')),None) if args.voice_profile_id else
@@ -100,14 +104,16 @@ def main()->int:
             engines=('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced')
             for repeat in range(args.repeats):
                 order=engines if repeat%2==0 else tuple(reversed(engines))
-                for length,text in TEXTS.items():
+                for length in args.lengths:
+                    text=TEXTS[length]
                     for engine in order:
                         # Clear only this isolated run's result cache, so each
                         # identical text is a genuine inference on every repeat.
                         run_cache=root/'cache'
-                        if run_cache.exists():
-                            import shutil
-                            shutil.rmtree(run_cache)
+                        native_cache=root/'qwen3_native_tts'
+                        import shutil
+                        for isolated_cache in (run_cache,native_cache):
+                            if isolated_cache.exists():shutil.rmtree(isolated_cache)
                         request=NarrationRequest(text=text,voice=str(reference.resolve()),
                             language='portuguese',consent=True,
                             project_path=str(project),title=f'{length}_{repeat}_{engine}',
@@ -130,6 +136,7 @@ def main()->int:
                         if result.get('cache_hit'):
                             raise RuntimeError('O benchmark reutilizou áudio em vez de sintetizar texto novo.')
                         record={'length':length,'characters':len(text),'engine':engine,
+                            'stream_chunk_frames':args.chunk_frames,
                             'repeat':repeat+1,'wall_seconds':round(elapsed,3),
                             'generation_seconds':round(float(result.get('generation_seconds',elapsed)),3),
                             'model_load_seconds':round(float(result.get('model_load_seconds',0)),3),
@@ -147,17 +154,18 @@ def main()->int:
                         print(json.dumps(record,ensure_ascii=False,sort_keys=True),flush=True)
             stop.set();watcher.join(timeout=2)
             summary={'machine':'local Windows CPU','records':len(records),
+                'stream_chunk_frames':args.chunk_frames,
                 'peak_aggregate_rss_gib':round(stats['peak_rss']/(1024**3),3),
                 'peak_cpu_percent_of_logical_machine':round(stats['peak_cpu'],1),
                 'offline_env':{'HF_HUB_OFFLINE':os.environ.get('HF_HUB_OFFLINE'),
                                'TRANSFORMERS_OFFLINE':os.environ.get('TRANSFORMERS_OFFLINE')},
                 'records_data':records}
-            result_file=Path.home()/'Desktop'/'BerofelStudio_QwenTurbo_Benchmark_20261119'/'native_lengths_results.json'
+            result_file=Path.home()/'Desktop'/'BerofelStudio_QwenTurbo_Benchmark_20261119'/f'native_lengths_chunk_{args.chunk_frames}_results.json'
             result_file.parent.mkdir(parents=True,exist_ok=True)
             result_file.write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
             print(json.dumps({k:v for k,v in summary.items() if k!='records_data'},
                              ensure_ascii=False,sort_keys=True),flush=True)
-            print('[PASSOU] Benchmark nativo Q4 curto/médio/longo; WAVs temporários removidos.')
+            print(f'[PASSOU] Benchmark nativo Q4 ({", ".join(args.lengths)}); WAVs temporários removidos.')
     finally:
         stop.set();watcher.join(timeout=2)
         stop_native_worker()

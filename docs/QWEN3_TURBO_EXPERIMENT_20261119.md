@@ -89,6 +89,23 @@ Em 19/11/2026 executei `scripts/benchmark_qwen3_native_lengths.py --confirm-own-
 
 Carregamento do servidor em cada caso ficou entre 0,800 e 0,818 s; preparação do perfil foi 0 s reportados e o cache do embedding acertou em todos. Pico agregado amostrado nas seis gerações: 1,946 GiB; pico de CPU agregado normalizado pelos processadores lógicos: 51,7%. O primeiro chunk não é o início da frase inteira reproduzida: é o primeiro bloco PCM de aproximadamente 0,5 s que o stream incremental disponibiliza. O Turbo venceu em RTF neste conjunto, mas uma repetição não define um vencedor estável e as saídas têm durações distintas. JSON sem transcrições ou caminhos privados: `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119\native_lengths_results.json`; os WAVs de execução foram removidos com o diretório temporário. Não foi feita avaliação perceptiva ou ASR nesta rodada.
 
+### Tamanho do chunk de preview
+
+Para investigar o atraso inicial, medi o mesmo texto curto com chunks de 1, 2, 3 e 6 frames, duas inferências inéditas por perfil e configuração, alternando a ordem dos perfis. O teste registra a primeira chamada do callback PCM desde o início da geração e remove apenas os caches temporários próprios. Um chunk de 1 frame não melhorou consistentemente o primeiro PCM e quase duplicou o custo (RTF ~2,1); 2 e 3 frames também elevaram o RTF. Não encontrei ganho de latência repetível que justifique perder vazão ou criar mais gravações/consultas no fluxo. O padrão permanece em 6 frames; a variável local `BEROFEL_QWEN3_NATIVE_STREAM_CHUNK_FRAMES` agora permite experimentação entre 1 e 12, com valor padrão 6.
+
+| Chunk (frames) | Perfil | Síntese mediana | RTF mediano | Primeiro PCM mediano |
+|---:|---|---:|---:|---:|
+| 1 | Turbo Q4 | 15,080 s | 2,094 | 3,634 s |
+| 2 | Turbo Q4 | 8,291 s | 1,524 | 3,101 s |
+| 3 | Turbo Q4 | 8,339 s | 1,333 | 3,450 s |
+| 6 | Turbo Q4 | 7,007 s | 1,123 | 3,528 s |
+| 1 | Equilibrado Q4 | 13,299 s | 2,173 | 2,978 s |
+| 2 | Equilibrado Q4 | 9,463 s | 1,546 | 2,882 s |
+| 3 | Equilibrado Q4 | 7,579 s | 1,353 | 2,739 s |
+| 6 | Equilibrado Q4 | 5,871 s | 1,147 | 2,731 s |
+
+São medianas de apenas duas gerações; a saída do modelo é estocástica e o carregamento frio aparece em uma das medições. Os JSONs de cada configuração ficam fora do Git em `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119\native_lengths_chunk_<frames>_results.json`. Para reproduzir: `scripts/benchmark_qwen3_native_lengths.py --confirm-own-or-authorized-voice --repeats 2 --lengths curta --chunk-frames <1|2|3|6>`.
+
 ### Alternativa em C puro investigada
 
 O repositório [gabriele-mastrapasqua/qwen3-tts](https://github.com/gabriele-mastrapasqua/qwen3-tts) declara suporte ao Base 0.6B, clonagem por referência, perfis x-vector/`.qvoice`, streaming PCM, INT8/INT4, MIT e SIMD AVX2. A documentação atual chama a rota Windows de beta via WSL2; a evidência de x86 publicada mede um Ryzen 7 6800H sob WSL2, não este Ryzen 7 5700G. As observações desse projeto (incluindo RTF/Q4/threads) não são comparáveis diretamente com as do runtime CHE3MZ, por serem builds, caminhos de inferência e metodologias diferentes.
@@ -101,6 +118,7 @@ Não foram obtidas métricas separadas de prefill/talker/code predictor para o r
 
 - `tests.test_qwen3_native_tts` e testes Turbo do painel: testes focados passaram; teste opcional real passou usando modelo/perfil local.
 - Validação real adicional pelo controle **Gerar** na interface, em sessão offline (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`), com perfil autorizado configurado: Turbo Q4 enviou 10 chunks/453.120 bytes e Equilibrado Q4 enviou 10 chunks/460.800 bytes ao callback de prévia. Em ambos, o WAV produzido não estava silencioso, o player reproduziu/pausou e buscou posição (volume silenciado no teste automatizado), o bloco foi inserido na timeline, WAV e MP4 foram exportados com áudio e o projeto foi salvo/reaberto. A checagem do fluxo confirma ainda que o embedding vocal preparado foi reutilizado. O tempo total do smoke test Qt foi 7,2 s (Turbo) e 7,4 s (Equilibrado), incluindo montagem/exportação; não é latência de síntese. Script reproduzível: `scripts/validar_fluxo_qwen3_editor.py --configured-fast-profile --native-engine qwen3-tts-native-q4` ou `qwen3-tts-native-q4-balanced` com `--confirm-own-or-authorized-voice`. A saída física foi silenciada; a escuta subjetiva A/B ainda precisa do usuário.
+- Repetição do fluxo de UI depois de tornar o tamanho do chunk configurável, mantendo o padrão 6: offline, Turbo enviou 12 chunks/552.960 bytes (8,3 s no smoke completo) e Equilibrado 10 chunks/430.080 bytes (7,0 s). Ambos voltaram a passar WAV, player/busca, timeline, exportações e reabertura do projeto.
 - Benchmark nativo curto/médio/longo offline e com callback PCM, 6 inferências inéditas: `scripts/benchmark_qwen3_native_lengths.py`. O resultado acima é uma rodada exploratória, não uma mediana.
 - Fluxo Qt real em modo offscreen e ambiente offline (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`): ação Gerar no painel → WAV não silencioso → media source/player em reprodução → clipe inserido na timeline → export WAV e MP4 com streams de áudio/vídeo. WAV: 2.880.102 bytes; MP4: 122.415 bytes; 10 s. Artefatos privados de teste ficaram fora do repositório em `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119`.
 - O playback foi iniciado pelo player Qt; o teste foi offscreen e não prova que o som foi ouvido nos alto-falantes.

@@ -32,6 +32,10 @@ BALANCED_ENGINE_ID='qwen3-tts-native-q4-balanced'
 ENGINE_IDS=(ENGINE_ID,BALANCED_ENGINE_ID)
 _LANGUAGES={'portuguese':'portuguese','english':'english','spanish':'spanish',
             'french':'french','italian':'italian','german':'german'}
+def _stream_chunk_frames()->int:
+    try:return max(1,min(12,int(os.environ.get('BEROFEL_QWEN3_NATIVE_STREAM_CHUNK_FRAMES','6'))))
+    except (TypeError,ValueError):return 6
+
 def _thread_count(variable:str,default:int,legacy:str='') -> int:
     try:
         value=os.environ.get(variable)
@@ -335,7 +339,8 @@ def generate_native_clone(request: NarrationRequest,progress=None,runner=None,
                 'embedding_in':str(embedding)}
             if stream_file is not None:
                 stream_file.unlink(missing_ok=True)
-                payload.update({'stream_file':str(stream_file),'chunk_frames':6})
+                payload.update({'stream_file':str(stream_file),
+                                'chunk_frames':_stream_chunk_frames()})
             started=time.perf_counter()
             try:
                 process.stdin.write(json.dumps(payload,ensure_ascii=False)+'\n')

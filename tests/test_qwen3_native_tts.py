@@ -54,6 +54,19 @@ class NativeQwenAdapterTests(unittest.TestCase):
             self.assertEqual(native.threads_for_engine(native.ENGINE_ID),4)
             self.assertEqual(native.threads_for_engine(native.BALANCED_ENGINE_ID),8)
 
+    def test_stream_chunk_frames_are_configurable_and_bounded(self):
+        with patch.dict(os.environ,{},clear=False):
+            os.environ.pop('BEROFEL_QWEN3_NATIVE_STREAM_CHUNK_FRAMES',None)
+            self.assertEqual(native._stream_chunk_frames(),6)
+            os.environ['BEROFEL_QWEN3_NATIVE_STREAM_CHUNK_FRAMES']='2'
+            self.assertEqual(native._stream_chunk_frames(),2)
+            os.environ['BEROFEL_QWEN3_NATIVE_STREAM_CHUNK_FRAMES']='0'
+            self.assertEqual(native._stream_chunk_frames(),1)
+            os.environ['BEROFEL_QWEN3_NATIVE_STREAM_CHUNK_FRAMES']='99'
+            self.assertEqual(native._stream_chunk_frames(),12)
+            os.environ['BEROFEL_QWEN3_NATIVE_STREAM_CHUNK_FRAMES']='invalid'
+            self.assertEqual(native._stream_chunk_frames(),6)
+
     def test_wav_validation_accepts_audio_and_rejects_silence(self):
         with tempfile.TemporaryDirectory() as folder:
             audible=Path(folder)/'audible.wav'
