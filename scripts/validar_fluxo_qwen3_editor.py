@@ -42,6 +42,8 @@ def main() -> int:
         help='prepara um perfil descartável com referência sintética e valida a rota de narração rápida da UI.')
     reference_mode.add_argument('--configured-fast-profile',action='store_true',
         help='copia a referência autorizada configurada para um perfil temporário e valida a rota rápida real.')
+    reference_mode.add_argument('--saved-fast-profile',action='store_true',
+        help='abre um processo novo e gera usando o perfil Qwen persistido, sem prepará-lo novamente.')
     parser.add_argument('--confirm-own-or-authorized-voice',action='store_true',
         help='confirma autorização para processar a referência local configurada.')
     parser.add_argument('--persist-profile',action='store_true',
@@ -97,6 +99,13 @@ def main() -> int:
                 os.environ['BEROFEL_VOICE_PROFILE_DIR']=str(root/'voice_profiles')
                 profile_name='Perfil local de validação'
             source_stat=sample.stat()
+        elif args.saved_fast_profile:
+            from berofel.services.voice_profiles import VoiceProfileManager
+            profiles=VoiceProfileManager().list_profiles()
+            if len(profiles)!=1 or not profiles[0]['authorized']:
+                raise RuntimeError('O teste de reabertura requer exatamente um perfil local autorizado.')
+            profile=profiles[0]
+            source_stat=sample.stat()
         project=Project(width=320,height=180,fps=12)
         project_file=root/'qwen_flow.bfs';project.path=str(project_file)
         still=root/'timeline.png';Image.new('RGB',(320,180),(28,38,54)).save(still)
@@ -104,7 +113,12 @@ def main() -> int:
                               kind='image',title='validation background'))
         window=MainWindow();window.project=project;window.refresh([])
         panel=window.narration_panel
-        if args.configured_fast_profile:
+        if args.saved_fast_profile:
+            profile_data=f'voice-profile:{profile["id"]}'
+            panel.voice.setCurrentIndex(panel.voice.findData(profile_data))
+            if panel.voice.currentData()!=profile_data:
+                raise RuntimeError('A instância nova não carregou o perfil da biblioteca rápida.')
+        elif args.configured_fast_profile:
             from unittest.mock import patch
             panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
             panel.sample_path.setText(str(sample.resolve()))
@@ -125,7 +139,7 @@ def main() -> int:
             profile_data=f'voice-profile:{profile["id"]}'
             panel.voice.setCurrentIndex(panel.voice.findData(profile_data))
             window.prepare_narration_voice(profile['sample_path'],reference_text,profile['name'])
-        if args.synthetic_fast_profile or args.configured_fast_profile:
+        if args.synthetic_fast_profile or args.configured_fast_profile or args.saved_fast_profile:
             prepare_deadline=time.monotonic()+600
             while time.monotonic()<prepare_deadline and window.active_task is not None:
                 app.processEvents();time.sleep(.05)
@@ -171,7 +185,7 @@ def main() -> int:
             if not any(item.get('prompt_cache_hit') is True and
                        item.get('model_load_count') == 1 for item in output_metadata):
                 raise RuntimeError('A narração rápida não reutilizou o prompt vocal preparado.')
-            if args.configured_fast_profile:
+            if args.configured_fast_profile or args.saved_fast_profile:
                 current=sample.stat()
                 if (current.st_size,current.st_mtime_ns)!=(source_stat.st_size,source_stat.st_mtime_ns):
                     raise RuntimeError('A gravação original foi alterada durante a criação/reuso do perfil.')
@@ -217,7 +231,9 @@ def main() -> int:
         if restored is None or restored.source!=narration.source:
             raise RuntimeError('Salvar/reabrir projeto não preservou o bloco de narração.')
 
-        if args.configured_fast_profile:
+        if args.saved_fast_profile:
+            print('[PASSOU] Processo novo reutilizou o perfil rápido persistido e o prompt em cache offline.')
+        elif args.configured_fast_profile:
             if args.persist_profile:
                 print('[PASSOU] Perfil pessoal salvo pela UI, narração rápida offline após reiniciar o worker e prompt local persistido.')
             else:

@@ -165,6 +165,19 @@ condicionamento persistidos. O teste conserva a referência original. Não use
 `--persist-profile` se não quiser criar um perfil local durável; o script se
 recusa a substituir um perfil com o mesmo nome.
 
+Após salvar esse perfil, foi iniciada outra instância Python/Qt e executado o
+fluxo completo com o perfil já persistido, sem chamar a preparação vocal:
+
+```powershell
+python scripts/validar_fluxo_qwen3_editor.py --saved-fast-profile `
+  --confirm-own-or-authorized-voice
+```
+
+Esse processo novo confirmou cache de prompt hit, um carregamento do modelo na
+sessão, geração offline, player, timeline, WAV, MP4 e projeto salvo/reaberto.
+O fluxo terminou em 65,4 s incluindo exportações; essa latência total não é o
+tempo isolado até o primeiro áudio.
+
 Para obter uma métrica técnica de semelhança do perfil configurado, use
 no ambiente Qwen isolado:
 
