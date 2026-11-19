@@ -116,6 +116,15 @@ cache temporário vazio e depois testa as três durações com o modelo e a voz
 preparados. Esses campos instrumentam execuções futuras; não são resultados
 medidos até a próxima rodada real com referência autorizada.
 
+Os smoke tests de aplicação aceitam `--synthetic-reference` para validar a
+inferência real, Qt, timeline, player, DSP e exportação sem usar amostras de
+pessoas. Esses testes explicitamente não comprovam clonagem ou identidade:
+
+```powershell
+python scripts/validar_fluxo_qwen3_editor.py --synthetic-reference
+python scripts/validar_ajuste_fino_tts_local.py --synthetic-reference
+```
+
 ## Investigação isolada de INT8 — 19/11/2026
 
 Foi testada a quantização dinâmica INT8 do PyTorch 2.15.0+cpu, em processos

@@ -7,6 +7,7 @@
 - A configuração padrão é 4 threads CPU + 1 thread inter-op, baseada na medição anterior do Ryzen 7 5700G (uma execução: 62,53 s/RTF 6,06 com 4 threads contra 66,78 s/RTF 6,47 com 8). INT8/INT4, backend nativo e streaming incremental seguem desativados por falta de validação compatível com clonagem e qualidade.
 - Adicionada verificação técnica de referência e cobertura de cache persistente/seleção única do modelo nos testes.
 - Worker Qwen e benchmark agora separam carregamento do modelo, preparação/reuso do perfil vocal e inferência; o benchmark também amostra CPU normalizada e RSS do processo e filhos.
+- Os validadores Qt e DSP aceitam referência sintética para smoke tests reais offline de Qwen, player, timeline e exportação sem alegar identidade vocal.
 - Histórico de performance continua em `docs/BENCHMARK_QWEN3_TTS_20261118.md`; validação completa no Qt deve ser repetida após esta mudança antes de considerar a atualização pronta.
 
 ## 0.10.0-alpha.1 — restauração do Qwen3-TTS (18/11/2026)

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import argparse
 from pathlib import Path
 import subprocess
 import sys
@@ -30,11 +31,17 @@ from berofel.services.voice_dsp import (voice_pitch_filters,
 
 
 def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--synthetic-reference',action='store_true',
+        help='usa sinal sintético local; valida pipeline Qwen/DSP/exportação, não identidade vocal.')
+    args=parser.parse_args()
     settings=QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
                        'Berofel','BerofelStudio')
-    reference=Path(str(settings.value('narration/sample_path','') or '')).expanduser()
-    reference_text=str(settings.value('narration/reference_text','') or '').strip()
-    if not reference.is_file() or not reference_text:
+    reference=(Path(str(settings.value('narration/sample_path','') or '')).expanduser()
+               if not args.synthetic_reference else None)
+    reference_text=(str(settings.value('narration/reference_text','') or '').strip()
+                    if not args.synthetic_reference else '')
+    if not args.synthetic_reference and (not reference.is_file() or not reference_text):
         raise RuntimeError('Configure uma referência autorizada e sua transcrição exata na aba Narração.')
     old_cache=os.environ.get('BEROFEL_AI_CACHE')
     old_hf=os.environ.get('HF_HUB_OFFLINE')
@@ -42,6 +49,16 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix='bfs_voice_e2e_') as folder:
             root=Path(folder)
+            if args.synthetic_reference:
+                reference=root/'synthetic_reference.wav'
+                rate=24000;duration=3.2
+                t=np.arange(round(rate*duration),dtype=np.float64)/rate
+                fundamental=np.where(t<1.05,132.,np.where(t<2.1,165.,147.))
+                phase=2*np.pi*np.cumsum(fundamental)/rate
+                envelope=np.minimum(1.,np.minimum(t/.12,(duration-t)/.12))
+                signal=envelope*(.22*np.sin(phase)+.11*np.sin(2*phase)+.055*np.sin(3*phase))
+                from scipy.io import wavfile
+                wavfile.write(str(reference),rate,np.clip(signal*32767,-32768,32767).astype('<i2'))
             os.environ['BEROFEL_AI_CACHE']=str(root/'cache'/'ai')
             os.environ['HF_HUB_OFFLINE']='1'
             os.environ['TRANSFORMERS_OFFLINE']='1'
@@ -144,6 +161,8 @@ def main():
                        'audio_video_duration_delta_seconds':round(av_duration_delta,6),
                        'decode':'PASS'},
                 'user_assets_modified':False,
+                'reference_type':'synthetic' if args.synthetic_reference else 'authorized_saved',
+                'identity_validated':False if args.synthetic_reference else None,
                 'offline_mode':True,
             },ensure_ascii=False,indent=2))
     finally:

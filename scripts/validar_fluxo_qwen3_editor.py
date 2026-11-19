@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import argparse
 os.environ.update({'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1',
                    'HF_HUB_DISABLE_TELEMETRY':'1'})
 
@@ -34,16 +35,31 @@ from berofel.ui.window import MainWindow
 
 
 def main() -> int:
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--synthetic-reference',action='store_true',
+        help='usa um sinal sintético local para validar UI/linha do tempo/exportação; não valida clonagem nem semelhança.')
+    args=parser.parse_args()
     settings=QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
                        'Berofel','BerofelStudio')
-    sample=Path(str(settings.value('narration/sample_path','') or '')).expanduser()
-    reference_text=str(settings.value('narration/reference_text','') or '').strip()
-    if not sample.is_file() or not reference_text:
+    sample=(Path(str(settings.value('narration/sample_path','') or '')).expanduser()
+            if not args.synthetic_reference else None)
+    reference_text=(str(settings.value('narration/reference_text','') or '').strip()
+                    if not args.synthetic_reference else '')
+    if not args.synthetic_reference and (not sample.is_file() or not reference_text):
         raise RuntimeError('Configure uma referência autorizada e sua transcrição exata no painel Narração.')
 
     app=QApplication.instance() or QApplication([])
     with tempfile.TemporaryDirectory(prefix='bfs_qwen_editor_flow_') as folder:
         root=Path(folder)
+        if args.synthetic_reference:
+            sample=root/'synthetic_reference.wav'
+            rate=24000;duration=3.2
+            t=np.arange(round(rate*duration),dtype=np.float64)/rate
+            fundamental=np.where(t<1.05,132.,np.where(t<2.1,165.,147.))
+            phase=2*np.pi*np.cumsum(fundamental)/rate
+            envelope=np.minimum(1.,np.minimum(t/.12,(duration-t)/.12))
+            signal=envelope*(.22*np.sin(phase)+.11*np.sin(2*phase)+.055*np.sin(3*phase))
+            wavfile.write(str(sample),rate,np.clip(signal*32767,-32768,32767).astype('<i2'))
         # Keep test UI preferences isolated from the user's normal profile.
         settings_dir=root/'settings';settings_dir.mkdir()
         QSettings.setPath(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
@@ -121,7 +137,10 @@ def main() -> int:
         if restored is None or restored.source!=narration.source:
             raise RuntimeError('Salvar/reabrir projeto não preservou o bloco de narração.')
 
-        print('[PASSOU] Geração Qwen real acionada pela interface offline.')
+        if args.synthetic_reference:
+            print('[PASSOU] Inferência Qwen real com referência sintética pela rota da interface offline (não valida identidade vocal).')
+        else:
+            print('[PASSOU] Geração Qwen real acionada pela interface offline com referência configurada.')
         print(f'[PASSOU] Timeline/player Qt: áudio inserido, reprodução e busca verificadas (saída de áudio silenciada).')
         print(f'[PASSOU] WAV exportado: {wav_rate} Hz; conteúdo não silencioso.')
         print(f'[PASSOU] MP4 exportado: vídeo+áudio, {duration:.2f}s.')
