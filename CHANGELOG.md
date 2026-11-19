@@ -1,3 +1,8 @@
+## Correção incremental — referências de voz com pausas longas
+
+- A verificação de gravação agora recomenda outra amostra quando mais de 50% do áudio estiver quase silencioso; ao escolher o arquivo, o painel mostra esse aviso sem alterar a gravação original.
+- Validado com o perfil local atual (55,3% quase silencioso) e com teste Qt; suíte: 312 aprovados, 1 ignorado.
+
 ## Atualização do fluxo de voz — diretriz Qwen Base único
 
 - Rota canônica de narração migrada para `services/narration_service.py`; qualquer backend legado diferente do Qwen3-TTS Base é rejeitado. Pocket TTS deixa de ter worker, dependências e atalhos de instalação na árvore executável. Modelos, perfis, projetos e áudios já presentes no PC não foram removidos.
