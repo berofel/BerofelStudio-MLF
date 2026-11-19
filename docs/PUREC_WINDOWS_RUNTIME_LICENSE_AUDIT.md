@@ -53,9 +53,14 @@ An isolated attempt to compile with the available LLVM-MinGW 23.1.6 toolchain
 avoiding MSYS imports first exposed POSIX gaps (`posix_memalign`, `sys/mman.h`,
 and `setenv`). Temporary compatibility shims in an external experiment copy
 resolved enough of those issues to compile several additional translation
-units. The build then stopped because the server uses POSIX socket headers and
-APIs (`sys/socket.h`), which this toolchain does not provide. Those shims were
-not copied into the application repository. No replacement binary was
+units. The build then stopped because the server includes POSIX socket headers
+and APIs (`sys/socket.h`, `netinet/in.h`, `poll.h`) absent from this toolchain.
+A follow-up source audit found this is not a header-only port: the server also
+uses `fork`/`waitpid`, process pipes, shared anonymous `mmap`, POSIX
+nonblocking-fd controls and socket timeout semantics. A Windows-native port
+would need an explicit WinSock and worker-process/thread implementation, then
+fresh functional, loopback and performance validation. The temporary shims and
+porting notes remain outside the repository. No replacement binary was
 promoted; the loopback-hardened MSYS2 build remains the only tested executable,
 strictly local and experimental.
 
