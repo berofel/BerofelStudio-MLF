@@ -28,6 +28,8 @@ from .narration_service import (LANGUAGES, NarrationRequest, persistent_folder,
                                 _process_flags, validate_request)
 
 ENGINE_ID = 'qwen3-tts-purec-mixed'
+ENGINE_INT8_ID = 'qwen3-tts-purec-int8'
+PUREC_ENGINES = (ENGINE_ID, ENGINE_INT8_ID)
 _LANGUAGES = {'portuguese': 'Portuguese', 'english': 'English',
               'spanish': 'Spanish', 'french': 'French',
               'italian': 'Italian', 'german': 'German'}
@@ -107,14 +109,23 @@ def _valid_profile(path: Path) -> bool:
         return False
 
 
+def _quantization_flag(engine: str) -> list[str]:
+    if engine == ENGINE_ID:
+        return ['--quant-mixed-cpu']
+    if engine == ENGINE_INT8_ID:
+        return ['--int8']
+    raise ValueError(f'Perfil de execução Pure C inválido: {engine}')
+
+
 def prepare_voice_profile(reference: str, reference_text: str = '',
                           consent: bool = False, control=None,
-                          stage=None) -> dict:
+                          stage=None, engine: str = ENGINE_ID) -> dict:
     """Prepare and securely cache a reusable Pure C x-vector for local TTS."""
     source = Path(reference).expanduser().resolve()
     validate_request('preparar voz', str(source), 'portuguese', consent)
     if not is_ready():
         raise RuntimeError('Pure C não está instalado. Configure o executável, o runtime MSYS2 e o modelo Qwen3 Base local.')
+    _quantization_flag(engine)
     exe, model, paths = _layout()
     source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     key = digest({'schema': 1, 'voice_sha256': source_hash,
@@ -123,10 +134,10 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
     destination = cache / (key + '.bin')
     if _valid_profile(destination):
         with _LOCK:
-            _, model_load = _start_server(destination, control)
+            _, model_load = _start_server(destination, control, engine)
         return {'path': str(destination), 'cache_hit': True,
                 'profile_prepare_seconds': 0.0, 'model_load_seconds': model_load,
-                'engine': ENGINE_ID}
+                'engine': engine}
     cache.mkdir(parents=True, exist_ok=True)
     if stage:
         stage('Pure C • preparando perfil vocal local reutilizável')
@@ -165,10 +176,10 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
     # Keep the expensive model resident so the next voice generation can stream
     # immediately. The server holds the selected profile until a profile switch.
     with _LOCK:
-        _, model_load = _start_server(destination, control)
+        _, model_load = _start_server(destination, control, engine)
     return {'path': str(destination), 'cache_hit': False,
             'profile_prepare_seconds': elapsed, 'model_load_seconds': model_load,
-            'engine': ENGINE_ID}
+            'engine': engine}
 
 
 def _stop_server_locked() -> None:
@@ -195,17 +206,19 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _start_server(profile: Path, control=None) -> tuple[int, float]:
+def _start_server(profile: Path, control=None,
+                  engine: str = ENGINE_ID) -> tuple[int, float]:
     global _PROCESS, _PROCESS_KEY, _PORT, _MODEL_LOAD_SECONDS, _PROFILE_SECONDS
     exe, model, paths = _layout()
+    quantization = _quantization_flag(engine)
     key = digest({'model': _model_key(exe, model), 'profile': hashlib.sha256(profile.read_bytes()).hexdigest(),
-                  'threads': threads_for_engine(), 'precision': 'mixed-cpu'})
+                  'threads': threads_for_engine(), 'precision': engine})
     if _PROCESS is not None and _PROCESS.poll() is None and _PROCESS_KEY == key:
         return _PORT, _MODEL_LOAD_SECONDS
     _stop_server_locked()
     port = _free_port()
     command = [str(exe), '-d', str(model), '--load-voice', str(profile),
-               '--xvector-only', '--quant-mixed-cpu', '-j', str(threads_for_engine()),
+               '--xvector-only', *quantization, '-j', str(threads_for_engine()),
                '--max-request-seconds', '600', '--serve', str(port)]
     started = time.perf_counter()
     process = subprocess.Popen(command, cwd=str(exe.parent), env=_environment(exe, paths),
@@ -239,13 +252,16 @@ def _start_server(profile: Path, control=None) -> tuple[int, float]:
 def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
                          control=None, stage=None, audio_chunk=None) -> dict:
     validate_request(request.text, request.voice, request.language, request.consent)
+    if request.engine not in PUREC_ENGINES:
+        raise ValueError('Selecione um modo de execução Pure C reconhecido.')
     if request.language not in _LANGUAGES:
         raise ValueError('Idioma não suportado pelo Pure C Qwen3 Base.')
     if not is_ready():
         raise RuntimeError('Pure C não está configurado; selecione Original ou Q4 no editor.')
     if control: control.checkpoint()
     profile = prepare_voice_profile(request.voice, request.reference_text,
-                                    request.consent, control, stage)
+                                    request.consent, control, stage,
+                                    engine=request.engine)
     folder = persistent_folder(request.project_path)
     folder.mkdir(parents=True, exist_ok=True)
     base = (''.join(ch if ch.isalnum() or ch in '-_ ' else '_' for ch in request.title).strip() or 'Narração')[:80]
@@ -253,7 +269,8 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
     pending = output.with_suffix('.pending.wav')
     stream_stats = {'first_audio_chunk_seconds': None, 'streamed_pcm_bytes': 0, 'streamed_chunk_count': 0}
     with _LOCK:
-        port, model_load = _start_server(Path(profile['path']), control)
+        port, model_load = _start_server(Path(profile['path']), control,
+                                         request.engine)
         start = time.perf_counter()
         conn = http.client.HTTPConnection('127.0.0.1', port, timeout=1800)
         payload = json.dumps({'text': request.text.strip(), 'language': _LANGUAGES[request.language],
@@ -306,10 +323,14 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
             except OSError: pass
     duration = frames / 24000.0
     generation = time.perf_counter() - start
+    quantization = ('Talker INT8 + Code Predictor INT4'
+                    if request.engine == ENGINE_ID else 'Talker INT8 + Code Predictor INT8')
+    execution_profile = ('Turbo Pure C mixed CPU'
+                         if request.engine == ENGINE_ID else 'Equilibrado Pure C INT8')
     return {'path': str(output), 'duration': duration, 'title': request.title,
-            'engine': ENGINE_ID, 'threads': threads_for_engine(),
-            'execution_profile': 'Turbo Pure C mixed CPU',
-            'precision': 'Talker INT8 + Code Predictor INT4',
+            'engine': request.engine, 'threads': threads_for_engine(),
+            'execution_profile': execution_profile,
+            'precision': quantization,
             'cache_hit': False, 'profile_cache_hit': bool(profile['cache_hit']),
             'profile_prepare_seconds': float(profile['profile_prepare_seconds']),
             'model_load_seconds': float(model_load), 'generation_seconds': generation,

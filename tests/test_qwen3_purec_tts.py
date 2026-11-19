@@ -51,12 +51,20 @@ class PureCTests(unittest.TestCase):
             default = NarrationRequest(text='Teste', voice=str(voice), consent=True)
             turbo = NarrationRequest(text='Teste', voice=str(voice), consent=True,
                                      engine=purec.ENGINE_ID)
+            balanced = NarrationRequest(text='Teste', voice=str(voice), consent=True,
+                                        engine=purec.ENGINE_INT8_ID)
             self.assertEqual(default.engine, 'qwen3-tts-local')
             with patch.object(purec, 'generate_purec_clone',
-                              return_value={'engine': purec.ENGINE_ID}) as backend:
-                result = generate_narration(turbo)
-            self.assertEqual(result['engine'], purec.ENGINE_ID)
-            backend.assert_called_once()
+                              side_effect=lambda req, **_: {'engine': req.engine}) as backend:
+                self.assertEqual(generate_narration(turbo)['engine'], purec.ENGINE_ID)
+                self.assertEqual(generate_narration(balanced)['engine'], purec.ENGINE_INT8_ID)
+            self.assertEqual(backend.call_count, 2)
+
+    def test_quantization_modes_are_explicit_and_distinct(self):
+        self.assertEqual(purec._quantization_flag(purec.ENGINE_ID), ['--quant-mixed-cpu'])
+        self.assertEqual(purec._quantization_flag(purec.ENGINE_INT8_ID), ['--int8'])
+        with self.assertRaises(ValueError):
+            purec._quantization_flag('unsupported')
 
 
 @unittest.skipUnless(os.environ.get('BEROFEL_RUN_PUREC_TURBO_INTEGRATION') == '1',
@@ -119,6 +127,7 @@ class PureCEditorIntegrationTests(unittest.TestCase):
 
         profile = next(item for item in VoiceProfileManager().list_profiles()
                        if item.get('authorized') and item.get('reference_text'))
+        test_engine = os.environ.get('BEROFEL_PUREC_TEST_ENGINE', purec.ENGINE_ID)
         with tempfile.TemporaryDirectory(prefix='bfs_purec_editor_test_') as work:
             with patch.dict(os.environ, {'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work}, clear=False):
                 app = QApplication.instance() or QApplication([])
@@ -128,9 +137,10 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                 original = (panel.voice.currentIndex(), panel.clone_engine.currentIndex(),
                             panel.text.toPlainText(), panel.language.currentIndex(), panel.name.text())
                 profile_index = panel.voice.findData(f'voice-profile:{profile["id"]}')
-                engine_index = panel.clone_engine.findData(purec.ENGINE_ID)
+                engine_index = panel.clone_engine.findData(test_engine)
                 self.assertGreaterEqual(profile_index, 0)
                 self.assertGreaterEqual(engine_index, 0)
+                self.assertGreaterEqual(panel.clone_engine.findData(purec.ENGINE_INT8_ID), 0)
                 for widget in (panel.voice, panel.clone_engine, panel.text, panel.language,
                                panel.name, panel.sample_path, panel.reference_text):
                     widget.blockSignals(True)
@@ -138,7 +148,8 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                 panel.clone_engine.setCurrentIndex(engine_index)
                 panel.language.setCurrentIndex(panel.language.findData('portuguese'))
                 panel.text.setPlainText('Esta narração está sendo inserida na timeline do editor.')
-                panel.name.setText('Pure C editor test')
+                title = f'Pure C editor test {test_engine}'
+                panel.name.setText(title)
                 panel._update_custom()
                 for widget in (panel.voice, panel.clone_engine, panel.text, panel.language,
                                panel.name, panel.sample_path, panel.reference_text):
@@ -150,7 +161,7 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                 app.processEvents()
                 self.assertFalse(window._ai_busy, 'editor generation did not finish')
                 self.assertFalse(window._open_error_dialogs, 'editor reported a generation error')
-                clips = [clip for clip in window.project.clips if clip.title == 'Pure C editor test']
+                clips = [clip for clip in window.project.clips if clip.title == title]
                 self.assertEqual(len(clips), 1)
                 self.assertTrue(Path(clips[0].source).is_file())
                 self.assertGreater(clips[0].duration, 1.0)
@@ -180,7 +191,7 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                 self.assertAlmostEqual(mp4_duration, clips[0].duration, delta=.3)
                 print('PUREC_GUI_RESULT ' + json.dumps({
                     'clip_id': clips[0].id, 'duration': clips[0].duration,
-                    'source': clips[0].source, 'engine': purec.ENGINE_ID,
+                    'source': clips[0].source, 'engine': test_engine,
                     'wav_seconds': wav_duration, 'mp4_seconds': mp4_duration,
                     'mp4_video': mp4_has_video, 'mp4_audio': mp4_has_audio}, ensure_ascii=False))
                 for widget in (panel.voice, panel.clone_engine, panel.text, panel.language,

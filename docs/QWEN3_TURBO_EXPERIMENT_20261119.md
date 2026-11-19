@@ -486,9 +486,9 @@ as transcrições ficam fora do Git na pasta de benchmark para escuta local.
 
 #### Integração experimental no Berofel Studio
 
-O Pure C foi conectado ao serviço canônico de narração por meio do backend
-opt-in `qwen3-tts-purec-mixed`; o modelo Original permanece padrão e o Q4
-existente continua selecionável como fallback. O seletor só oferece Pure C se
+O Pure C foi conectado ao serviço canônico de narração por meio dos backends
+opt-in `qwen3-tts-purec-mixed` (Turbo) e `qwen3-tts-purec-int8` (Equilibrado);
+o modelo Original permanece padrão e o Q4 existente continua selecionável como fallback. O seletor só oferece Pure C se
 encontrar o executável e os pesos Base locais. O perfil de voz é um x-vector
 privado em cache, preparado uma vez e reutilizado; a síntese usa o servidor
 HTTP local em processo oculto, e envia PCM incremental ao player Qt. Como o
@@ -548,3 +548,10 @@ redistribuível ainda são necessárias antes de qualquer release.
 O Pure C declara MIT; OpenBLAS usa BSD-3-Clause ([documentação oficial](https://www.openmathlib.org/OpenBLAS/docs/)); o pacote `msys2-runtime` declara GPL-3.0-or-later ([manifesto upstream](https://github.com/msys2/MSYS2-packages/blob/master/msys2-runtime/PKGBUILD)); e as bibliotecas GCC só recebem a exceção de runtime onde o arquivo aplicável traz o aviso correspondente ([GCC Runtime Library Exception](https://www.gnu.org/licenses/gcc-exception-3.1.html)). O executável e DLLs foram copiados para o diretório local de runtime do usuário apenas para validação. A distribuição pública continua bloqueada até auditar avisos e obrigações de cada DLL exata.
 
 Para rollback de código: `git switch feat/qwen3-base-optimized` ou checkout de `backup/qwen3-0.6b-stable`. Para rollback integral, restaure a pasta externa; o bundle Git sozinho não contém dados de voz/modelos. O backend original não foi alterado nem removido.
+
+Na validação posterior, ambos os modos Pure C foram selecionados dentro do
+editor offline, geraram áudio, foram inseridos na timeline e exportados em WAV
+e MP4 com as faixas esperadas. O modo INT8 usa `--int8`; alternar entre ele e
+Turbo reinicia o servidor para aplicar a precisão correta. Original continua
+selecionado por padrão até o usuário escolher explicitamente um modo
+experimental.

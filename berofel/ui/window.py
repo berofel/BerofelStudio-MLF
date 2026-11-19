@@ -1376,11 +1376,12 @@ class MainWindow(QMainWindow):
         self._ai_busy=True
         self.narration_panel.busy(True)
         streaming=request.engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced',
-                                    'qwen3-tts-purec-mixed')
+                                    'qwen3-tts-purec-mixed','qwen3-tts-purec-int8')
         if streaming:self.narration_stream.begin()
         engine_label=({'qwen3-tts-native-q4':'Qwen Turbo Q4 · 6 threads experimental',
                        'qwen3-tts-native-q4-balanced':'Qwen Equilibrado Q4 · 8 threads experimental',
-                       'qwen3-tts-purec-mixed':'Qwen Turbo Pure C mixed · 6 threads experimental'}
+                       'qwen3-tts-purec-mixed':'Qwen Turbo Pure C mixed · 6 threads experimental',
+                       'qwen3-tts-purec-int8':'Qwen Equilibrado Pure C INT8 · 6 threads experimental'}
                       .get(request.engine,'Qwen3-TTS Base local'))
         self.statusBar().showMessage(f'Batata Quente: {engine_label} gerando em processo isolado...')
         def ready(result):
@@ -1425,7 +1426,8 @@ class MainWindow(QMainWindow):
             self.narration_panel.status.setText(
                 'Perfil salvo. A preparação será feita na próxima narração, pois a fila de IA está ocupada.')
             return
-        if self.narration_panel.clone_engine.currentData()=='qwen3-tts-purec-mixed':
+        engine=self.narration_panel.clone_engine.currentData()
+        if engine in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8'):
             from berofel.services.qwen3_purec_tts import is_ready,prepare_voice_profile
             if not is_ready():
                 self.narration_panel.status.setText(
@@ -1438,6 +1440,7 @@ class MainWindow(QMainWindow):
                 self.narration_panel.status.setText(
                     f'Perfil Pure C {cached}. A voz será reutilizada enquanto o modelo estiver ativo.')
             task=self._task(prepare_voice_profile,purec_ready,reference,reference_text,True,
+                            None,None,engine,
                             label='Preparar perfil Pure C'+(f' · {name}' if name else ''))
             if task is None:
                 self._ai_busy=False;self.narration_panel.busy(False);return
