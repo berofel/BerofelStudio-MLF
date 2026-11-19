@@ -28,6 +28,70 @@ O pico agregado de RSS amostrado do processo de teste e seus filhos foi 6,41 GiB
 
 O principal ganho comprovado é estrutural: não recarregar o modelo por pedido e reutilizar o prompt da voz. O worker mantém a memória ocupada durante a sessão e libera-a ao fechar o editor. A comparação de threads, precisão e backends permanece pendente; números publicados para hardware diferente não foram tratados como resultado deste computador.
 
+## Revalidação após a configuração 4 intra-op / 1 inter-op — 19/11/2026
+
+O benchmark foi repetido neste Ryzen 7 5700G, com o mesmo modelo CPU e cache
+temporário vazio, em modo offline. Esta rodada capturou saída mais curta e é
+complementar aos resultados anteriores, não uma comparação controlada entre
+versões: texto/duração diferem e cada configuração tem uma única amostra.
+
+| Texto | Duração WAV | Tempo parede | RTF | Condicionamento | Worker |
+|---|---:|---:|---:|---|---|
+| Curto, português | 5,04 s | 36,10 s | 7,16 | Miss; referência preparada nesta sessão | PID 15512 |
+| Longo, português | 48,48 s | 259,93 s | 5,36 | Hit; reutilizado no mesmo worker | Mesmo PID |
+
+O pico agregado amostrado foi 6,48 GiB. Houve 1 carregamento do modelo, ambos
+os WAVs tinham sinal e não houve hit do cache de áudio. O caso curto inclui a
+latência de carregar o modelo/preparar a voz; portanto, o RTF do caso longo é
+mais representativo de uma sessão aquecida. Essa medição não prova o tempo de
+inicialização de uma máquina diferente.
+
+## Fontes oficiais e limites das otimizações
+
+- A documentação da API oficial descreve `create_voice_clone_prompt` seguido
+  de `generate_voice_clone` e recomenda guardar/reutilizar o prompt de voz.
+- A mesma API descreve `non_streaming_mode=False` como simulação de entrada de
+  texto em streaming; não disponibiliza fluxo de áudio incremental no método
+  `generate_voice_clone` usado pelo editor. O áudio chega após a geração do
+  trecho.
+- O Base oficial disponível é BF16; o carregador deste app converte para
+  `torch.float32` em CPU. A distribuição oficial `qwen-tts` não ativa INT8/INT4
+  neste caminho. Conversão/quantização de comunidade não foi testada com
+  `voice_clone_prompt` e não foi habilitada.
+- Não foi compilado backend nativo Windows compatível com o prompt Base. Logo,
+  a versão mais rápida/precisa entre backends, INT8 e INT4 ainda é **não
+  medida**; a decisão atual é usar o backend oficial testado com precisão
+  completa.
+
+Fontes consultadas: [repositório oficial Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS),
+[API oficial de inferência](https://github.com/QwenLM/Qwen3-TTS/blob/main/qwen_tts/inference/qwen3_tts_model.py),
+[model card Base 0.6B](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base).
+
+## Comparação controlada de lifecycle — 19/11/2026
+
+`scripts/benchmark_qwen3_warm_cpu.py --threads 4 --compare-lifecycle` repetiu
+a **mesma frase de 10,32 s** com a mesma referência, WAV cache distinto por caso
+e cache de voz compartilhado. Os testes foram em ordem fixa e uma vez cada;
+portanto, mostram o custo desta sessão, não uma faixa estatística.
+
+| Cenário | Tempo parede | RTF | Cache do perfil | Processo/modelo |
+|---|---:|---:|---|---|
+| Worker frio + condicionamento novo | 62,97 s | 6,10 | miss | PID 5664, 1 carga |
+| Mesmo worker + perfil em memória | 53,99 s | 5,23 | hit | Mesmo PID 5664, sem recarga |
+| Worker/modelo recarregado + perfil em disco | 62,46 s | 6,05 | hit | PID 19308, 1 carga nessa sessão |
+
+Pico agregado amostrado: 5,73 GiB. Todos os WAVs tinham sinal e nenhum usou
+cache de áudio. O ensaio mostra que o perfil em memória reduz cerca de 9 s
+frente a carregar o modelo novamente nessa execução; a leitura do prompt do
+disco preserva o condicionamento entre sessões, mas não evita o custo de
+carregar o próprio modelo após fechar o editor. O worker permanece quente
+somente durante a sessão atual.
+
+Reprodução: execute o comando indicado com o modelo instalado e uma referência
+autorizada já configurada no painel. O script opera offline, mantém o texto e o
+caminho da gravação fora da saída, usa pastas temporárias e encerra todos os
+workers no final.
+
 ## Fontes técnicas
 
 - [Repositório oficial Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)

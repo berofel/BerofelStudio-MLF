@@ -28,6 +28,11 @@ def _load_model(model_path: str | Path):
     try:threads=int(configured) if configured else max(1,min(4,cpu_total-2))
     except ValueError:threads=max(1,min(4,cpu_total-2))
     torch.set_num_threads(max(1,min(cpu_total,threads)))
+    # CPU tests on the target Ryzen 7 5700G measured a small regression and
+    # higher RSS with 8 intra-op threads; a single inter-op worker avoids
+    # oversubscribing the 8 physical cores while keeping inference parallel.
+    try:torch.set_num_interop_threads(1)
+    except RuntimeError:pass  # Torch may already have started an inter-op pool.
     return Qwen3TTSModel.from_pretrained(str(model_path),device_map='cpu',
         dtype=torch.float32,attn_implementation='eager',local_files_only=True)
 

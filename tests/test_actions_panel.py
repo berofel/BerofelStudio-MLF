@@ -228,6 +228,8 @@ class ActionsUITests(unittest.TestCase):
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
         self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
         self.assertFalse(panel.sample_path.isHidden())
+        self.assertFalse(panel.validate_sample.isHidden())
+        self.assertFalse(panel.clone_detail_title.isHidden())
         self.assertTrue(panel.activate_cloning.isHidden())
         self.assertIn('Qwen3-TTS Base',panel.license_note.text())
         self.assertFalse(panel.clone_engine.isVisible())

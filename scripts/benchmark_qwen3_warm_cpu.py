@@ -26,7 +26,7 @@ from PySide6.QtCore import QSettings
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 
-from berofel.services.pocket_tts_service import NarrationRequest
+from berofel.services.narration_service import NarrationRequest
 from berofel.services.qwen3_tts_local import generate_local_clone,stop_local_worker
 
 SHORT_TEXT='Olá! Este é um teste curto de aquecimento do Qwen3-TTS.'
@@ -59,6 +59,8 @@ def main() -> int:
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--threads',type=int,default=int(os.getenv('BEROFEL_QWEN3_CPU_THREADS','8')))
     parser.add_argument('--short-only',action='store_true',help='Mede somente o pedido curto, útil para comparar threads.')
+    parser.add_argument('--compare-lifecycle',action='store_true',
+        help='Compara frase idêntica com worker frio, aquecido e recarregado; força WAVs sem cache.')
     args=parser.parse_args()
     if not 1<=args.threads<=32:
         raise ValueError('--threads deve ficar entre 1 e 32.')
@@ -74,14 +76,25 @@ def main() -> int:
     try:
         with tempfile.TemporaryDirectory(prefix='bfs_qwen_benchmark_') as folder:
             root=Path(folder)
-            os.environ['BEROFEL_AI_CACHE']=str(root/'cache'/'ai')
             os.environ['BEROFEL_QWEN3_PROMPT_CACHE']=str(root/'voice-prompts')
             project=root/'benchmark.bfs'
             stop=threading.Event();peak=[0]
             watcher=threading.Thread(target=peak_rss,args=(stop,peak),daemon=True)
             watcher.start();records=[]
-            cases=(('curta',SHORT_TEXT),) if args.short_only else (('curta',SHORT_TEXT),('longa',LONG_TEXT))
-            for name,text in cases:
+            if args.compare_lifecycle:
+                cases=(('modelo_frio_perfil_novo',SHORT_TEXT,True),
+                       ('modelo_aquecido_perfil_reutilizado',SHORT_TEXT,False),
+                       ('modelo_recarregado_perfil_persistido',SHORT_TEXT,True))
+            else:
+                lengths=(('curta',SHORT_TEXT),) if args.short_only else (
+                    ('curta',SHORT_TEXT),('longa',LONG_TEXT))
+                cases=tuple((name,text,False) for name,text in lengths)
+            for name,text,restart in cases:
+                if restart:stop_local_worker()
+                # Use identical text but force a fresh WAV for each lifecycle case.
+                cache=(root/'cache'/name/'ai' if args.compare_lifecycle else
+                       root/'cache'/'ai')
+                os.environ['BEROFEL_AI_CACHE']=str(cache)
                 request=NarrationRequest(text=text,voice=str(reference.resolve()),
                     language='portuguese',consent=True,project_path=str(project),
                     title=f'Qwen benchmark {name}',engine='qwen3-tts-local',
@@ -92,6 +105,7 @@ def main() -> int:
                 duration=len(samples)/float(rate)
                 record={'case':name,'audio_seconds':duration,'elapsed_seconds':elapsed,
                     'rtf':elapsed/duration if duration else None,
+                    'cache_hit':bool(result['cache_hit']),
                     'prompt_cache_hit':result['prompt_cache_hit'],
                     'model_load_count':result['model_load_count'],
                     'worker_pid':result['worker_pid'],
@@ -100,18 +114,25 @@ def main() -> int:
                     raise RuntimeError('Benchmark não produziu inferência nova com sinal válido.')
                 records.append(record)
             stop.set();watcher.join(timeout=2)
-            if len({r['worker_pid'] for r in records})!=1:
-                raise RuntimeError('O worker ou o modelo foi reiniciado entre as duas narrações.')
+            expected_pid_count=2 if args.compare_lifecycle else 1
+            if len({r['worker_pid'] for r in records})!=expected_pid_count:
+                raise RuntimeError('O padrão de worker não corresponde ao modo de comparação escolhido.')
             if any(r['model_load_count']!=1 for r in records):
                 raise RuntimeError('Métrica do worker indica carregamento repetido do modelo.')
-            if not args.short_only and [r['prompt_cache_hit'] for r in records]!=[False,True]:
+            expected_prompt_hits=([False,True,True] if args.compare_lifecycle else
+                ([False,True] if not args.short_only else None))
+            if expected_prompt_hits and [r['prompt_cache_hit'] for r in records]!=expected_prompt_hits:
                 raise RuntimeError('Prompt da voz não foi reutilizado após a preparação inicial.')
+            if args.compare_lifecycle and any(r['cache_hit'] for r in records):
+                raise RuntimeError('A comparação não deve reaproveitar WAVs gerados.')
             print('[PASSOU] Benchmark real Base 0.6B em CPU, modo offline.')
             for item in records:
                 print(json.dumps(item,ensure_ascii=False,sort_keys=True))
             print(json.dumps({'cpu_threads':args.threads,
                 'peak_aggregate_rss_gib':round(peak[0]/(1024**3),2),
-                'same_worker_pid':True,'model_loads_this_session':1,
+                'same_worker_pid':expected_pid_count==1,
+                'worker_processes':expected_pid_count,
+                'model_loads_per_worker':1,
                 'audio_cache_hits':False},ensure_ascii=False,sort_keys=True))
         stop_local_worker()
     finally:
