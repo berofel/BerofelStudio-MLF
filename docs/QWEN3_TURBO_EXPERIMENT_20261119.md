@@ -141,6 +141,19 @@ Percentuais são a fração do `Total` interno do CLI (medianas de duas amostras
 
 Os resultados incluem saída WAV mono PCM16/24 kHz com RMS verificado acima de silêncio; não medem naturalidade ou semelhança vocal. Reprodutibilidade: `scripts\benchmark_qwen3_native_stages.py --confirm-own-or-authorized-voice --lengths curta media --repeats 2 --threads 6`. Dependências do script (`numpy`, `psutil`) já existem no venv do editor. A versão do script também registra os logs brutos do CLI e interrompe com erro se não houver WAV válido ou se o sinal estiver silencioso.
 
+### Sweep de threads do CLI e confirmação do gargalo
+
+Para confirmar o perfil de threads com os tempos internos, repeti o CLI em 2, 4, 6 e 8 threads, CPU/offline, mesmo perfil e textos curto/médio, sem cache de texto. 2 threads tem uma amostra por tamanho; 4, 6 e 8 têm duas. Cada execução inicia um processo CLI novo, portanto o RTF abaixo inclui startup no tempo de parede. Medianas dos estágios internos são separadas do tempo total:
+
+| Threads | RTF parede curto | RTF parede médio | `Decode` mediano curto/médio | `Generate` mediano curto/médio | Pico RAM amostrado curto/médio |
+|---:|---:|---:|---:|---:|---:|
+| 2 (n=1) | 1,794 | 1,712 | 7,522 / 23,425 s | 4,129 / 13,080 s | 2,036 / 2,878 GiB |
+| 4 (n=2) | 1,202 | 1,091 | 4,187 / 14,373 s | 2,419 / 8,279 s | 1,998 / 2,867 GiB |
+| 6 (n=2) | 1,149 | 1,019 | 3,464 / 10,914 s | 2,096 / 6,602 s | 1,966 / 2,673 GiB |
+| 8 (n=2) | 1,135 | 1,031 | 3,912 / 11,325 s | 2,392 / 6,886 s | 2,004 / 2,698 GiB |
+
+6 threads permanece a recomendação Turbo: menor RTF mediano no texto médio e melhor mediana observada do decoder nos dois comprimentos. No curto, 8 threads ficou próximo e ligeiramente abaixo no RTF de parede, mas o estágio interno total foi mais longo; as durações geradas e o startup variam. O decoder continua consumindo aproximadamente 62–65% do total interno em todos os perfis. 2 threads perde vazão, e 4 threads ficou mais lento que 6/8 neste ensaio. São poucas repetições estocásticas; isso confirma uma configuração prática, não uma lei para toda máquina/carga. Todos os WAVs deste sweep foram PCM16 mono 24 kHz, RMS acima de 0,028, sem amostras clipadas. Os resultados, áudio e logs ficam fora do Git em subpastas `native_stages_*` de `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119`; nenhum áudio de referência ou gerado foi adicionado ao repositório.
+
 Não foram obtidas métricas separadas de prefill/talker/code predictor para o runtime nativo. No oficial, o profiler mediu carga 6,008 s, prompt 0,655 s, prefill 0,413 s, 131 chamadas autoregressivas 47,645 s, das quais code predictor aninhado somou ~35,166 s; geração API 54,333 s, primeiro code frame ~0,7 s (não era áudio tocável). Isso aponta o code predictor como parcela dominante no backend oficial, mas não prova a mesma divisão interna no nativo. O script `scripts/benchmark_qwen3_stages.py` registra estágios oficiais.
 
 ## Testes / evidência da integração
