@@ -280,6 +280,17 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
     output = folder / f'{base}_purec_{uuid.uuid4().hex[:8]}.wav'
     pending = output.with_suffix('.pending.wav')
     stream_stats = {'first_audio_chunk_seconds': None, 'streamed_pcm_bytes': 0, 'streamed_chunk_count': 0}
+    stage_seconds = {
+        'payload_prepare_seconds': 0.0,
+        'http_headers_seconds': 0.0,
+        'stream_read_seconds': 0.0,
+        'wav_write_seconds': 0.0,
+        'pcm_analysis_seconds': 0.0,
+        'pcm_to_float_seconds': 0.0,
+        'audio_callback_seconds': 0.0,
+        'wav_close_seconds': 0.0,
+        'wav_replace_seconds': 0.0,
+    }
     with _LOCK:
         port, model_load = _start_server(Path(profile['path']), control,
                                          request.engine, request.thread_count)
@@ -290,22 +301,30 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
             model_load = float(profile.get('model_load_seconds', 0.0))
         start = time.perf_counter()
         conn = http.client.HTTPConnection('127.0.0.1', port, timeout=1800)
-        payload = json.dumps({'text': request.text.strip(), 'language': _LANGUAGES[request.language],
+        payload_started = time.perf_counter()
+        normalized_text = request.text.strip()
+        payload = json.dumps({'text': normalized_text, 'language': _LANGUAGES[request.language],
                               'temperature': .5, 'top_k': 50, 'top_p': 1.0,
                               'rep_penalty': 1.05}, ensure_ascii=False).encode('utf-8')
+        stage_seconds['payload_prepare_seconds'] = time.perf_counter() - payload_started
         try:
+            headers_started = time.perf_counter()
             conn.request('POST', '/v1/tts/stream', body=payload,
                          headers={'Content-Type': 'application/json'})
             response = conn.getresponse()
+            stage_seconds['http_headers_seconds'] = time.perf_counter() - headers_started
             if response.status != 200:
                 detail = response.read(1200).decode('utf-8', 'replace')
                 raise RuntimeError(f'Pure C recusou a narração (HTTP {response.status}): {detail}')
             carry = b''; frames = 0; peak = 0; first = None
-            with wave.open(str(pending), 'wb') as wav:
+            wav = wave.open(str(pending), 'wb')
+            try:
                 wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(24000)
                 while True:
                     if control: control.checkpoint()
+                    read_started = time.perf_counter()
                     block = response.read(4096)
+                    stage_seconds['stream_read_seconds'] += time.perf_counter() - read_started
                     if not block: break
                     if first is None:
                         first = time.perf_counter() - start
@@ -315,21 +334,36 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
                     carry = block[usable:]
                     if not usable: continue
                     pcm = block[:usable]
-                    wav.writeframesraw(pcm); frames += usable // 2
+                    write_started = time.perf_counter()
+                    wav.writeframesraw(pcm)
+                    stage_seconds['wav_write_seconds'] += time.perf_counter() - write_started
+                    frames += usable // 2
+                    analysis_started = time.perf_counter()
                     values = np.frombuffer(pcm, dtype='<i2')
                     peak = max(peak, int(np.max(np.abs(values.astype(np.int32)))))
+                    stage_seconds['pcm_analysis_seconds'] += time.perf_counter() - analysis_started
                     if audio_chunk:
+                        conversion_started = time.perf_counter()
                         floats = (values.astype('<f4') / 32768.0).tobytes()
+                        stage_seconds['pcm_to_float_seconds'] += time.perf_counter() - conversion_started
+                        callback_started = time.perf_counter()
                         audio_chunk(floats)
+                        stage_seconds['audio_callback_seconds'] += time.perf_counter() - callback_started
                     stream_stats['streamed_pcm_bytes'] += usable
                     stream_stats['streamed_chunk_count'] += 1
                 if carry:
                     raise RuntimeError('Pure C encerrou a stream com amostra PCM incompleta.')
+            finally:
+                close_started = time.perf_counter()
+                wav.close()
+                stage_seconds['wav_close_seconds'] += time.perf_counter() - close_started
             response.close()
             if frames <= 0 or peak == 0:
                 raise RuntimeError('Pure C retornou áudio vazio ou silencioso.')
             if control: control.checkpoint()
+            replace_started = time.perf_counter()
             os.replace(pending, output)
+            stage_seconds['wav_replace_seconds'] = time.perf_counter() - replace_started
         except Exception:
             try: conn.close()
             except OSError: pass
@@ -354,6 +388,7 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
             'first_audio_chunk_seconds': stream_stats['first_audio_chunk_seconds'],
             'streamed_pcm_bytes': stream_stats['streamed_pcm_bytes'],
             'streamed_chunk_count': stream_stats['streamed_chunk_count'],
+            **stage_seconds,
             'sample_rate': 24000, 'peak': peak / 32768.0}
 
 

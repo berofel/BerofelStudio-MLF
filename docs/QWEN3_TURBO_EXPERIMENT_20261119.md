@@ -1036,3 +1036,50 @@ correção e ambos os testes passaram.
 
 Artefatos de áudio para comparação auditiva local permanecem fora do Git em
 `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119\ui_responsiveness_prepared_6_8_20261119`.
+
+#### Instrumentação de etapas no serviço Pure C (19/11/2026)
+
+Adicionei medidas separadas para preparar o payload, aguardar os cabeçalhos HTTP,
+ler o fluxo, converter/analisar PCM, entregar callbacks, escrever/fechar o WAV e
+substituir atomicamente o arquivo final. O serviço continua expondo também o
+tempo do primeiro chunk, geração, preparação do perfil e carregamento do modelo.
+O servidor Pure C instalado (v0.23.0) entrega PCM em streaming e health counters,
+mas não expõe no contrato HTTP tempos internos separados do Talker, Code Predictor
+e decoder. `stream_read_seconds` mede o período de leitura bloqueante, que inclui
+a inferência; não deve ser interpretado como perfil interno dos componentes.
+
+A execução real opt-in `test_real_profile_generation_stream_and_wave_through_canonical_service`
+passou offline com perfil autorizado: áudio de 4,48 s, geração de 3,692 s
+(RTF 0,824), primeiro chunk em 0,512 s e 53 chunks/215.040 bytes. Após o
+preparo em cache, uma frase inédita gerou 5,60 s de áudio em 4,421 s; preparação
+do perfil e carregamento atribuídos à solicitação ficaram em 0 s e primeiro
+chunk em 0,506 s. Nesta execução instrumentada, leitura do stream foi 3,687 s;
+escrita WAV 1,46 ms; análise PCM 1,34 ms; conversão float 0,59 ms; callback
+0,03 ms; fechamento WAV 0,24 ms e replace 0,41 ms.
+
+Uma nova rodada offline de três WAVs curtos por backend, com 6 threads, confirmou
+as medidas no harness integrado. Medianas: CHE3MZ Q4 6,676 s de geração para
+5,84 s de áudio (RTF 1,123, primeiro chunk 2,519 s, RSS 2,280 GiB); Pure C
+mixed 3,910 s para 4,96 s (RTF 0,788, primeiro chunk 0,521 s, RSS 3,490 GiB);
+Pure C INT8 4,377 s para 5,04 s (RTF 0,868, primeiro chunk 0,543 s, RSS
+3,545 GiB). No Pure C mixed, medianas por solicitação foram: payload 0,011 ms;
+headers 0,574 ms; stream read 3,906 s; WAV write 1,277 ms; análise PCM
+1,263 ms; conversão 0,695 ms; callback 0,024 ms; fechamento 0,221 ms;
+replace 0,377 ms. Os caminhos de quantização Pure C passaram pelos mesmos
+códigos de instrumentação. O caminho Q4 nativo não possui esses campos, daí
+valores `null` em seu relatório.
+
+Essas medidas localizam a inferência dentro da leitura do stream como o custo
+principal e confirmam que preparação do WAV não é o limitador. Não dividem o
+custo entre Talker, Code Predictor e decoder acústico. Essa subdivisão exigiria
+instrumentação no runtime nativo e uma nova compilação licenciada; não foi
+inventada a partir de tempos observáveis no cliente. O relatório JSON detalhado
+e WAVs desta rodada estão fora do Git em
+`C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Instrumented_20261119`.
+A avaliação auditiva comparativa ainda está pendente e os números de uma rodada
+curta não substituem as varreduras multi-comprimento já documentadas.
+
+Reprodução: execute `tests.test_qwen3_purec_tts.PureCRealIntegrationTests.test_real_profile_generation_stream_and_wave_through_canonical_service`
+com `BEROFEL_RUN_QWEN3_PUREC_INTEGRATION=1` e o ambiente local offline; para a
+rodada controlada use `scripts/benchmark_qwen3_turbo_backends.py` com perfil
+autorizado, diretório externo novo, `--threads 6 --lengths short --repeats 3`.

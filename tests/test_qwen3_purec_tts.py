@@ -138,6 +138,21 @@ class PureCRealIntegrationTests(unittest.TestCase):
                 self.assertGreater(result['streamed_pcm_bytes'], 0)
                 self.assertGreater(result['streamed_chunk_count'], 0)
                 self.assertTrue(chunks)
+                stage_fields=(
+                    'payload_prepare_seconds','http_headers_seconds',
+                    'stream_read_seconds','wav_write_seconds',
+                    'pcm_analysis_seconds','pcm_to_float_seconds',
+                    'audio_callback_seconds','wav_close_seconds',
+                    'wav_replace_seconds')
+                self.assertTrue(all(np.isfinite(result[field]) and result[field]>=0
+                                    for field in stage_fields))
+                self.assertGreater(result['http_headers_seconds'],0)
+                self.assertGreater(result['stream_read_seconds'],0)
+                self.assertGreater(result['wav_write_seconds'],0)
+                self.assertGreater(result['wav_close_seconds'],0)
+                self.assertGreater(result['wav_replace_seconds'],0)
+                self.assertGreaterEqual(result['generation_seconds'],
+                                        result['first_audio_chunk_seconds'])
                 self.assertFalse(result['profile_cache_hit'])
                 self.assertGreater(result['profile_prepare_seconds'], 0)
                 self.assertGreater(result['model_load_seconds'], 0)
@@ -155,7 +170,12 @@ class PureCRealIntegrationTests(unittest.TestCase):
                     key: result.get(key) for key in ('engine', 'duration', 'threads',
                         'profile_cache_hit', 'profile_prepare_seconds', 'model_load_seconds',
                         'generation_seconds', 'first_audio_chunk_seconds',
-                        'streamed_pcm_bytes', 'streamed_chunk_count')}, ensure_ascii=False))
+                        'streamed_pcm_bytes', 'streamed_chunk_count',
+                        'payload_prepare_seconds','http_headers_seconds',
+                        'stream_read_seconds','wav_write_seconds',
+                        'pcm_analysis_seconds','pcm_to_float_seconds',
+                        'audio_callback_seconds','wav_close_seconds',
+                        'wav_replace_seconds')}, ensure_ascii=False))
 
                 # A new text must reuse both the prepared voice vector and the
                 # loaded model/server; only text synthesis should run again.

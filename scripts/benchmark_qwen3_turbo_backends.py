@@ -45,6 +45,11 @@ ENGINES = (
     ("qwen3-tts-purec-mixed", "purec-mixed-turbo"),
     ("qwen3-tts-purec-int8", "purec-int8-balanced"),
 )
+PUREC_STAGE_FIELDS = (
+    "payload_prepare_seconds", "http_headers_seconds", "stream_read_seconds",
+    "wav_write_seconds", "pcm_analysis_seconds", "pcm_to_float_seconds",
+    "audio_callback_seconds", "wav_close_seconds", "wav_replace_seconds",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -208,6 +213,7 @@ def main() -> int:
                 warmup_results[label] = {key: warm.get(key) for key in (
                     "generation_seconds", "duration", "profile_prepare_seconds",
                     "model_load_seconds", "profile_cache_hit", "prompt_cache_hit")}
+                warmup_results[label].update({key: warm.get(key) for key in PUREC_STAGE_FIELDS})
                 warmup_results[label]["wall_seconds"] = round(warm_wall, 3)
                 warmup_results[label].update(warm_resources)
 
@@ -244,6 +250,7 @@ def main() -> int:
                             "profile_prepare_seconds": result.get("profile_prepare_seconds"),
                             "model_load_seconds": result.get("model_load_seconds"),
                             "profile_cache_hit": result.get("profile_cache_hit", result.get("prompt_cache_hit")),
+                            **{key: result.get(key) for key in PUREC_STAGE_FIELDS},
                             **resources,
                             "audio": audio,
                             "sample": sample.name,
@@ -264,6 +271,10 @@ def main() -> int:
                         r["peak_process_tree_rss_gib"] for r in rows), 3),
                     "repetitions": rows,
                 }
+                for key in PUREC_STAGE_FIELDS:
+                    values = [r[key] for r in rows if r.get(key) is not None]
+                    summary[label][f"median_{key}"] = (
+                        round(statistics.median(values), 6) if values else None)
             report = {"model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
                       "texts": {length: {"characters": len(TEXTS[length]),
                                          "text": TEXTS[length]} for length in args.lengths},
