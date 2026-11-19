@@ -165,8 +165,14 @@ class QwenLocalCloneTests(unittest.TestCase):
             self.assertEqual(sum(item[0]=='prompt' for item in requests),1,outgoing.getvalue())
             self.assertEqual(sum(item[0]=='generate' for item in requests),2)
             responses=[json.loads(line) for line in outgoing.getvalue().splitlines()]
+            self.assertTrue(responses[0]['ready'])
+            self.assertGreaterEqual(responses[0]['model_load_seconds'],0.0)
             self.assertFalse(responses[1]['result']['prompt_cache_hit'])
             self.assertTrue(responses[2]['result']['prompt_cache_hit'])
+            for response in responses[1:3]:
+                self.assertGreaterEqual(response['result']['model_load_seconds'],0.0)
+                self.assertGreaterEqual(response['result']['profile_prepare_seconds'],0.0)
+                self.assertGreaterEqual(response['result']['generation_seconds'],0.0)
             self.assertTrue(responses[3]['shutdown'])
             self.assertTrue((root/'out0.wav').is_file())
             self.assertTrue((root/'out1.wav').is_file())

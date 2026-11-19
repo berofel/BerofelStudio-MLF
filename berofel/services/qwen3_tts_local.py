@@ -28,6 +28,7 @@ REQUIRED_MODEL_FILES=('config.json','model.safetensors','preprocessor_config.jso
 _WORKER_LOCK=threading.RLock()
 _WORKER_PROCESS=None
 _WORKER_MODEL_KEY=''
+_WORKER_LOAD_SECONDS=0.0
 
 
 def runtime_root() -> Path:
@@ -89,10 +90,10 @@ def _prompt_cache_file(reference: Path,reference_text: str,model: Path) -> Path:
 
 def stop_local_worker():
     """Stop the isolated warm model when the editor exits or a request cancels."""
-    global _WORKER_PROCESS,_WORKER_MODEL_KEY
+    global _WORKER_PROCESS,_WORKER_MODEL_KEY,_WORKER_LOAD_SECONDS
     with _WORKER_LOCK:
         process=_WORKER_PROCESS
-        _WORKER_PROCESS=None;_WORKER_MODEL_KEY=''
+        _WORKER_PROCESS=None;_WORKER_MODEL_KEY='';_WORKER_LOAD_SECONDS=0.0
         if process is None:return
         try:
             if process.poll() is None:
@@ -142,7 +143,7 @@ def _read_worker_line(process, timeout, control=None):
 
 
 def _ensure_worker(model: Path, control=None):
-    global _WORKER_PROCESS,_WORKER_MODEL_KEY
+    global _WORKER_PROCESS,_WORKER_MODEL_KEY,_WORKER_LOAD_SECONDS
     model_key=digest(_model_fingerprint(model))
     if (_WORKER_PROCESS is not None and _WORKER_PROCESS.poll() is None and
             _WORKER_MODEL_KEY==model_key):
@@ -162,6 +163,8 @@ def _ensure_worker(model: Path, control=None):
     if not response.get('ready'):
         stop_local_worker()
         raise RuntimeError('O worker Qwen3 não confirmou o carregamento do modelo Base.')
+    try:_WORKER_LOAD_SECONDS=max(0.0,float(response.get('model_load_seconds',0.0)))
+    except (TypeError,ValueError):_WORKER_LOAD_SECONDS=0.0
     return process
 
 
@@ -171,6 +174,9 @@ def _runtime_request(request_data: dict,model: Path,control=None) -> dict:
     try:timeout=max(60,min(3600,int(timeout_value)))
     except ValueError:timeout=1800
     with _WORKER_LOCK:
+        model_key=digest(_model_fingerprint(model))
+        was_warm=(_WORKER_PROCESS is not None and _WORKER_PROCESS.poll() is None and
+                  _WORKER_MODEL_KEY==model_key)
         process=_ensure_worker(model,control)
         try:
             process.stdin.write(json.dumps(request_data,ensure_ascii=False)+'\n')
@@ -183,6 +189,12 @@ def _runtime_request(request_data: dict,model: Path,control=None) -> dict:
             kind=str(response.get('error_type','RuntimeError'))
             detail=str(response.get('error','falha sem detalhe'))
             raise RuntimeError(f'Qwen3-TTS {kind}: {detail}')
+        request_load_seconds=0.0 if was_warm else _WORKER_LOAD_SECONDS
+        response['model_load_seconds']=request_load_seconds
+        result=response.get('result')
+        if isinstance(result,dict):
+            result['worker_model_load_seconds']=float(result.pop('model_load_seconds',0.0))
+            result['model_load_seconds']=request_load_seconds
         return response
 
 
@@ -206,7 +218,10 @@ def prepare_local_voice_prompt(reference: str,reference_text: str,*,
     if progress:progress(1,1)
     return {'prepared':True,'prompt_cache_hit':bool(response.get('prompt_cache_hit')),
             'worker_pid':response.get('worker_pid'),
-            'model_load_count':response.get('model_load_count')}
+            'model_load_count':response.get('model_load_count'),
+            'model_load_seconds':float(response.get('model_load_seconds',0.0)),
+            'profile_prepare_seconds':float(response.get('profile_prepare_seconds',0.0)),
+            'operation_seconds':float(response.get('operation_seconds',0.0))}
 
 
 def _prune_cache(folder: Path,keep: Path,max_mb: int=2048):
@@ -295,12 +310,17 @@ def generate_local_clone(request: NarrationRequest, progress=None, runner=None,
             write_json(metadata,{'key':key,'duration':duration,
                 'engine':'qwen3-tts-local','prompt_cache_hit':prompt_cache_hit,
                 'worker_pid':result.get('worker_pid'),
-                'model_load_count':result.get('model_load_count')})
+                'model_load_count':result.get('model_load_count'),
+                'model_load_seconds':result.get('model_load_seconds',0.0),
+                'worker_model_load_seconds':result.get('worker_model_load_seconds',0.0),
+                'profile_prepare_seconds':result.get('profile_prepare_seconds',0.0),
+                'generation_seconds':result.get('generation_seconds',0.0)})
         finally:
             job.unlink(missing_ok=True);result_file.unlink(missing_ok=True)
     else:
         duration=float(data['duration'])
         prompt_cache_hit=bool(data.get('prompt_cache_hit'))
+        result=data
         os.utime(metadata,None)
         if stage:stage('Qwen3-TTS local • áudio recuperado do cache')
     if control:control.checkpoint()
@@ -320,5 +340,9 @@ def generate_local_clone(request: NarrationRequest, progress=None, runner=None,
         'prompt_cache_hit':prompt_cache_hit,
         'worker_pid':(data.get('worker_pid') if cache_hit else result.get('worker_pid')),
         'model_load_count':(data.get('model_load_count') if cache_hit else result.get('model_load_count')),
+        'model_load_seconds':float(data.get('model_load_seconds',0.0) if cache_hit else result.get('model_load_seconds',0.0)),
+        'worker_model_load_seconds':float(data.get('worker_model_load_seconds',0.0) if cache_hit else result.get('worker_model_load_seconds',0.0)),
+        'profile_prepare_seconds':float(data.get('profile_prepare_seconds',0.0) if cache_hit else result.get('profile_prepare_seconds',0.0)),
+        'generation_seconds':float(data.get('generation_seconds',0.0) if cache_hit else result.get('generation_seconds',0.0)),
         'voice':request.voice,'language':request.language,'title':request.title,
         'engine':'qwen3-tts-local'}

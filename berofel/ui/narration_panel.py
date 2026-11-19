@@ -657,11 +657,18 @@ class NarrationPanel(QScrollArea):
                 self.reference_text.setText(profile.get('reference_text',''))
                 language_index=self.language.findData(profile.get('language','portuguese'))
                 if language_index>=0:self.language.setCurrentIndex(language_index)
+                self.authorized.setChecked(bool(profile.get('authorized',False)))
+                self.authorized.setEnabled(not bool(profile.get('authorized',False)))
                 if Path(profile['sample_path']).suffix.lower()=='.safetensors':
                     self._voice_profile_error='Este perfil legado não contém a gravação de referência. Importe o áudio original para preparar um perfil Qwen3 Base.'
             except (OSError,ValueError,KeyError) as exc:
                 self.sample_path.clear()
                 self._voice_profile_error=str(exc)
+                self.authorized.setChecked(False)
+                self.authorized.setEnabled(True)
+        else:
+            self.authorized.setChecked(False)
+            self.authorized.setEnabled(True)
         self.sample_path.setVisible(custom)
         self.choose_sample.setVisible(selected=='__custom__')
         self.validate_sample.setVisible(custom)
@@ -761,7 +768,8 @@ class NarrationPanel(QScrollArea):
             if not reference_text:
                 QMessageBox.warning(self,'Perfil de voz','Informe a transcrição exata da gravação para ativar a clonagem Qwen3 com referência textual.')
                 return
-            profile=self.voice_profiles.create(name,source,self.language.currentData() or 'portuguese',reference_text)
+            profile=self.voice_profiles.create(name,source,self.language.currentData() or 'portuguese',
+                                               reference_text,authorized=True)
             data=f'voice-profile:{profile["id"]}'
             self._append_voice_profile_items(data)
             self._update_custom()
@@ -872,16 +880,23 @@ class NarrationPanel(QScrollArea):
         selected_voice=self.voice.currentData()
         profile_id=self._voice_profile_id(selected_voice)
         custom = selected_voice == '__custom__' or bool(profile_id)
-        if custom and not self.authorized.isChecked():
-            QMessageBox.warning(self, 'Autorização',
-                                'Para usar uma voz personalizada, confirme que possui autorização expressa.')
-            return
+        profile=None
         if profile_id:
-            try:voice=self.voice_profiles.get(profile_id)['sample_path']
+            try:profile=self.voice_profiles.get(profile_id);voice=profile['sample_path']
             except (OSError,ValueError,KeyError) as exc:
                 QMessageBox.warning(self,'Perfil de voz',str(exc));return
         else:
             voice = self.sample_path.text().strip() if custom else ''
+        profile_authorized=bool(profile and profile.get('authorized',False))
+        if custom and not profile_authorized and not self.authorized.isChecked():
+            QMessageBox.warning(self, 'Autorização',
+                'Confirme que possui autorização expressa para clonar esta voz. Ao salvar o perfil, a confirmação fica registrada para reutilização local.')
+            return
+        if profile_id and self.authorized.isChecked() and not profile_authorized:
+            try:self.voice_profiles.authorize(profile_id)
+            except (OSError,ValueError,KeyError) as exc:
+                QMessageBox.warning(self,'Autorização do perfil',str(exc));return
+            self.authorized.setEnabled(False)
         if not custom:
             QMessageBox.warning(self,'Perfil de voz Qwen3',
                 'Qwen3-TTS Base precisa de uma gravação de referência. Selecione um perfil local ou importe uma amostra autorizada.')

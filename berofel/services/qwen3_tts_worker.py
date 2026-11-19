@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 import numpy as np
 from scipy.io import wavfile
@@ -114,13 +115,14 @@ def _save_cached_prompt(items,request: dict,key: str):
 
 
 def _voice_prompt(model,request: dict,memory_cache: dict):
+    started=time.perf_counter()
     key=_prompt_key(request)
     prompt=memory_cache.get(key)
-    if prompt is not None:return prompt,True
+    if prompt is not None:return prompt,True,time.perf_counter()-started
     prompt=_load_cached_prompt(model,request,key)
     if prompt is not None:
         memory_cache[key]=prompt
-        return prompt,True
+        return prompt,True,time.perf_counter()-started
     output=Path(request['output'])
     reference_path=output.with_name('qwen_reference_local.wav')
     reference,prepared=prepare_audio_prompt(request['reference'],reference_path)
@@ -136,7 +138,7 @@ def _voice_prompt(model,request: dict,memory_cache: dict):
     _save_cached_prompt(prompt,request,key)
     while len(memory_cache)>_MAX_PROMPTS:
         memory_cache.pop(next(iter(memory_cache)))
-    return prompt,False
+    return prompt,False,time.perf_counter()-started
 
 
 def _synthesize(model,request: dict,memory_cache: dict) -> dict:
@@ -151,10 +153,12 @@ def _synthesize(model,request: dict,memory_cache: dict) -> dict:
         raise ValueError('Use referência WAV, MP3, FLAC, OGG ou M4A.')
     text=str(request['text']).strip()
     if not text:raise ValueError('Digite um texto para narrar.')
-    prompt,prompt_cache_hit=_voice_prompt(model,request,memory_cache)
+    prompt,prompt_cache_hit,profile_prepare_seconds=_voice_prompt(model,request,memory_cache)
     max_tokens=min(2048,max(96,int(len(text)*1.5+48)))
+    generation_started=time.perf_counter()
     wavs,rate=model.generate_voice_clone(text=text,language=request['language'],
         voice_clone_prompt=prompt,max_new_tokens=max_tokens)
+    generation_seconds=time.perf_counter()-generation_started
     if not wavs or len(wavs[0])==0:
         raise RuntimeError('Qwen3-TTS retornou áudio vazio.')
     audio=np.asarray(wavs[0],dtype=np.float32).reshape(-1)
@@ -167,7 +171,8 @@ def _synthesize(model,request: dict,memory_cache: dict) -> dict:
     os.replace(pending,output)
     return {'duration':len(pcm)/int(rate),'sample_rate':int(rate),
             'bytes':output.stat().st_size,'prompt_cache_hit':prompt_cache_hit,
-            'max_new_tokens':max_tokens}
+            'profile_prepare_seconds':profile_prepare_seconds,
+            'generation_seconds':generation_seconds,'max_new_tokens':max_tokens}
 
 
 def run(request_path: str,result_path: str):
@@ -181,10 +186,13 @@ def run(request_path: str,result_path: str):
 def serve(model_path: str):
     """JSON-lines protocol; keep the single CPU model and prompt cache warm."""
     protocol=sys.stdout
+    model_started=time.perf_counter()
     with redirect_stdout(sys.stderr):
         model=_load_model(model_path)
+    model_load_seconds=time.perf_counter()-model_started
     prompts={}
-    protocol.write(json.dumps({'ready':True,'model':'Qwen3-TTS-12Hz-0.6B-Base'})+'\n')
+    protocol.write(json.dumps({'ready':True,'model':'Qwen3-TTS-12Hz-0.6B-Base',
+        'model_load_seconds':model_load_seconds})+'\n')
     protocol.flush()
     for line in sys.stdin:
         try:
@@ -193,12 +201,16 @@ def serve(model_path: str):
                 protocol.write('{"ok":true,"shutdown":true}\n');protocol.flush();return
             with redirect_stdout(sys.stderr):
                 if request.get('operation')=='prepare':
-                    prompt,hit=_voice_prompt(model,request,prompts)
+                    operation_started=time.perf_counter()
+                    prompt,hit,profile_prepare_seconds=_voice_prompt(model,request,prompts)
                     response={'ok':True,'prompt_cache_hit':hit,
+                              'profile_prepare_seconds':profile_prepare_seconds,
+                              'operation_seconds':time.perf_counter()-operation_started,
                               'worker_pid':os.getpid(),'model_load_count':1}
                 else:
                     result=_synthesize(model,request,prompts)
-                    result.update({'worker_pid':os.getpid(),'model_load_count':1})
+                    result.update({'worker_pid':os.getpid(),'model_load_count':1,
+                                   'model_load_seconds':model_load_seconds})
                     response={'ok':True,'result':result}
         except Exception as exc:
             response={'ok':False,'error_type':type(exc).__name__,

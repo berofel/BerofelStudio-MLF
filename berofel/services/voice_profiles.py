@@ -69,6 +69,7 @@ class VoiceProfileManager:
                 'sample_sha256': str(item.get('sample_sha256', '')),
                 'language': str(item.get('language', 'portuguese')),
                 'reference_text': str(item.get('reference_text', ''))[:4000],
+                'authorized': item.get('authorized') is True,
                 'created_utc': str(item.get('created_utc', '')),
             }
         names = [item['name'].casefold() for item in normalized.values()]
@@ -111,7 +112,7 @@ class VoiceProfileManager:
         return dict(item, sample_path=str(sample))
 
     def create(self, name: str, source: str | Path, language: str = 'portuguese',
-               reference_text: str = '') -> dict:
+               reference_text: str = '', *, authorized: bool = False) -> dict:
         name = self._normalize_name(name)
         source_path = Path(source).expanduser().resolve()
         if not source_path.is_file():
@@ -146,6 +147,7 @@ class VoiceProfileManager:
                 'sample_sha256': self._hash_file(target),
                 'language': str(language),
                 'reference_text': reference_text,
+                'authorized': bool(authorized),
                 'created_utc': datetime.now(timezone.utc).isoformat(timespec='seconds'),
             }
             profiles[profile_id] = item
@@ -160,6 +162,15 @@ class VoiceProfileManager:
                 Path(temporary_name).unlink(missing_ok=True)
             except OSError:
                 pass
+
+    def authorize(self, profile_id: str) -> dict:
+        """Persist the user's explicit authorization for local voice reuse."""
+        profiles = self._read()
+        if profile_id not in profiles:
+            raise KeyError(profile_id)
+        profiles[profile_id]['authorized'] = True
+        self._write(profiles)
+        return self.get(profile_id)
 
     def rename(self, profile_id: str, new_name: str) -> str:
         new_name = self._normalize_name(new_name)

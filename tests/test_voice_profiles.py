@@ -24,6 +24,16 @@ class VoiceProfileManagerTests(unittest.TestCase):
             manifest=json.loads((root/'profile_store'/'profiles.json').read_text(encoding='utf-8'))
             self.assertEqual(manifest['schema_version'],1)
 
+    def test_authorization_is_explicit_and_persists_for_fast_reuse(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_voice_profiles_') as folder:
+            root=Path(folder);source=root/'recording.wav';source.write_bytes(b'RIFF'+b'a'*300)
+            manager=VoiceProfileManager(root/'profile_store')
+            profile=manager.create('Minha voz',source,'portuguese','texto da referência')
+            self.assertFalse(profile['authorized'])
+            self.assertTrue(manager.authorize(profile['id'])['authorized'])
+            reopened=VoiceProfileManager(root/'profile_store')
+            self.assertTrue(reopened.get(profile['id'])['authorized'])
+
     def test_rename_and_delete_only_remove_private_copy_not_original(self):
         with tempfile.TemporaryDirectory(prefix='bfs_voice_profiles_') as folder:
             root=Path(folder);source=root/'voice.mp3';source.write_bytes(b'ID3'+b'x'*300)

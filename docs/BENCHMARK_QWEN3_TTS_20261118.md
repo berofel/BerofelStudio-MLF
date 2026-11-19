@@ -105,7 +105,16 @@ workers no final.
 
 ## Reproduzir
 
-Execute `scripts/benchmark_qwen3_warm_cpu.py` no venv da distribuição após configurar uma referência e transcrição no painel Narração. O script imprime somente medições/cache, usa caches de saída temporários e para o worker ao final.
+Execute `scripts/benchmark_qwen3_warm_cpu.py` no venv da distribuição após salvar e autorizar um perfil Qwen na aba Narração. O script imprime somente medições/cache, usa caches de saída temporários e para o worker ao final.
+
+O benchmark atualizado registra latência até o WAV, custo de carregamento por
+pedido (zero quando o worker já está aquecido), tempo de prompt/preparação,
+tempo interno de inferência, RTF, RMS, RSS agregado e CPU normalizada pelos
+processadores lógicos. Por padrão usa textos curto, médio e longo. A opção
+`--prepare-profile-first` mede primeiro a preparação explícita do perfil em
+cache temporário vazio e depois testa as três durações com o modelo e a voz
+preparados. Esses campos instrumentam execuções futuras; não são resultados
+medidos até a próxima rodada real com referência autorizada.
 
 ## Investigação isolada de INT8 — 19/11/2026
 

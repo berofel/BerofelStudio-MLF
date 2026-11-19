@@ -1,8 +1,9 @@
-"""Benchmark real short/long Portuguese Qwen3-TTS requests on this PC.
+"""Benchmark real short/medium/long Portuguese Qwen3-TTS requests on this PC.
 
-Reads the authorized sample already configured in the editor; prints no path,
-transcript or generated audio. Forces empty temporary WAV/prompt caches so the
+Reads an explicitly authorized saved profile; prints no path, transcript or
+generated audio. Forces empty temporary WAV/prompt caches so the
 output includes cold model load, first reference conditioning and warm reuse.
+Explicit profile mode separates model initialization and reference preparation.
 """
 from __future__ import annotations
 
@@ -21,15 +22,19 @@ import time
 import numpy as np
 import psutil
 from scipy.io import wavfile
-from PySide6.QtCore import QSettings
-
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 
 from berofel.services.narration_service import NarrationRequest
 from berofel.services.qwen3_tts_local import generate_local_clone,stop_local_worker
+from berofel.services.voice_profiles import VoiceProfileManager
 
 SHORT_TEXT='Olá! Este é um teste curto de aquecimento do Qwen3-TTS.'
+MEDIUM_TEXT=('Esta é a validação de uma narração de tamanho médio em português. '
+    'O perfil vocal deve ser preparado uma vez e reutilizado nas frases seguintes. '
+    'O Berofel Studio mantém o modelo carregado durante a sessão para evitar uma nova inicialização. '
+    'Depois da geração, o áudio pode ser reproduzido, ajustado e inserido na timeline. '
+    'Também verificamos que a voz permanece local e que o arquivo WAV contém sinal válido.')
 LONG_TEXT=('Hoje estamos medindo a narração local do Berofel Studio em português. '
     'O editor carrega o modelo uma vez, prepara a referência autorizada e reutiliza '
     'o perfil de voz nas frases seguintes. Este trecho também verifica a geração '
@@ -42,15 +47,20 @@ LONG_TEXT=('Hoje estamos medindo a narração local do Berofel Studio em portugu
     'Este teste funciona sem conexão externa quando o modelo já está instalado.')
 
 
-def peak_rss(stop: threading.Event,peak: list[int]):
+def peak_resources(stop: threading.Event,stats: dict):
     root=psutil.Process()
     while not stop.is_set():
-        total=0
+        total=0;cpu=0.0
         try:
             for proc in [root,*root.children(recursive=True)]:
-                try:total+=proc.memory_info().rss
+                try:
+                    total+=proc.memory_info().rss
+                    cpu+=max(0.0,proc.cpu_percent(None))
                 except (psutil.NoSuchProcess,psutil.AccessDenied):pass
-            peak[0]=max(peak[0],total)
+            normalized=cpu/max(1,os.cpu_count() or 1)
+            stats['peak_rss_bytes']=max(stats['peak_rss_bytes'],total)
+            stats['peak_cpu_percent']=max(stats['peak_cpu_percent'],normalized)
+            stats['cpu_samples'].append(normalized)
         except (psutil.NoSuchProcess,psutil.AccessDenied):pass
         stop.wait(.2)
 
@@ -61,16 +71,28 @@ def main() -> int:
     parser.add_argument('--short-only',action='store_true',help='Mede somente o pedido curto, útil para comparar threads.')
     parser.add_argument('--compare-lifecycle',action='store_true',
         help='Compara frase idêntica com worker frio, aquecido e recarregado; força WAVs sem cache.')
+    parser.add_argument('--prepare-profile-first',action='store_true',
+        help='Mede preparação explícita do perfil e depois gera textos curto, médio e longo com modelo/perfil aquecidos.')
+    parser.add_argument('--voice-profile-id',default='',
+        help='ID de um perfil salvo e explicitamente autorizado; vazio usa o primeiro perfil autorizado.')
     args=parser.parse_args()
+    if args.compare_lifecycle and args.prepare_profile_first:
+        parser.error('--compare-lifecycle e --prepare-profile-first são modos separados.')
     if not 1<=args.threads<=32:
         raise ValueError('--threads deve ficar entre 1 e 32.')
     os.environ['BEROFEL_QWEN3_CPU_THREADS']=str(args.threads)
-    settings=QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
-                       'Berofel','BerofelStudio')
-    reference=Path(str(settings.value('narration/sample_path','') or '')).expanduser()
-    reference_text=str(settings.value('narration/reference_text','') or '').strip()
+    profiles=VoiceProfileManager().list_profiles()
+    profile=(next((item for item in profiles
+                   if item['id']==args.voice_profile_id and item.get('authorized')),
+                  None) if args.voice_profile_id else
+             next((item for item in profiles if item.get('authorized') and
+                   item.get('reference_text')),None))
+    if profile is None:
+        raise RuntimeError('Salve/autorize um perfil de voz Qwen no painel Narração antes do benchmark.')
+    reference=Path(profile['sample_path']).expanduser()
+    reference_text=str(profile.get('reference_text','')).strip()
     if not reference.is_file() or not reference_text:
-        raise RuntimeError('Configure uma gravação autorizada e sua transcrição exata no painel Narração.')
+        raise RuntimeError('O perfil autorizado não possui gravação e transcrição válidas.')
     old={key:os.environ.get(key) for key in
          ('BEROFEL_AI_CACHE','BEROFEL_QWEN3_PROMPT_CACHE')}
     try:
@@ -78,16 +100,30 @@ def main() -> int:
             root=Path(folder)
             os.environ['BEROFEL_QWEN3_PROMPT_CACHE']=str(root/'voice-prompts')
             project=root/'benchmark.bfs'
-            stop=threading.Event();peak=[0]
-            watcher=threading.Thread(target=peak_rss,args=(stop,peak),daemon=True)
+            stop=threading.Event();stats={'peak_rss_bytes':0,'peak_cpu_percent':0.0,'cpu_samples':[]}
+            watcher=threading.Thread(target=peak_resources,args=(stop,stats),daemon=True)
             watcher.start();records=[]
+            if args.prepare_profile_first:
+                from berofel.services.qwen3_tts_local import prepare_local_voice_prompt
+                prepared_at=time.perf_counter()
+                prepared=prepare_local_voice_prompt(str(reference.resolve()),reference_text)
+                prepare_elapsed=time.perf_counter()-prepared_at
+                if prepared['prompt_cache_hit']:
+                    raise RuntimeError('A preparação explícita deveria partir de um cache isolado vazio.')
+                print(json.dumps({'phase':'preparacao_explicita_do_perfil',
+                    'elapsed_seconds':round(prepare_elapsed,3),
+                    'model_load_seconds':prepared['model_load_seconds'],
+                    'profile_prepare_seconds':prepared['profile_prepare_seconds'],
+                    'prompt_cache_hit':prepared['prompt_cache_hit'],
+                    'model_load_count':prepared['model_load_count'],
+                    'worker_pid':prepared['worker_pid']},ensure_ascii=False,sort_keys=True),flush=True)
             if args.compare_lifecycle:
                 cases=(('modelo_frio_perfil_novo',SHORT_TEXT,True),
                        ('modelo_aquecido_perfil_reutilizado',SHORT_TEXT,False),
                        ('modelo_recarregado_perfil_persistido',SHORT_TEXT,True))
             else:
                 lengths=(('curta',SHORT_TEXT),) if args.short_only else (
-                    ('curta',SHORT_TEXT),('longa',LONG_TEXT))
+                    ('curta',SHORT_TEXT),('media',MEDIUM_TEXT),('longa',LONG_TEXT))
                 cases=tuple((name,text,False) for name,text in lengths)
             for name,text,restart in cases:
                 if restart:stop_local_worker()
@@ -104,12 +140,18 @@ def main() -> int:
                 rate,samples=wavfile.read(result['path'])
                 duration=len(samples)/float(rate)
                 record={'case':name,'audio_seconds':duration,'elapsed_seconds':elapsed,
+                    'latency_to_first_audio_seconds':elapsed,
                     'rtf':elapsed/duration if duration else None,
                     'cache_hit':bool(result['cache_hit']),
                     'prompt_cache_hit':result['prompt_cache_hit'],
+                    'model_load_seconds':result.get('model_load_seconds',0.0),
+                    'worker_model_load_seconds':result.get('worker_model_load_seconds',0.0),
+                    'profile_prepare_seconds':result.get('profile_prepare_seconds',0.0),
+                    'generation_seconds':result.get('generation_seconds',elapsed),
                     'model_load_count':result['model_load_count'],
                     'worker_pid':result['worker_pid'],
-                    'wav_signal':bool(np.any(samples))}
+                    'wav_signal':bool(np.any(samples) and np.isfinite(samples).all()),
+                    'wav_rms':float(np.sqrt(np.mean(np.asarray(samples,dtype=np.float64)**2)))}
                 if result['cache_hit'] or not record['wav_signal']:
                     raise RuntimeError('Benchmark não produziu inferência nova com sinal válido.')
                 records.append(record)
@@ -129,7 +171,11 @@ def main() -> int:
             for item in records:
                 print(json.dumps(item,ensure_ascii=False,sort_keys=True))
             print(json.dumps({'cpu_threads':args.threads,
-                'peak_aggregate_rss_gib':round(peak[0]/(1024**3),2),
+                'peak_aggregate_rss_gib':round(stats['peak_rss_bytes']/(1024**3),2),
+                'peak_cpu_percent_of_logical_machine':round(stats['peak_cpu_percent'],1),
+                'mean_cpu_percent_of_logical_machine':round(
+                    sum(stats['cpu_samples'])/len(stats['cpu_samples']),1)
+                    if stats['cpu_samples'] else 0.0,
                 'same_worker_pid':expected_pid_count==1,
                 'worker_processes':expected_pid_count,
                 'model_loads_per_worker':1,
