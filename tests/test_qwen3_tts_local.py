@@ -230,6 +230,23 @@ class QwenLocalCloneTests(unittest.TestCase):
             self.assertGreater(report['rms_dbfs'],-15)
             self.assertEqual(source.read_bytes(),original)
 
+    def test_reference_quality_warns_when_more_than_half_is_silent(self):
+        import numpy as np
+        from scipy.io import wavfile
+        from berofel.services import audio_reference
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);source=root/'source.wav';normalized=root/'normalized.wav'
+            rate=24000;frames=rate*4;signal=np.zeros(frames,dtype=np.int16)
+            active=int(frames*.449)
+            signal[:active]=(np.sin(np.arange(active)*2*np.pi*220/rate)*12000).astype(np.int16)
+            wavfile.write(str(normalized),rate,signal)
+            source.write_bytes(b'authorized source bytes')
+            with patch.object(audio_reference,'prepare_audio_prompt',
+                return_value=(str(normalized),None)):
+                report=audio_reference.inspect_voice_reference(source)
+            self.assertGreater(report['silence_fraction'],.50)
+            self.assertTrue(any('Mais de 50%' in warning for warning in report['warnings']))
+
     def test_prepare_voice_prompt_supports_official_xvector_only_mode(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);sample=root/'reference.wav';sample.write_bytes(b'RIFF'+b'x'*200)

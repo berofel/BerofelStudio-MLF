@@ -64,7 +64,7 @@ def inspect_voice_reference(voice: str | Path) -> dict:
         if duration>30: warnings.append('A preparação usa no máximo os primeiros 30 segundos.')
         if rms_dbfs<-35: warnings.append('Nível muito baixo; aumente o volume da gravação antes de clonar.')
         if clipped>.01: warnings.append('Há clipping perceptível; reduza o ganho e grave novamente se possível.')
-        if silence>.60: warnings.append('Mais de 60% do trecho está quase silencioso; escolha uma fala mais contínua.')
+        if silence>.50: warnings.append('Mais de 50% do trecho está quase silencioso; escolha uma fala mais contínua ou grave uma amostra com menos pausas.')
         return {'duration':duration,'sample_rate':int(rate),'rms_dbfs':float(rms_dbfs),
                 'peak_dbfs':float(20*np.log10(max(peak,1e-12))),
                 'clipped_fraction':clipped,'silence_fraction':silence,
