@@ -901,3 +901,50 @@ defina `HF_HUB_OFFLINE=1` e `TRANSFORMERS_OFFLINE=1` e execute
 O harness requer o modelo e os três runtimes locais já instalados e uma voz
 local autorizada. Para a verificação de texto, foi usado Faster-Whisper Base
 int8 local e o procedimento de reamostragem 24→16 kHz descrito acima.
+
+#### Sweep comparável de 8 threads (19/11/2026)
+
+Repeti o mesmo benchmark offline, com os mesmos três roteiros e perfil vocal,
+três gerações inéditas por tamanho e cache de frases isolado. Os WAVs e JSON
+continuam fora do Git em
+`C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119\multi_length_8threads_20261119`.
+O WER foi calculado depois, com Faster-Whisper Base/int8 em CPU e reamostragem
+24→16 kHz. Valores são medianas de três amostras; CPU é pico amostrado como
+percentual da máquina. A comparação do WER usa o mesmo áudio, modelo de ASR e
+procedimento da rodada de 6 threads.
+
+| Backend · 8 threads | Texto | Geração mediana | RTF | Primeiro áudio | Pico CPU | Pico RSS | WER mediano (intervalo) |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Nativo Q4 | Curto | 6,230 s | 1,153 | 2,454 s | 57,1% | 2,249 GiB | 0,100 (0,100–0,200) |
+| Nativo Q4 | Médio | 20,726 s | 1,136 | 7,156 s | 57,5% | 2,252 GiB | 0,205 (0,128–0,205) |
+| Nativo Q4 | Longo | 58,563 s | 1,155 | 20,108 s | 58,1% | 2,260 GiB | 0,244 (0,210–0,345) |
+| Pure C mixed · Turbo | Curto | **3,903 s** | **0,787** | **0,493 s** | 98,7% | 3,495 GiB | **0,000 (0,000–0,000)** |
+| Pure C mixed · Turbo | Médio | 12,375 s | **0,731** | **0,584 s** | 98,3% | 3,523 GiB | 0,077 (0,077–0,077) |
+| Pure C mixed · Turbo | Longo | **35,398 s** | **0,774** | **0,860 s** | 101,5% | 3,571 GiB | 0,101 (0,092–0,151) |
+| Pure C INT8 · Equilibrado | Curto | **4,117 s** | 0,872 | 0,524 s | 92,3% | 3,540 GiB | 0,000 (0,000–0,000) |
+| Pure C INT8 · Equilibrado | Médio | 12,963 s | 0,845 | 0,620 s | 101,9% | 3,570 GiB | **0,051 (0,051–0,103)** |
+| Pure C INT8 · Equilibrado | Longo | 38,888 s | 0,890 | 0,934 s | 96,9% | 3,608 GiB | **0,118 (0,076–0,126)** |
+
+Em relação à rodada de 6 threads, Pure C mixed/8 reduziu o tempo de geração
+mediano em 11,6% no texto curto e 5,7% no longo; no médio ficou 0,7% mais
+lento. O primeiro chunk chegou 5–9% antes nas três classes. O RTF variou também
+porque a duração sintetizada estocástica não foi idêntica. INT8/8 reduziu o
+tempo bruto em 7,2% no curto, 0,6% no médio e 0,2% no longo, enquanto seus
+RTFs foram ligeiramente piores que em 6 threads. O pico de RSS permaneceu
+próximo ao de 6 threads.
+
+Conclusão operacional: 8 threads é a opção mais rápida observada para Turbo
+em textos curtos e longos e reduz a latência até a prévia, mas satura quase
+toda a CPU medida. Para manter maior espaço de CPU para reprodução e interface,
+6 threads continua uma escolha padrão razoável; usuários priorizando velocidade
+podem selecionar 8 no painel de Narração. Não há evidência suficiente para
+afirmar que uma configuração seja melhor para qualidade vocal: o WER é apenas
+um proxy de transcrição, as gerações são estocásticas e a avaliação auditiva
+direta ainda não foi feita. O modo Original e o backend oficial continuam
+intactos como fallback.
+
+Reprodução da rodada: mesmo comando acima, substituindo `--threads 6` por
+`--threads 8` e usando uma pasta de saída vazia. Os arquivos
+`results.json` e `asr_wer_results.json` contêm as métricas agregadas; os 27 WAVs
+externos são amostras privadas para avaliação auditiva local e não foram
+incluídos no repositório.
