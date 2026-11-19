@@ -23,7 +23,9 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import wave
 
+import numpy as np
 import psutil
 
 
@@ -55,7 +57,7 @@ def wait_ready(process: subprocess.Popen, port: int, timeout: float = 180) -> fl
     raise TimeoutError("Qwen server did not become ready within 180 s")
 
 
-def generation(process: subprocess.Popen, port: int) -> dict:
+def generation(process: subprocess.Popen, port: int, sample_path: Path | None = None) -> dict:
     url = f"http://127.0.0.1:{port}/v1/tts/stream"
     request = urllib.request.Request(
         url,
@@ -83,20 +85,26 @@ def generation(process: subprocess.Popen, port: int) -> dict:
     monitor.start()
     started = time.perf_counter()
     first = None
-    byte_count = 0
+    pcm = bytearray()
     try:
         with urllib.request.urlopen(request, timeout=900) as response:
             while chunk := response.read(4096):
                 if first is None:
                     first = time.perf_counter() - started
-                byte_count += len(chunk)
+                pcm.extend(chunk)
     finally:
         elapsed = time.perf_counter() - started
         done.set()
         monitor.join(timeout=2)
-    if byte_count == 0 or byte_count % 2:
-        raise RuntimeError(f"Invalid streamed PCM size: {byte_count}")
-    duration = byte_count / 2 / 24000
+    if not pcm or len(pcm) % 2:
+        raise RuntimeError(f"Invalid streamed PCM size: {len(pcm)}")
+    samples_pcm = np.frombuffer(pcm, dtype="<i2")
+    duration = samples_pcm.size / 24000
+    if sample_path:
+        sample_path.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(sample_path), "wb") as output:
+            output.setnchannels(1); output.setsampwidth(2); output.setframerate(24000)
+            output.writeframes(pcm)
     logical = psutil.cpu_count(logical=True) or 1
     cpu_avg = statistics.mean(samples) if samples else 0.0
     return {
@@ -104,7 +112,9 @@ def generation(process: subprocess.Popen, port: int) -> dict:
         "first_audio_seconds": first,
         "audio_seconds": duration,
         "rtf": elapsed / duration,
-        "streamed_pcm_bytes": byte_count,
+        "streamed_pcm_bytes": len(pcm),
+        "sample_peak": int(np.max(np.abs(samples_pcm.astype(np.int32)))),
+        "sample_rms": float(np.sqrt(np.mean(samples_pcm.astype(np.float64) ** 2))),
         "cpu_mean_one_core_percent": cpu_avg,
         "cpu_mean_machine_percent": cpu_avg / logical,
         "cpu_peak_one_core_percent": max(samples, default=0.0),
@@ -120,9 +130,13 @@ def main() -> int:
     parser.add_argument("--voice", required=True, type=Path,
                         help="Authorized local x-vector profile (.bin).")
     parser.add_argument("--threads", nargs="+", type=int, default=[2, 4, 6, 8])
+    parser.add_argument("--quantizations", nargs="+", choices=["float", "int8", "mixed-cpu"],
+                        default=["mixed-cpu"])
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--output", type=Path,
                         help="Optional JSON report path; keep outside Git if it contains local metadata.")
+    parser.add_argument("--samples-dir", type=Path,
+                        help="Optional output folder for first-run WAV samples; keep outside Git.")
     args = parser.parse_args()
     for path in (args.exe, args.model / "config.json", args.voice):
         if not path.exists():
@@ -142,38 +156,50 @@ def main() -> int:
     }
     env = os.environ.copy()
     env["OMP_NUM_THREADS"] = "8"
-    for threads in args.threads:
-        port = free_port()
-        command = [str(args.exe), "-d", str(args.model), "--load-voice", str(args.voice),
-                   "--xvector-only", "--quant-mixed-cpu", "-j", str(threads),
-                   "--max-request-seconds", "600", "--serve", str(port)]
-        process = subprocess.Popen(command, cwd=str(args.exe.parent), env=env,
-                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                   stderr=subprocess.DEVNULL,
-                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        try:
-            startup = wait_ready(process, port)
-            run = [generation(process, port) for _ in range(args.repeats)]
-            item = {
-                "threads": threads,
-                "cold_server_load_seconds": startup,
-                "peak_rss_server_gib": max(r["rss_peak_gib"] for r in run),
-                "wall_median_seconds": statistics.median(r["wall_seconds"] for r in run),
-                "rtf_median": statistics.median(r["rtf"] for r in run),
-                "first_audio_median_seconds": statistics.median(r["first_audio_seconds"] for r in run),
-                "cpu_mean_machine_percent_median": statistics.median(r["cpu_mean_machine_percent"] for r in run),
-                "cpu_peak_one_core_percent_max": max(r["cpu_peak_one_core_percent"] for r in run),
-                "runs": run,
-            }
-            report["results"].append(item)
-            print(json.dumps({"progress": item}, ensure_ascii=False), flush=True)
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill(); process.wait(timeout=5)
+    report["quantization"] = args.quantizations
+    for quantization in args.quantizations:
+        for threads in args.threads:
+            port = free_port()
+            command = [str(args.exe), "-d", str(args.model), "--load-voice", str(args.voice),
+                       "--xvector-only", "-j", str(threads)]
+            if quantization == "int8":
+                command.append("--int8")
+            elif quantization == "mixed-cpu":
+                command.append("--quant-mixed-cpu")
+            command.extend(["--max-request-seconds", "600", "--serve", str(port)])
+            process = subprocess.Popen(command, cwd=str(args.exe.parent), env=env,
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL,
+                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            try:
+                startup = wait_ready(process, port)
+                run = []
+                for rep in range(args.repeats):
+                    sample = None
+                    if args.samples_dir and rep == 0:
+                        sample = args.samples_dir / f"{quantization}_j{threads}.wav"
+                    run.append(generation(process, port, sample))
+                item = {
+                    "quantization": quantization,
+                    "threads": threads,
+                    "cold_server_load_seconds": startup,
+                    "peak_rss_server_gib": max(r["rss_peak_gib"] for r in run),
+                    "wall_median_seconds": statistics.median(r["wall_seconds"] for r in run),
+                    "rtf_median": statistics.median(r["rtf"] for r in run),
+                    "first_audio_median_seconds": statistics.median(r["first_audio_seconds"] for r in run),
+                    "cpu_mean_machine_percent_median": statistics.median(r["cpu_mean_machine_percent"] for r in run),
+                    "cpu_peak_one_core_percent_max": max(r["cpu_peak_one_core_percent"] for r in run),
+                    "runs": run,
+                }
+                report["results"].append(item)
+                print(json.dumps({"progress": item}, ensure_ascii=False), flush=True)
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill(); process.wait(timeout=5)
     rendered = json.dumps(report, ensure_ascii=False, indent=2)
     print(rendered)
     if args.output:

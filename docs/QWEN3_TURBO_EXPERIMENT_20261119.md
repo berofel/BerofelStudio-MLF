@@ -434,9 +434,46 @@ O JSON bruto com as três medições por configuração foi guardado fora do Git
 `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119\purec_cpu_threads_20261119.json`.
 Reproduza com `python scripts/benchmark_qwen3_purec_cpu.py --exe <qwen_tts.exe>
 --model <Qwen3-Base-local> --voice <x-vector-autorizado.bin> --threads 2 4 6 8
---repeats 3 --output <relatorio.json>`. A execução requer `psutil` no Python do
-benchmark e o runtime DLL do Pure C. Não inclui qualidade perceptiva, CPU de
-outros processos ou atraso de áudio físico do dispositivo.
+--repeats 3 --output <relatorio.json>`. A execução requer `psutil` e `numpy`
+no Python do benchmark e o runtime DLL do Pure C. Não inclui CPU de outros
+processos ou atraso de áudio físico do dispositivo.
+
+#### Comparação controlada de precisão (6 threads)
+
+O mesmo script foi estendido para `float` (sem flag de quantização), `int8`
+(`--int8`) e `mixed-cpu` (`--quant-mixed-cpu`). Foram feitas três repetições
+com modelo/perfil carregados, mesma frase portuguesa e seed 42. O servidor foi
+reiniciado entre modos. Uma amostra WAV por modo e o JSON completo foram salvos
+na pasta externa de benchmark, sem incluir gravações no Git.
+
+| Modo | Carga do servidor | Parede mediana | Áudio mediano | RTF | Primeiro chunk | CPU média total | Pico RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Float | 2,92 s | 13,90 s | 10,32 s | 1,347 | 0,662 s | 47,3% | 2,97 GiB |
+| INT8 | 2,80 s | 8,88 s | 10,96 s | 0,810 | 0,559 s | 53,1% | 3,49 GiB |
+| Mixed CPU (Talker INT8 + Code Predictor INT4) | 2,69 s | 8,72 s | 11,92 s | 0,731 | 0,537 s | 52,5% | 3,44 GiB |
+
+Contra float, INT8 reduziu a parede em 36,1%; mixed CPU reduziu-a em 37,3%
+e atingiu RTF abaixo de 1. Mixed CPU foi 1,8% mais rápido que INT8 nesta
+amostra, com saída 0,96 s mais longa. Isso torna mixed CPU o mais rápido deste
+ensaio, mas a diferença contra INT8 é pequena e pode variar por texto/seed.
+Nenhum modo atingiu geração de 10 segundos de áudio em poucos segundos com o
+modelo frio; esses tempos medem geração quente após a carga inicial.
+
+Como verificação automática grosseira, Faster-Whisper Base/int8 local, beam 1,
+transcreveu os mesmos 3 WAVs com WER 0,077 para cada configuração (um erro de
+palavra sobre 13). Float e INT8 produziram “Berofel Stúdio”; mixed omitiu um
+“e” e reconheceu “Studios”. Os WAVs não tiveram clipping (pico PCM: float 4.728,
+INT8 4.156, mixed 3.396 numa escala de 32.767). O teste é curto, o ASR erra e
+não mede semelhança da voz, naturalidade ou qualidade subjetiva. Ouvir as
+amostras é necessário antes de aprovar a configuração Turbo. Os arquivos são
+`samples_6threads\float_j6.wav`, `int8_j6.wav`, `mixed-cpu_j6.wav`, em
+`C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119`.
+
+Comando para repetir os modos e salvar amostras fora do repositório:
+`python scripts/benchmark_qwen3_purec_cpu.py --exe <qwen_tts.exe> --model
+<Qwen3-Base-local> --voice <x-vector-autorizado.bin> --threads 6
+--quantizations float int8 mixed-cpu --repeats 3 --output <relatorio.json>
+--samples-dir <pasta-local-privada>`.
 
 Como proxy de inteligibilidade, Faster-Whisper Base/int8 local (beam 1) deu
 WER mediano j6/j8 de 0,00/0,069 nos textos médios e 0,00/0,00 nos longos,
