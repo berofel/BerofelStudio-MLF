@@ -248,6 +248,10 @@ referência autorizada e transcrição configuradas no painel Narração:
   scripts/benchmark_qwen3_precision.py --confirm-own-or-authorized-voice --threads 4
 ```
 
+## Aditivo — status após a Operação Qwen Turbo (19/11/2026)
+
+As linhas anteriores registram decisões e evidências antes da qualificação do adaptador nativo Q4. A atualização posterior validou geração Q4 Base offline no runtime Windows e no serviço do editor, mediu 2/4/6/8 threads, streaming de prévia e um fluxo Qt; o Original float32 continua padrão/fallback. Veja [`QWEN3_TURBO_EXPERIMENT_20261119.md`](QWEN3_TURBO_EXPERIMENT_20261119.md) para métricas, condicionamento x-vector sem ICL, comparação pareada e limitações. Não foram validados INT8/INT4 dinâmicos além dos ensaios documentados aqui, nem qualidade subjetiva dos novos perfis.
+
 O script opera offline, usa o mesmo prompt e semente nos dois caminhos, amostra
 RSS durante cada inferência, mantém os WAVs apenas em memória e imprime métricas
 sem revelar referência ou texto. Na execução reproduzida em 19/11/2026, ambos
