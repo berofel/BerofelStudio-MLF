@@ -1166,3 +1166,22 @@ $env:TRANSFORMERS_OFFLINE = '1'
   --confirm-own-or-authorized-voice --threads 6 --lengths short medium --repeats 3 `
   --modes mixed int8 --output-dir "$env:USERPROFILE\Desktop\PureC_Stage_Benchmark"
 ```
+
+#### Proxy ASR das amostras com perfil interno (19/11/2026)
+
+Para obter um indício automático adicional, transcrevi os mesmos 12 WAVs em cópias
+temporárias a 16 kHz com Faster-Whisper Base/int8 local, seis threads e língua
+portuguesa. Os WAVs 24 kHz originais não foram alterados. WER mediano (três
+repetições; menor é melhor):
+
+| Modo solicitado | Curto (11 palavras) | Médio (43 palavras) |
+|---|---:|---:|
+| `--quant-mixed-cpu` | 0,091 | 0,047 |
+| `--int8` | 0,273 | 0,047 |
+
+No texto médio os modos empataram neste proxy. No texto curto, a variância foi
+alta e o número de palavras é pequeno; não há base para eleger a qualidade de
+um modo. WER mede apenas erros de transcrição e não avalia naturalidade, timbre,
+prosódia ou ruído. O resultado detalhado/transcrições estão em
+`C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_PureCStages_20261119\asr_wer_results.json`,
+fora do Git e sem gravações de referência. A escuta humana continua necessária.
