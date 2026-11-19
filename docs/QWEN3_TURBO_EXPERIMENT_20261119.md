@@ -727,3 +727,54 @@ integrações reais offline ativas: **320 testes passaram, 1 foi ignorado**.
 Incluiu a geração pela interface, inserção na timeline, exportação WAV/MP4 e
 prewarm Turbo mixed. O prewarm INT8 também passou pelo teste de interface real
 separado. Estes testes Qt são offscreen e não certificam saída nos alto-falantes.
+
+#### Auditoria isolada do upstream v0.23.0 e INT4 no Base 0.6B (19/11/2026)
+
+Uma reavaliação da versão upstream `v0.23.0` (`e391ec5467b0218eeb175f4888ad65b259d1e7c7`)
+encontrou quantização INT4 disponível para o Base 0.6B. Compilei essa revisão
+em um clone temporário fora do repositório do editor, usando o MSYS2 portátil
+já existente. A compilação exigiu incluir caminhos OpenBLAS e declarações GNU
+explicitamente; o executável depende de `msys-2.0.dll` e DLLs OpenBLAS. Portanto,
+isso valida um experimento local, não um pacote nativo autossuficiente nem um
+runtime aprovado para distribuição. O upstream ainda classifica Windows como
+beta via WSL2 em seu guia de build.
+
+O binário passou `--self-test` e informou AVX2 no Ryzen, com Q4 AVX2 disponível
+para os kernels de lote. Fiz uma comparação exploratória com a mesma frase em
+português e o mesmo perfil autorizado, salvo como `.qvoice` pelo próprio
+backend. As execuções após o preparo carregaram o mesmo perfil reutilizável;
+foram uma amostra por modo, não uma mediana. O modelo foi o único Qwen Base
+0.6B local. O Faster-Whisper Base/int8 offline foi usado só como proxy de
+inteligibilidade; WER é calculado por distância de edição em palavras e não
+substitui audição humana.
+
+| Perfil v0.23 | Síntese reportada | Áudio | RTF | TTFA | WER proxy | Observação |
+|---|---:|---:|---:|---:|---:|---|
+| Original FP32 | 17,4 s | 11,20 s | 1,56 | 2,275 s | 0,20 | Modelo carregou em 0,431 s; sem amostra PCM no limite |
+| INT8 | 12,3 s | 11,68 s | 1,05 | 1,683 s | 0,30 | WAV íntegro; sem amostra PCM no limite |
+| Misto (`--quant-mixed-cpu`) | 11,1 s | 11,36 s | 0,98 | 1,663 s | 0,50 | WAV íntegro; sem amostra PCM no limite |
+| INT4, amostra livre | 47,1 s | 47,52 s | 0,99 | 1,624 s | 1,00 | Whisper reconheceu 3 palavras; 517 amostras PCM no limite |
+| INT4, `--seed 42` | 24,5 s | 26,56 s | 0,92 | 1,638 s | 0,93 | Whisper reconheceu 15 palavras; sem amostra PCM no limite |
+
+O INT4 tem primeira resposta semelhante, mas EOS/duração e inteligibilidade
+variaram muito entre estas duas amostras e ficaram muito piores que FP32/INT8.
+Não é uma opção utilizável com base nesta evidência. O modo misto deste build
+também ficou abaixo da qualidade proxy do INT8 e da configuração atual Pure C
+Turbo já integrada. Assim, **nenhuma variante v0.23 foi promovida**: manter os
+backends atuais `Pure C mixed` (Turbo) e `Pure C INT8` (Equilibrado), com
+backend oficial Original como fallback. Os resultados do build novo não devem
+ser confundidos com o benchmark anterior do Pure C já integrado; são versões
+e caminhos de compilação distintos.
+
+Os WAVs A/B e o `.qvoice` experimental foram guardados apenas no diretório de
+benchmark fora do Git; o áudio privado original e os perfis do editor não
+foram movidos nem alterados. A medição de memória foi apenas observacional
+durante o processo INT4 (working set visto em ~3,64 GB), não um pico amostrado
+de forma contínua. Não foi medido CPU/RAM para os outros quatro modos neste
+ensaio. A avaliação auditiva humana e testes do build v0.23 dentro do editor
+continuam pendentes; por isso, a decisão é rejeitar a promoção, não certificar
+qualidade perceptiva geral.
+
+Fontes upstream: [repositório Qwen3-TTS Pure C](https://github.com/gabriele-mastrapasqua/qwen3-tts),
+[guia de build](https://github.com/gabriele-mastrapasqua/qwen3-tts/blob/main/docs/building.md)
+e [release v0.23.0](https://github.com/gabriele-mastrapasqua/qwen3-tts/releases/tag/v0.23.0).
