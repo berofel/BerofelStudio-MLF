@@ -60,6 +60,20 @@ O tempo extra ao alternar perfil foi rastreado até o encerramento do servidor: 
 
 Nova comparação A/B offline, mesmo texto novo e mesma referência, após essa correção: Turbo 9,433 s ponta a ponta, carga 0,786 s, geração 8,618 s, duração 9,12 s, RTF 0,945; Equilibrado 10,512 s ponta a ponta, carga 0,899 s, geração 9,414 s, duração 9,68 s, RTF 0,973. Sem cache de áudio; x-vector em cache. Artefatos externos: `Comparacao_pipefix_qwen3-tts-native-q4_20261119_120100_6c93d0ac.wav` e `Comparacao_pipefix_qwen3-tts-native-q4-balanced_20261119_120111_aedcb2aa.wav`.
 
+### Referência pareada com o Qwen oficial
+
+No mesmo Windows/CPU, em execução offline e sem cache de frase, os três modos geraram a frase “No Berofel Studio, esta mesma frase compara os modos Original, Turbo e Equilibrado para medir velocidade e clareza em português brasileiro.” com a mesma referência vocal autorizada. Medidas de uma execução (sem inferência de mediana):
+
+| Modo | Carregamento | Síntese | WAV | RTF | WER Whisper base/int8 |
+|---|---:|---:|---:|---:|---:|
+| Original Qwen oficial | 7,735 s | 48,891 s | 8,16 s | 5,992 | 0,190 |
+| Turbo Q4 · 6 threads | 0,850 s | 11,100 s | 11,52 s | 0,964 | 0,048 |
+| Equilibrado Q4 · 8 threads | 0,813 s | 11,660 s | 11,84 s | 0,985 | 0,143 |
+
+Tempo ponta a ponta medido foi 57,121 / 11,983 / 12,713 s, respectivamente. Pico agregado amostrado (processo chamador e filhos) nesta execução foi 5,203 GiB, dominado pela inferência oficial; não é pico separado por perfil. O Faster-Whisper leu 16 kHz após resampling local de 24 kHz; uma sentença e decoding estocástico são insuficientes para inferir qualidade geral. Além disso, o motor oficial usa prompt com referência/transcrição, enquanto o adaptador nativo testado usa x-vector sem ICL (a clonagem ICL nativa falhou nos limites de frames e não está habilitada); é o mesmo áudio-fonte autorizado, mas o condicionamento não é idêntico. Não interprete WER menor como maior semelhança de voz.
+
+WAVs pareados, privados, fora do Git: `Matched_qwen3-tts-local_20261119_120619_e4c0206e.wav`, `Matched_qwen3-tts-native-q4_20261119_120632_f127aa95.wav`, `Matched_qwen3-tts-native-q4-balanced_20261119_120645_b219cc66.wav` em `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119\matched_original_comparison_arquivos\narracoes`.
+
 Não foram obtidas métricas separadas de prefill/talker/code predictor para o runtime nativo. No oficial, o profiler mediu carga 6,008 s, prompt 0,655 s, prefill 0,413 s, 131 chamadas autoregressivas 47,645 s, das quais code predictor aninhado somou ~35,166 s; geração API 54,333 s, primeiro code frame ~0,7 s (não era áudio tocável). Isso aponta o code predictor como parcela dominante no backend oficial, mas não prova a mesma divisão interna no nativo. O script `scripts/benchmark_qwen3_stages.py` registra estágios oficiais.
 
 ## Testes / evidência da integração
