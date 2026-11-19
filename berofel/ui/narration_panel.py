@@ -135,6 +135,19 @@ class NarrationPanel(QScrollArea):
         self.clone_engine.currentIndexChanged.connect(self._update_custom)
         self.clone_engine.activated.connect(self._prewarm_selected_fast_profile)
         layout.addWidget(self.clone_engine)
+        self.purec_thread_label=QLabel('Turbo mixed · threads da CPU (6 recomendado; 8 prioriza velocidade)')
+        self.purec_thread_label.setToolTip(
+            'Mais threads podem acelerar uma geração isolada, mas deixam menos CPU livre. '
+            'Se o servidor estiver aquecido, a próxima geração com outro valor reinicia o motor.')
+        self.purec_threads=QComboBox()
+        for count in (2,4,6,8):
+            self.purec_threads.addItem(f'{count} threads',count)
+        self.purec_threads.setCurrentIndex(self.purec_threads.findData(6))
+        self.purec_thread_label.setVisible(False)
+        self.purec_threads.setVisible(False)
+        self.purec_threads.currentIndexChanged.connect(lambda _index:self._update_custom())
+        layout.addWidget(self.purec_thread_label)
+        layout.addWidget(self.purec_threads)
         self.reference_text = QLineEdit()
         self.reference_text.setPlaceholderText('Transcrição exata do que é falado na gravação (recomendado)')
         layout.addWidget(self.reference_text)
@@ -355,6 +368,7 @@ class NarrationPanel(QScrollArea):
         self.voice.currentIndexChanged.connect(self._schedule_preferences_save)
         self.sample_path.textChanged.connect(self._schedule_preferences_save)
         self.clone_engine.currentIndexChanged.connect(self._schedule_preferences_save)
+        self.purec_threads.currentIndexChanged.connect(self._schedule_preferences_save)
         self.reference_text.textChanged.connect(self._schedule_preferences_save)
         from berofel.services.qwen3_tts_local import is_ready as qwen_local_ready
         if qwen_local_ready():
@@ -648,6 +662,11 @@ class NarrationPanel(QScrollArea):
         index=self.clone_engine.findData(engine)
         if index<0:index=self.clone_engine.findData('qwen3-tts-local')
         if index>=0:self.clone_engine.setCurrentIndex(index)
+        try:thread_count=int(settings.value('narration/purec_threads',6))
+        except (TypeError,ValueError):thread_count=6
+        thread_index=self.purec_threads.findData(thread_count)
+        if thread_index<0:thread_index=self.purec_threads.findData(6)
+        if thread_index>=0:self.purec_threads.setCurrentIndex(thread_index)
         self.reference_text.setText(str(settings.value('narration/reference_text','')))
         self.text.setPlainText(str(settings.value('narration/draft','')))
         self.name.setText(str(settings.value('narration/title','Narração')))
@@ -673,7 +692,10 @@ class NarrationPanel(QScrollArea):
                 return
             self.status.setText(
                 'Preparando voz e motor local em segundo plano para acelerar a primeira narração...')
-            self.on_prepare_voice(reference,profile.get('reference_text',''),profile.get('name',''))
+            thread_count=(self.purec_threads.currentData()
+                          if engine=='qwen3-tts-purec-mixed' else None)
+            self.on_prepare_voice(reference,profile.get('reference_text',''),
+                                  profile.get('name',''),thread_count)
         except (OSError,ValueError,KeyError):
             # Generation remains available and will surface its own detailed
             # error if the saved profile cannot be prepared.
@@ -685,6 +707,7 @@ class NarrationPanel(QScrollArea):
         settings.setValue('narration/language',self.language.currentData() or 'portuguese')
         settings.setValue('narration/sample_path',self.sample_path.text())
         settings.setValue('narration/clone_engine',self.clone_engine.currentData())
+        settings.setValue('narration/purec_threads',self.purec_threads.currentData() or 6)
         settings.setValue('narration/reference_text',self.reference_text.text())
         settings.setValue('narration/draft',self.text.toPlainText())
         settings.setValue('narration/title',self.name.text())
@@ -734,6 +757,9 @@ class NarrationPanel(QScrollArea):
                                      'qwen3-tts-purec-int8')
         self.activate_cloning.hide()
         self.clone_engine.setVisible(custom and self.clone_engine.count()>1)
+        use_thread_choice=(custom and engine=='qwen3-tts-purec-mixed')
+        self.purec_thread_label.setVisible(use_thread_choice)
+        self.purec_threads.setVisible(use_thread_choice)
         self.reference_text.setVisible(qwen)
         self.install_qwen.setVisible(qwen and engine=='qwen3-tts-local')
         self.qwen_status.setVisible(qwen and bool(self.qwen_status.text()))
@@ -742,7 +768,7 @@ class NarrationPanel(QScrollArea):
             if engine in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8') and qwen:
                 mode=('Turbo Pure C mixed · Talker INT8 / Code Predictor INT4'
                       if engine=='qwen3-tts-purec-mixed' else 'Equilibrado Pure C INT8')
-                self.license_note.setText(f'{mode} experimental: Qwen3 Base local. O perfil vocal é preparado em cache e o servidor é mantido ativo para a voz selecionada. Trocar de perfil ou modo de precisão recarrega o modelo. Usa runtime MSYS2/OpenBLAS local; compare a amostra antes de escolher.')
+                self.license_note.setText(f'{mode} experimental: Qwen3 Base local. O perfil vocal é preparado em cache e o servidor é mantido ativo para a voz selecionada. Trocar de perfil, quantidade de threads ou modo de precisão reinicia e recarrega o modelo. Usa runtime MSYS2/OpenBLAS local; compare a amostra antes de escolher.')
             elif engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced') and qwen:
                 profile_name='Turbo · Q4 · 6 threads' if engine=='qwen3-tts-native-q4' else 'Equilibrado · Q4 · 8 threads'
                 self.license_note.setText(f'{profile_name} experimental: usa o modelo Qwen3-TTS Base 0.6B nativo e o x-vector preparado. Prioriza velocidade; a clonagem detalhada continua disponível em Original. A naturalidade varia entre gerações; compare as amostras antes de escolher. Use apenas voz autorizada.')
@@ -988,7 +1014,9 @@ class NarrationPanel(QScrollArea):
                                quantize=self.quantize.isChecked(),
                                title=self.name.text().strip() or 'Narração',
                                engine=engine,
-                               reference_text=self.reference_text.text().strip() if custom else '')
+                               reference_text=self.reference_text.text().strip() if custom else '',
+                               thread_count=(self.purec_threads.currentData()
+                                             if engine=='qwen3-tts-purec-mixed' else None))
         if self.on_generate:
             self.on_generate(req, add_to_timeline)
 
@@ -998,11 +1026,12 @@ class NarrationPanel(QScrollArea):
         if busy:
             self.status.setText('Qwen3-TTS em processo local isolado; o modelo é reutilizado durante esta sessão.')
 
-    def set_result(self, path: str, duration: float, cache_hit: bool, engine: str=''):
+    def set_result(self, path: str, duration: float, cache_hit: bool, engine: str='',
+                   threads: int | None = None):
         self.last_audio = path
         mode={'qwen3-tts-local':'Original','qwen3-tts-native-q4':'Turbo · Q4 · 6 threads',
               'qwen3-tts-native-q4-balanced':'Equilibrado · Q4 · 8 threads',
-              'qwen3-tts-purec-mixed':'Turbo · Pure C mixed · 6 threads (experimental)',
+              'qwen3-tts-purec-mixed':f'Turbo · Pure C mixed · {threads or self.purec_threads.currentData()} threads (experimental)',
               'qwen3-tts-purec-int8':'Equilibrado · Pure C INT8 · 6 threads (experimental)'}.get(engine,engine or 'Qwen3-TTS')
         if not self.audio_history or Path(self.audio_history[-1][0])!=Path(path):
             self.audio_history.append((path,mode))

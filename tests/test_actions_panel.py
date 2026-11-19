@@ -26,6 +26,20 @@ except ImportError:
     QApplication=None
 
 
+def _snapshot_narration_settings(settings):
+    keys=('narration/voice','narration/clone_engine','narration/purec_threads',
+          'narration/sample_path','narration/reference_text','narration/draft',
+          'narration/title','narration/language')
+    return {key:(settings.contains(key),settings.value(key)) for key in keys}
+
+
+def _restore_narration_settings(settings,snapshot):
+    for key,(present,value) in snapshot.items():
+        if present:settings.setValue(key,value)
+        else:settings.remove(key)
+    settings.sync()
+
+
 @unittest.skipUnless(QApplication is not None,'PySide6 não instalado neste ambiente')
 class ActionsUITests(unittest.TestCase):
     @classmethod
@@ -277,6 +291,8 @@ class ActionsUITests(unittest.TestCase):
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
              patch('berofel.services.qwen3_purec_tts.is_ready',return_value=True):
             panel=NarrationPanel()
+        settings_snapshot=_snapshot_narration_settings(panel._settings)
+        original_threads=panel.purec_threads.currentIndex()
         with tempfile.NamedTemporaryFile(suffix='.wav',delete=False) as sample:
             sample_path=sample.name
         profile={'sample_path':sample_path,'reference_text':'fala de referência',
@@ -291,15 +307,45 @@ class ActionsUITests(unittest.TestCase):
                 turbo_index=panel.clone_engine.findData('qwen3-tts-purec-mixed')
                 self.assertGreaterEqual(turbo_index,0)
                 panel.clone_engine.setCurrentIndex(turbo_index)
+                self.assertFalse(panel.purec_threads.isHidden())
+                panel.purec_threads.setCurrentIndex(panel.purec_threads.findData(8))
                 panel.voice.activated.emit(voice_index)
-                prepare.assert_called_once_with(sample_path,'fala de referência','Minha voz')
+                prepare.assert_called_once_with(sample_path,'fala de referência','Minha voz',8)
                 prepare.reset_mock()
                 panel.voice_profiles.get.return_value={**profile,'authorized':False}
                 panel._prewarm_selected_fast_profile()
                 prepare.assert_not_called()
         finally:
+            panel.purec_threads.setCurrentIndex(original_threads)
             Path(sample_path).unlink(missing_ok=True)
+            panel._preferences_timer.stop()
             panel.close()
+            _restore_narration_settings(panel._settings,settings_snapshot)
+
+    def test_purec_turbo_request_carries_selected_thread_budget(self):
+        import tempfile
+        with patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
+             patch('berofel.services.qwen3_purec_tts.is_ready',return_value=True):
+            panel=NarrationPanel()
+        settings_snapshot=_snapshot_narration_settings(panel._settings)
+        original_threads=panel.purec_threads.currentIndex()
+        panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+        panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-purec-mixed'))
+        panel.purec_threads.setCurrentIndex(panel.purec_threads.findData(8))
+        with tempfile.NamedTemporaryFile(suffix='.wav',delete=False) as sample:
+            panel.sample_path.setText(sample.name)
+            panel.authorized.setChecked(True)
+            panel.text.setPlainText('Teste Turbo com oito threads.')
+            requests=[]
+            panel.on_generate=lambda request,insert:requests.append(request)
+            panel._generate(False)
+        Path(sample.name).unlink(missing_ok=True)
+        self.assertEqual(requests[0].thread_count,8)
+        self.assertFalse(panel.purec_threads.isHidden())
+        panel.purec_threads.setCurrentIndex(original_threads)
+        panel._preferences_timer.stop()
+        panel.close()
+        _restore_narration_settings(panel._settings,settings_snapshot)
 
     def test_balanced_panel_selection_builds_native_narration_request(self):
         import tempfile

@@ -44,6 +44,20 @@ class FastNarrationProfileUiTests(unittest.TestCase):
         self.assertTrue(Path(settings.fileName()).is_relative_to(
             Path(self.settings_dir.name)))
 
+    def test_purec_turbo_thread_budget_persists_between_panels(self):
+        with patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
+             patch('berofel.services.qwen3_purec_tts.is_ready',return_value=True):
+            panel=NarrationPanel()
+            panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-purec-mixed'))
+            panel.purec_threads.setCurrentIndex(panel.purec_threads.findData(8))
+            panel.save_preferences();panel.close()
+            restored=NarrationPanel()
+            try:
+                self.assertEqual(restored.clone_engine.currentData(),'qwen3-tts-purec-mixed')
+                self.assertEqual(restored.purec_threads.currentData(),8)
+            finally:
+                restored.close()
+
     def test_pre_authorized_profile_generates_without_reconfirming(self):
         with tempfile.TemporaryDirectory(prefix='bfs_fast_voice_ui_') as folder:
             root=Path(folder);store=root/'voices';sample=root/'reference.wav'

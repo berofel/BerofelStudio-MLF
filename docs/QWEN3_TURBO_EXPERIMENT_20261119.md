@@ -805,14 +805,36 @@ Turbo mixed escalou até oito threads, com redução de cerca de 5% no RTF frent
 a seis, ao custo de ocupar quase toda a CPU medida. INT8 não ganhou velocidade
 ao passar de seis para oito e também chegou perto da saturação da máquina.
 Por isso, seis threads continuam o padrão recomendado durante edição manual;
-o usuário pode selecionar oito para acelerar uma geração isolada, sabendo que
-resta pouca folga de CPU para outros trabalhos. O teste Qt real em oito threads
+o painel de Narração agora permite selecionar 2, 4, 6 ou 8 threads para o modo
+Turbo mixed, persiste a escolha entre sessões e informa a configuração usada no
+WAV gerado. O usuário pode selecionar oito para acelerar uma geração isolada,
+sabendo que resta pouca folga de CPU para outros trabalhos. O teste Qt real em oito threads
 gerou, inseriu na timeline e exportou WAV/MP4 com áudio e vídeo, mas não mediu
 latência de interação por instrumento externo.
 
 As métricas completas e os WAVs estão apenas nos diretórios locais
 `controlled_threads_2`, `controlled_threads_4`, `controlled_threads_6` e
 `controlled_threads_8`, fora do Git.
+
+#### Controle de threads de Turbo no painel do editor
+
+O painel de Narração agora expõe 2/4/6/8 threads somente para Pure C mixed.
+Seis seguem como padrão recomendado para manter CPU disponível durante edição;
+oito é uma escolha explícita para uma geração isolada mais rápida, com aviso de
+que o servidor precisa reiniciar quando a configuração muda e que a CPU ficará
+quase saturada. A opção é salva nas preferências locais e enviada na solicitação
+e no pré-aquecimento do perfil, de forma que o motor efetivamente recebe o mesmo
+orçamento selecionado. O resultado exibido inclui o número de threads utilizado.
+
+Validação real em 19/11/2026, offline e com a interface Qt: selecionei Turbo
+mixed e 8 threads, gerei a narração, inseri o clipe na timeline e exportei WAV e
+MP4. A síntese produziu WAV de 4,96 s; o WAV exportado durou 4,96 s e o MP4
+4,9667 s, ambos com áudio; o MP4 também continha vídeo. O servidor já estava
+quente e o perfil autorizado teve cache hit. Um teste separado de pré-aquecimento
+reportou primeira amostra PCM em 0,493 s e síntese de 5,36 s em 4,04 s. Esses
+valores descrevem essas execuções específicas, não garantem latência em toda
+frase ou em outra máquina. A suíte offline completa após a integração passou:
+326 testes, um ignorado por exigir integração de outro backend, nenhum erro.
 
 Uma consulta direta à DLL OpenBLAS sem o servidor ativo mostrou o padrão de 16
 threads. O servidor Qwen, contudo, assume a propriedade do orçamento BLAS e

@@ -26,6 +26,7 @@ class NarrationRequest:
     title: str = 'Narração'
     engine: str = 'qwen3-tts-local'
     reference_text: str = ''
+    thread_count: int | None = None
 
 
 def persistent_folder(project_path: str = '') -> Path:

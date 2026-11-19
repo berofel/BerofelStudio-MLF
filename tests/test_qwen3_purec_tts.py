@@ -24,6 +24,13 @@ class PureCTests(unittest.TestCase):
         self.assertEqual(env['OMP_NUM_THREADS'], '4')
         self.assertEqual(env['OPENBLAS_NUM_THREADS'], '1')
 
+    def test_explicit_thread_budget_overrides_environment_and_is_bounded(self):
+        with patch.dict(os.environ, {'BEROFEL_QWEN3_PUREC_THREADS': '4'}, clear=False):
+            self.assertEqual(purec.threads_for_engine(8),8)
+            self.assertEqual(purec.threads_for_engine(99),8)
+            self.assertEqual(purec.threads_for_engine(1),2)
+            self.assertEqual(purec.threads_for_engine(),4)
+
     def test_profile_validator_accepts_only_finite_1024_float_vectors(self):
         with tempfile.TemporaryDirectory() as folder:
             profile = Path(folder) / 'voice.bin'
@@ -263,7 +270,8 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                 window.show(); app.processEvents()
                 panel = window.narration_panel
                 original = (panel.voice.currentIndex(), panel.clone_engine.currentIndex(),
-                            panel.text.toPlainText(), panel.language.currentIndex(), panel.name.text())
+                            panel.text.toPlainText(), panel.language.currentIndex(), panel.name.text(),
+                            panel.purec_threads.currentIndex())
                 profile_index = panel.voice.findData(f'voice-profile:{profile["id"]}')
                 engine_index = panel.clone_engine.findData(test_engine)
                 self.assertGreaterEqual(profile_index, 0)
@@ -274,6 +282,8 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                     widget.blockSignals(True)
                 panel.voice.setCurrentIndex(profile_index)
                 panel.clone_engine.setCurrentIndex(engine_index)
+                if test_engine == purec.ENGINE_ID:
+                    panel.purec_threads.setCurrentIndex(panel.purec_threads.findData(8))
                 panel.language.setCurrentIndex(panel.language.findData('portuguese'))
                 panel.text.setPlainText('Esta narração está sendo inserida na timeline do editor.')
                 title = f'Pure C editor test {test_engine}'
@@ -292,6 +302,8 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                 clips = [clip for clip in window.project.clips if clip.title == title]
                 self.assertEqual(len(clips), 1)
                 self.assertTrue(Path(clips[0].source).is_file())
+                if test_engine == purec.ENGINE_ID:
+                    self.assertIn('8 threads',panel.audio_history[-1][1])
                 self.assertGreater(clips[0].duration, 1.0)
                 self.assertIn(clips[0].source, window.project.media)
                 from berofel.core.project import Clip
@@ -320,6 +332,7 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                 print('PUREC_GUI_RESULT ' + json.dumps({
                     'clip_id': clips[0].id, 'duration': clips[0].duration,
                     'source': clips[0].source, 'engine': test_engine,
+                    'threads': panel.audio_history[-1][1],
                     'wav_seconds': wav_duration, 'mp4_seconds': mp4_duration,
                     'mp4_video': mp4_has_video, 'mp4_audio': mp4_has_audio}, ensure_ascii=False))
                 for widget in (panel.voice, panel.clone_engine, panel.text, panel.language,
@@ -327,7 +340,8 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                     widget.blockSignals(True)
                 panel.voice.setCurrentIndex(original[0]); panel.clone_engine.setCurrentIndex(original[1])
                 panel.text.setPlainText(original[2]); panel.language.setCurrentIndex(original[3])
-                panel.name.setText(original[4]); panel._update_custom()
+                panel.name.setText(original[4]); panel.purec_threads.setCurrentIndex(original[5])
+                panel._update_custom()
                 for widget in (panel.voice, panel.clone_engine, panel.text, panel.language,
                                panel.name, panel.sample_path, panel.reference_text):
                     widget.blockSignals(False)

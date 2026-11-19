@@ -1380,7 +1380,7 @@ class MainWindow(QMainWindow):
         if streaming:self.narration_stream.begin()
         engine_label=({'qwen3-tts-native-q4':'Qwen Turbo Q4 · 6 threads experimental',
                        'qwen3-tts-native-q4-balanced':'Qwen Equilibrado Q4 · 8 threads experimental',
-                       'qwen3-tts-purec-mixed':'Qwen Turbo Pure C mixed · 6 threads experimental',
+                       'qwen3-tts-purec-mixed':f'Qwen Turbo Pure C mixed · {request.thread_count or 6} threads experimental',
                        'qwen3-tts-purec-int8':'Qwen Equilibrado Pure C INT8 · 6 threads experimental'}
                       .get(request.engine,'Qwen3-TTS Base local'))
         self.statusBar().showMessage(f'Batata Quente: {engine_label} gerando em processo isolado...')
@@ -1388,7 +1388,7 @@ class MainWindow(QMainWindow):
             path=result['path']
             duration=result['duration']
             self.narration_panel.set_result(path,duration,result['cache_hit'],
-                result.get('engine',''))
+                result.get('engine',''),result.get('threads'))
             if add_to_timeline:
                 self.snapshot()
                 narration_track=next((t for t in self.project.tracks if t.name=='Narração' and not t.locked),None)
@@ -1420,7 +1420,8 @@ class MainWindow(QMainWindow):
             self.narration_panel.busy(False)
         task.signals.finished.connect(finish)
 
-    def prepare_narration_voice(self,reference: str,reference_text: str,name: str=''):
+    def prepare_narration_voice(self,reference: str,reference_text: str,name: str='',
+                                thread_count: int | None = None):
         """Warm the shared Base model and prepare a reusable profile prompt."""
         if self._ai_busy or self.active_task is not None:
             self.narration_panel.status.setText(
@@ -1441,7 +1442,8 @@ class MainWindow(QMainWindow):
                     f'Perfil Pure C {cached}. A voz será reutilizada enquanto o modelo estiver ativo.')
             def prepare_purec(progress=None,control=None,stage=None):
                 return prepare_voice_profile(reference,reference_text,True,
-                    control=control,stage=stage,engine=engine)
+                    control=control,stage=stage,engine=engine,
+                    thread_count=thread_count)
             task=self._task(prepare_purec,purec_ready,
                             label='Preparar perfil Pure C'+(f' · {name}' if name else ''))
             if task is None:

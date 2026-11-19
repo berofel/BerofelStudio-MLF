@@ -71,17 +71,22 @@ def is_ready() -> bool:
             all(path.is_dir() for path in paths))
 
 
-def _environment(exe: Path, paths: list[Path]) -> dict[str, str]:
+def _environment(exe: Path, paths: list[Path], thread_count: int | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env['PATH'] = os.pathsep.join(map(str, paths)) + os.pathsep + env.get('PATH', '')
-    env['OMP_NUM_THREADS'] = str(threads_for_engine())
+    env['OMP_NUM_THREADS'] = str(threads_for_engine(thread_count))
     # The Pure C server owns the request-level thread pool. Prevent a separate
     # OpenBLAS pool from expanding to the host-wide default (often all cores).
     env['OPENBLAS_NUM_THREADS'] = '1'
     return env
 
 
-def threads_for_engine() -> int:
+def threads_for_engine(thread_count: int | None = None) -> int:
+    if thread_count is not None:
+        try:
+            return max(2, min(8, int(thread_count)))
+        except (TypeError, ValueError):
+            return 6
     try:
         return max(2, min(8, int(os.environ.get('BEROFEL_QWEN3_PUREC_THREADS', '6'))))
     except (TypeError, ValueError):
@@ -122,7 +127,8 @@ def _quantization_flag(engine: str) -> list[str]:
 
 def prepare_voice_profile(reference: str, reference_text: str = '',
                           consent: bool = False, control=None,
-                          stage=None, engine: str = ENGINE_ID) -> dict:
+                          stage=None, engine: str = ENGINE_ID,
+                          thread_count: int | None = None) -> dict:
     """Prepare and securely cache a reusable Pure C x-vector for local TTS."""
     source = Path(reference).expanduser().resolve()
     validate_request('preparar voz', str(source), 'portuguese', consent)
@@ -137,7 +143,7 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
     destination = cache / (key + '.bin')
     if _valid_profile(destination):
         with _LOCK:
-            _, model_load = _start_server(destination, control, engine)
+            _, model_load = _start_server(destination, control, engine, thread_count)
         return {'path': str(destination), 'cache_hit': True,
                 'profile_prepare_seconds': 0.0, 'model_load_seconds': model_load,
                 'engine': engine}
@@ -152,8 +158,8 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
         prepare_audio_prompt(str(source), normalized)
         command = [str(exe), '-d', str(model), '--ref-audio', str(normalized),
                    '--xvector-only', '--save-voice', str(pending),
-                   '-j', str(threads_for_engine())]
-        process = subprocess.Popen(command, cwd=str(exe.parent), env=_environment(exe, paths),
+                   '-j', str(threads_for_engine(thread_count))]
+        process = subprocess.Popen(command, cwd=str(exe.parent), env=_environment(exe, paths, thread_count),
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    creationflags=_process_flags())
         timeout = max(30, min(900, float(os.environ.get('BEROFEL_QWEN3_PUREC_PROFILE_TIMEOUT', '300'))))
@@ -179,7 +185,7 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
     # Keep the expensive model resident so the next voice generation can stream
     # immediately. The server holds the selected profile until a profile switch.
     with _LOCK:
-        _, model_load = _start_server(destination, control, engine)
+        _, model_load = _start_server(destination, control, engine, thread_count)
     return {'path': str(destination), 'cache_hit': False,
             'profile_prepare_seconds': elapsed, 'model_load_seconds': model_load,
             'engine': engine}
@@ -210,22 +216,23 @@ def _free_port() -> int:
 
 
 def _start_server(profile: Path, control=None,
-                  engine: str = ENGINE_ID) -> tuple[int, float]:
+                  engine: str = ENGINE_ID,
+                  thread_count: int | None = None) -> tuple[int, float]:
     global _PROCESS, _PROCESS_KEY, _PORT, _MODEL_LOAD_SECONDS, _PROFILE_SECONDS
     exe, model, paths = _layout()
     quantization = _quantization_flag(engine)
     key = digest({'model': _model_key(exe, model), 'profile': hashlib.sha256(profile.read_bytes()).hexdigest(),
-                  'threads': threads_for_engine(), 'precision': engine})
+                  'threads': threads_for_engine(thread_count), 'precision': engine})
     if _PROCESS is not None and _PROCESS.poll() is None and _PROCESS_KEY == key:
         # This value is per request: a resident server incurs no new model load.
         return _PORT, 0.0
     _stop_server_locked()
     port = _free_port()
     command = [str(exe), '-d', str(model), '--load-voice', str(profile),
-               '--xvector-only', *quantization, '-j', str(threads_for_engine()),
+               '--xvector-only', *quantization, '-j', str(threads_for_engine(thread_count)),
                '--max-request-seconds', '600', '--serve', str(port)]
     started = time.perf_counter()
-    process = subprocess.Popen(command, cwd=str(exe.parent), env=_environment(exe, paths),
+    process = subprocess.Popen(command, cwd=str(exe.parent), env=_environment(exe, paths, thread_count),
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, creationflags=_process_flags())
     deadline = time.monotonic() + 180
@@ -265,7 +272,8 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
     if control: control.checkpoint()
     profile = prepare_voice_profile(request.voice, request.reference_text,
                                     request.consent, control, stage,
-                                    engine=request.engine)
+                                    engine=request.engine,
+                                    thread_count=request.thread_count)
     folder = persistent_folder(request.project_path)
     folder.mkdir(parents=True, exist_ok=True)
     base = (''.join(ch if ch.isalnum() or ch in '-_ ' else '_' for ch in request.title).strip() or 'Narração')[:80]
@@ -274,7 +282,7 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
     stream_stats = {'first_audio_chunk_seconds': None, 'streamed_pcm_bytes': 0, 'streamed_chunk_count': 0}
     with _LOCK:
         port, model_load = _start_server(Path(profile['path']), control,
-                                         request.engine)
+                                         request.engine, request.thread_count)
         # A cache miss starts the resident model while preparing its profile;
         # preserve that measured cost in this request's telemetry. Cache hits
         # on an already running server correctly report zero incremental load.
@@ -337,7 +345,7 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
     execution_profile = ('Turbo Pure C mixed CPU'
                          if request.engine == ENGINE_ID else 'Equilibrado Pure C INT8')
     return {'path': str(output), 'duration': duration, 'title': request.title,
-            'engine': request.engine, 'threads': threads_for_engine(),
+            'engine': request.engine, 'threads': threads_for_engine(request.thread_count),
             'execution_profile': execution_profile,
             'precision': quantization,
             'cache_hit': False, 'profile_cache_hit': bool(profile['cache_hit']),
