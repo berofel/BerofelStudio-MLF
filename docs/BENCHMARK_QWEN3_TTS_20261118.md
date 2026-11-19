@@ -62,11 +62,9 @@ inicialização de uma máquina diferente.
 - A API `torch.ao.quantization.quantize_dynamic` documenta `qint8` e `float16`
   como tipos dinâmicos simples. O ensaio local confirmou que `quint4x2` é
   rejeitado pelo Qwen/PyTorch instalado. [Documentação oficial PyTorch](https://docs.pytorch.org/docs/stable/generated/torch.ao.quantization.quantize_dynamic.html).
-- Não foi compilado backend nativo Windows compatível com o prompt Base. INT8
-  tem uma comparação curta posterior, mas não qualificação de qualidade;
-  INT4 não é aceito pela API dinâmica atual. A variante mais rápida com
-  qualidade aceitável entre backends continua **não determinada**; a decisão
-  atual é usar o backend oficial testado com precisão completa.
+- Backend alternativo investigado: [Qwen3-TTS ONNX Runtime](https://github.com/zhangluoyang/qwen3-tts-onnxruntime), que declara Apache-2.0 e oferece código Python/C++ e streaming. Seu README demonstra exportação Base em 1.7B com `device=cuda`; não há evidência ali de exportação 0.6B Base e execução CPU no Ryzen. Não foi integrado nem executado neste projeto.
+- O [port Rust/ONNX/llama.cpp anunciado na discussão oficial Qwen](https://github.com/QwenLM/Qwen3-TTS/discussions/187) declara suporte a CPU/Q4 e clonagem; os números publicados pelo autor são para i9-13980HX e RTX 2080 Ti, não para o hardware alvo, e não foram reproduzidos aqui. O fork de streaming [dffdeeq/Qwen3-TTS-streaming](https://github.com/dffdeeq/Qwen3-TTS-streaming) requer um ambiente CUDA/FlashAttention nas instruções para Windows e anuncia resultados em RTX 5090; não serve como substituto comprovado para CPU.
+- O venv Qwen local tem `onnxruntime 1.32.0` com `CPUExecutionProvider`, mas não contém artefatos exportados do Qwen. A simples presença do runtime não valida o pipeline Base/voice prompt. A variante mais rápida com qualidade aceitável continua **não determinada**; o app mantém o backend oficial testado em float32.
 
 Fontes consultadas: [repositório oficial Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS),
 [API oficial de inferência](https://github.com/QwenLM/Qwen3-TTS/blob/main/qwen_tts/inference/qwen3_tts_model.py),
