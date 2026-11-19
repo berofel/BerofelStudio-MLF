@@ -1083,3 +1083,22 @@ Reprodução: execute `tests.test_qwen3_purec_tts.PureCRealIntegrationTests.test
 com `BEROFEL_RUN_QWEN3_PUREC_INTEGRATION=1` e o ambiente local offline; para a
 rodada controlada use `scripts/benchmark_qwen3_turbo_backends.py` com perfil
 autorizado, diretório externo novo, `--threads 6 --lengths short --repeats 3`.
+
+#### Confirmação do endpoint de métricas e capacidades SIMD local (19/11/2026)
+
+Consultei o binário Pure C instalado com `--caps`: runtime x86-64 reporta CPU
+`SSE2 AVX AVX2 FMA`; kernels de matvec/atenção, RMS e conversão usam AVX2,
+e INT8 usa widen+FMA AVX2 (sem VNNI/AVX-512). O identificador do build diz
+`SIMD=portable`, mas a listagem do dispatcher confirma que esse rótulo não
+significa execução escalar: AVX2 está presente e selecionado para as formas
+indicadas. O pool do CLI single informa 1 thread; o serviço é configurado com
+seu pool próprio via `--prefork-threads`.
+
+Também subi o servidor local com `--metrics-port`, gerei uma frase curta e
+consultei `/metrics`. O endpoint mostrou somente `qwen_tts_build_info`,
+`qwen_tts_metrics_throttled_total`, `qwen_tts_workers` e a nota de que o servidor
+single não mantém contadores de requisição. Não há histograma de duração ou
+etapas. Assim, além dos campos que cronometramos no cliente, não há telemetria
+interna adicional acessível neste build sem instrumentar/recompilar o runtime.
+A conclusão sobre limite de observabilidade foi verificada no executável local,
+não inferida apenas da documentação upstream.
