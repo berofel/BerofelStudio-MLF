@@ -147,6 +147,32 @@ python scripts/validar_fluxo_qwen3_editor.py --synthetic-reference
 python scripts/validar_ajuste_fino_tts_local.py --synthetic-reference
 ```
 
+O validador `scripts/validar_fluxo_qwen3_editor.py` também oferece
+`--configured-fast-profile`: com confirmação explícita, ele salva pela ação da
+UI um perfil temporário usando a referência configurada, reinicia o worker e
+testa a narração rápida. A geração, WAV/MP4, perfil e projeto ficam em pasta
+temporária; são apagados ao terminar, sem alterar a gravação fonte:
+
+```powershell
+python scripts/validar_fluxo_qwen3_editor.py --configured-fast-profile `
+  --confirm-own-or-authorized-voice
+```
+
+Para obter uma métrica técnica de semelhança do perfil configurado, use
+`scripts/benchmark_qwen3_voice_similarity.py --confirm-own-or-authorized-voice
+--threads 4` no ambiente Qwen isolado. O script opera offline, mantém o áudio
+gerado somente em memória e imprime métricas sem nome, caminho ou transcrição.
+O cosine do encoder de speaker é apenas uma proxy, não uma medida perceptiva
+nem garantia biométrica de identidade; a avaliação auditiva continua necessária.
+
+No Windows deste ambiente, a biblioteca Python `sox` imprime um aviso de que
+o executável SoX não está instalado. Esse aviso não impediu as gerações Base
+0.6B verificadas: o BerofelStudio converte a referência com FFmpeg via
+`imageio-ffmpeg`, e o fluxo local gera WAV válido sem o CLI SoX. Não é necessário
+instalar SoX globalmente para usar a rota validada. A ausência de
+`imageio_ffmpeg`, vista em uma falha anterior, era um erro bloqueante distinto
+e a dependência já é verificada pelo instalador isolado.
+
 ## Investigação isolada de INT8 — 19/11/2026
 
 Foi testada a quantização dinâmica INT8 do PyTorch 2.15.0+cpu, em processos

@@ -21,7 +21,28 @@ except ImportError:
 class FastNarrationProfileUiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        from PySide6.QtCore import QSettings
+        cls.original_settings_dir=Path(QSettings(
+            QSettings.Format.IniFormat,QSettings.Scope.UserScope,
+            'Berofel','BerofelStudio').fileName()).parent
+        cls.settings_dir=tempfile.TemporaryDirectory(prefix='bfs_fast_ui_settings_')
+        QSettings.setPath(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
+                          cls.settings_dir.name)
         cls.app=QApplication.instance() or QApplication([])
+
+    @classmethod
+    def tearDownClass(cls):
+        from PySide6.QtCore import QSettings
+        QSettings.setPath(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
+                          str(cls.original_settings_dir))
+        cls.settings_dir.cleanup()
+
+    def test_panel_preferences_are_isolated_from_real_user_settings(self):
+        from PySide6.QtCore import QSettings
+        settings=QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
+                           'Berofel','BerofelStudio')
+        self.assertTrue(Path(settings.fileName()).is_relative_to(
+            Path(self.settings_dir.name)))
 
     def test_pre_authorized_profile_generates_without_reconfirming(self):
         with tempfile.TemporaryDirectory(prefix='bfs_fast_voice_ui_') as folder:

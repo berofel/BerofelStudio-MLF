@@ -32,6 +32,10 @@ class ActionsUITests(unittest.TestCase):
     def setUpClass(cls):
         os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
         cls.app=QApplication.instance() or QApplication([])
+        cls.original_settings_dir=Path(QSettings(
+            QSettings.Format.IniFormat,QSettings.Scope.UserScope,
+            'Berofel','BerofelStudio').fileName()).parent
+        cls.original_settings_format=QSettings.defaultFormat()
         cls.settings_dir=tempfile.TemporaryDirectory()
         QSettings.setDefaultFormat(QSettings.Format.IniFormat)
         QSettings.setPath(QSettings.Format.IniFormat,QSettings.Scope.UserScope,cls.settings_dir.name)
@@ -44,6 +48,9 @@ class ActionsUITests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        QSettings.setPath(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
+                          str(cls.original_settings_dir))
+        QSettings.setDefaultFormat(cls.original_settings_format)
         cls.settings_dir.cleanup()
 
     def test_mouse_wheel_scroll_does_not_change_unfocused_controls(self):

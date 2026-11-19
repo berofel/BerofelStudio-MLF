@@ -138,7 +138,8 @@ def main():
                 creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
             print(json.dumps({
                 'status':'PASS',
-                'voice_profile':narration['voice'],
+                # Keep local user paths out of console output and CI logs.
+                'voice_profile':'configured_local_reference',
                 'tts_cache_hit':narration['cache_hit'],
                 'tts_duration_seconds':round(duration,3),
                 'dsp':{'bass_db':voice.voice_eq_bass_db,'mids_db':voice.voice_eq_mids_db,
@@ -161,8 +162,8 @@ def main():
                        'audio_video_duration_delta_seconds':round(av_duration_delta,6),
                        'decode':'PASS'},
                 'user_assets_modified':False,
-                'reference_type':'synthetic' if args.synthetic_reference else 'authorized_saved',
-                'identity_validated':False if args.synthetic_reference else None,
+                'reference_type':'synthetic' if args.synthetic_reference else 'configured_local_reference',
+                'identity_similarity_assessed':False,
                 'offline_mode':True,
             },ensure_ascii=False,indent=2))
     finally:
