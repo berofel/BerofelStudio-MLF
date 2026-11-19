@@ -17,7 +17,7 @@ O único motor distribuído para narração é `Qwen/Qwen3-TTS-12Hz-0.6B-Base`. 
 
 O worker Qwen fica ativo durante a sessão do editor: o modelo é carregado uma vez, os pedidos de síntese são enviados ao mesmo processo e o condicionamento de voz fica em cache. O prompt de voz também pode ser guardado em arquivo NPZ versionado sem pickle; se a versão do modelo/encoder ou o conteúdo de referência mudar, ele é reconstruído. O processo encerra junto com o editor e libera a memória então.
 
-Não é necessário fazer login no Hugging Face para inferência. A geração não tenta baixar modelos pela rede. As bibliotecas e modelos instalados permanecem no ambiente isolado do app; o pacote externo SoX e FlashAttention podem emitir aviso no startup. No teste Windows, ambos foram não bloqueantes para Qwen 12Hz Base em CPU.
+Não é necessário fazer login no Hugging Face para inferência. A geração não tenta baixar modelos pela rede. As bibliotecas e modelos instalados permanecem no ambiente isolado do app. O wrapper Python `sox==1.5.0` testa o executável `sox` no import e imprime um aviso quando ele não está no `PATH`; o executável não está instalado neste PC. O Qwen 12Hz Base ainda gerou WAV válido em testes reais sem ele (o código que chama `sox.Transformer()` está no tokenizer 25Hz, não no caminho Base 12Hz testado). FlashAttention também não está instalado e o Qwen usou o caminho PyTorch manual. Não fazemos instalação global silenciosa dessas ferramentas.
 
 ## Diagnóstico das falhas anteriores
 
@@ -25,6 +25,7 @@ Não é necessário fazer login no Hugging Face para inferência. A geração n�
 - O ambiente Qwen isolado não incluía `imageio-ffmpeg`, usado na normalização da amostra. O instalador passou a incluí-lo e verificar a importação.
 - A API oficial do Qwen usa `max_new_tokens=2048` como padrão. Sem orçamento por texto, frases curtas podiam continuar gerando até estourar o timeout de uma hora em CPU. O worker agora limita a saída usando uma estimativa proporcional ao texto, com margem e teto oficial de 2048 tokens.
 - No ambiente instalado, `qwen-tts==0.1.1`, `transformers==4.57.3` e PyTorch CPU importaram corretamente. Apesar do aviso do SoX e da ausência de FlashAttention, o worker fez inferência local real; esses avisos não causaram a falha reproduzida.
+- Em 19/11/2026, o benchmark pareado float32/INT8 foi repetido pelo script versionado; ambos os modos geraram áudio finito e não silencioso offline. O SoX ausente continuou sendo apenas aviso nesse caminho; `imageio-ffmpeg` estava instalado no venv isolado.
 
 ## Validação local
 

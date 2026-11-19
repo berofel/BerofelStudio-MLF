@@ -57,12 +57,16 @@ inicialização de uma máquina diferente.
   trecho.
 - O Base oficial disponível é BF16; o carregador deste app converte para
   `torch.float32` em CPU. A distribuição oficial `qwen-tts` não ativa INT8/INT4
-  neste caminho. Conversão/quantização de comunidade não foi testada com
-  `voice_clone_prompt` e não foi habilitada.
-- Não foi compilado backend nativo Windows compatível com o prompt Base. Logo,
-  a versão mais rápida/precisa entre backends, INT8 e INT4 ainda é **não
-  medida**; a decisão atual é usar o backend oficial testado com precisão
-  completa.
+  neste caminho. A investigação dinâmica INT8 feita depois, fora do worker do
+  editor, está documentada abaixo; ela não foi habilitada.
+- A API `torch.ao.quantization.quantize_dynamic` documenta `qint8` e `float16`
+  como tipos dinâmicos simples. O ensaio local confirmou que `quint4x2` é
+  rejeitado pelo Qwen/PyTorch instalado. [Documentação oficial PyTorch](https://docs.pytorch.org/docs/stable/generated/torch.ao.quantization.quantize_dynamic.html).
+- Não foi compilado backend nativo Windows compatível com o prompt Base. INT8
+  tem uma comparação curta posterior, mas não qualificação de qualidade;
+  INT4 não é aceito pela API dinâmica atual. A variante mais rápida com
+  qualidade aceitável entre backends continua **não determinada**; a decisão
+  atual é usar o backend oficial testado com precisão completa.
 
 Fontes consultadas: [repositório oficial Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS),
 [API oficial de inferência](https://github.com/QwenLM/Qwen3-TTS/blob/main/qwen_tts/inference/qwen3_tts_model.py),
@@ -131,6 +135,13 @@ mas não prova uma degradação audível nem equivalência de qualidade. Não fo
 medidos textos longos. Uma investigação exploratória anterior leu RSS apenas
 ao final de cada geração e indicou menos memória para INT8; esse valor não era
 pico. A tabela acima substitui essa leitura pela amostragem contínua do script.
+
+INT4 foi investigado no modelo Qwen carregado: a API dinâmica instalada rejeitou
+`torch.quint4x2` com `AssertionError` antes de substituir camadas (“only
+supported dtypes ... qint8 and float16”). Portanto não existe variante INT4
+gerável por essa API neste ambiente. Não instalei `torchao` nem converti o modelo
+para formato de terceiros; não há uma implementação INT4 local validada para
+clonagem Base.
 
 O PyTorch emitiu avisos de depreciação para a API dinâmica usada. Por prioridade
 de fidelidade e por não haver validação perceptiva/texto longo, INT8 permanece
