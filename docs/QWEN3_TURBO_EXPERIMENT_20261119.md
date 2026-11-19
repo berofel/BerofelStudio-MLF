@@ -404,6 +404,40 @@ O percentual de CPU não foi coletado com amostragem independente nesta rodada;
 não infiro utilização a partir do número de threads. Pico de RSS foi lido do
 processo servidor após as solicitações.
 
+#### Medição de CPU e ajuste de threads (frase curta, 19/11/2026)
+
+Para complementar o ensaio anterior, `scripts/benchmark_qwen3_purec_cpu.py`
+inicia o servidor por configuração e amostra CPU/RSS do processo a cada 100 ms.
+O script não salva áudio e não transmite dados. Foram feitas três gerações com
+texto, seed (42), perfil x-vector, modelo residente e quantização mixed CPU
+iguais. O modelo carregou a frio em cada servidor; o tempo de geração e TTFA
+abaixo são para as solicitações subsequentes, sem esse carregamento. CPU média
+é percentual da capacidade agregada de 16 processadores lógicos; pico de CPU é
+percentual equivalente a um núcleo (pode exceder 100%).
+
+| Threads | Carga inicial do modelo | Áudio | Parede mediana | RTF mediano | Primeiro chunk | CPU média total | RSS pico |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2 | 2,77 s | 11,92 s | 16,172 s | 1,357 | 0,634 s | 22,3% | 3,44 GiB |
+| 4 | 2,86 s | 11,92 s | 10,519 s | 0,882 | 0,567 s | 38,9% | 3,44 GiB |
+| 6 | 2,71 s | 11,92 s | 9,026 s | 0,757 | 0,544 s | 53,1% | 3,44 GiB |
+| 8 | 2,43 s | 11,92 s | 9,925 s | 0,833 | 0,627 s | 66,6% | 3,44 GiB |
+
+Nesta frase curta, 6 threads venceram: cerca de 9,4% menos tempo que 8 threads
+e 14,2% menos que 4 threads. O resultado é compatível com a recomendação de 6
+threads para uso geral; 8 threads consumiram mais CPU e foram mais lentas neste
+ensaio. O teste anterior com textos médios/longos teve variação e indicou que
+8 threads pode favorecer algumas sínteses longas. Portanto, manter 6 como
+padrão equilibrado é mais sustentado pelos dados atuais; a opção de 8 threads
+continua útil para benchmark por projeto, sem garantia de aceleração.
+
+O JSON bruto com as três medições por configuração foi guardado fora do Git em
+`C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119\purec_cpu_threads_20261119.json`.
+Reproduza com `python scripts/benchmark_qwen3_purec_cpu.py --exe <qwen_tts.exe>
+--model <Qwen3-Base-local> --voice <x-vector-autorizado.bin> --threads 2 4 6 8
+--repeats 3 --output <relatorio.json>`. A execução requer `psutil` no Python do
+benchmark e o runtime DLL do Pure C. Não inclui qualidade perceptiva, CPU de
+outros processos ou atraso de áudio físico do dispositivo.
+
 Como proxy de inteligibilidade, Faster-Whisper Base/int8 local (beam 1) deu
 WER mediano j6/j8 de 0,00/0,069 nos textos médios e 0,00/0,00 nos longos,
 sem clipping detectado. O conjunto é pequeno e o ASR pode errar segmentação;
