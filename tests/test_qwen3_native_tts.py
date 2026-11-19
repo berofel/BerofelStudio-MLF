@@ -9,7 +9,7 @@ import tempfile
 import unittest
 import uuid
 import wave
-from unittest.mock import patch
+from unittest.mock import MagicMock,patch
 
 import numpy as np
 
@@ -18,6 +18,18 @@ from berofel.services.narration_service import NarrationRequest,generate_narrati
 
 
 class NativeQwenAdapterTests(unittest.TestCase):
+    def test_server_switch_closes_stdin_for_graceful_exit_without_fake_command(self):
+        previous=(native._PROCESS,native._PROCESS_KEY,native._MODEL_LOAD_SECONDS)
+        process=MagicMock();process.poll.return_value=None
+        native._PROCESS=process;native._PROCESS_KEY='test';native._MODEL_LOAD_SECONDS=1.0
+        try:native.stop_native_worker()
+        finally:
+            native._PROCESS,native._PROCESS_KEY,native._MODEL_LOAD_SECONDS=previous
+        process.stdin.close.assert_called()
+        process.stdin.write.assert_not_called()
+        process.wait.assert_called_once_with(timeout=2)
+        process.terminate.assert_not_called()
+
     def test_native_layout_requires_all_three_runtime_assets(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ,{
                 'BEROFEL_QWEN3_NATIVE_HOME':folder},clear=False):

@@ -89,20 +89,19 @@ def _stop_locked():
     if process is None:return
     try:
         if process.poll() is None:
-            try:
-                process.stdin.write(json.dumps({'operation':'shutdown'})+'\n')
-                process.stdin.flush()
+            # The upstream JSON-line server does not define a shutdown
+            # operation. EOF is its graceful idle exit; avoid waiting for an
+            # unrecognized JSON request to time out on every profile switch.
+            try:process.stdin.close()
             except (OSError,ValueError,AttributeError):pass
-            try:process.wait(timeout=5)
+            try:process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 process.terminate()
                 try:process.wait(timeout=2)
-                except subprocess.TimeoutExpired:process.kill()
-        try:process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            try:process.wait(timeout=2)
-            except subprocess.TimeoutExpired:pass
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    try:process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:pass
     except OSError:
         try:process.kill()
         except OSError:pass
