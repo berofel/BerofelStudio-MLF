@@ -948,3 +948,58 @@ Reprodução da rodada: mesmo comando acima, substituindo `--threads 6` por
 `results.json` e `asr_wer_results.json` contêm as métricas agregadas; os 27 WAVs
 externos são amostras privadas para avaliação auditiva local e não foram
 incluídos no repositório.
+
+#### Varredura completa de threads: 2/4/6/8 (19/11/2026)
+
+Para fechar a comparação de thread budget, repeti o mesmo protocolo a 2 e 4
+threads. Os resultados de 6 e 8 threads são as rodadas acima. Cada célula de
+tempo, RTF, primeiro áudio e WER segue a ordem Curto/Médio/Longo; tempos são
+medianas de três WAVs inéditos por classe. RTFs são calculados por WAV antes da
+mediana, e não pela divisão de duas medianas. CPU e RSS são os maiores valores
+medianos entre as três classes. Os testes foram offline, no mesmo Ryzen 7
+5700G/16 GB, com a mesma referência autorizada e Faster-Whisper Base/int8 para
+WER. Os 108 WAVs, JSONs detalhados e relatórios ASR ficam fora do Git nas
+pastas `multi_length_{2,4,6,8}threads_20261119` dentro de
+`C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119`.
+
+| Backend / threads | Geração mediana (s) S/M/L | RTF S/M/L | Primeiro áudio (s) S/M/L | Pico CPU | Pico RSS mediano | WER mediano S/M/L |
+|---|---|---|---|---:|---:|---|
+| Pure C mixed / 2 | 6,754 / 19,993 / 58,890 | 1,250 / 1,227 / 1,256 | 0,756 / 0,953 / 1,559 | 28,7% | 3,555 GiB | 0,000 / 0,077 / 0,076 |
+| Pure C mixed / 4 | 4,689 / 12,905 / 41,091 | 0,862 / 0,840 / 0,891 | 0,561 / 0,680 / 1,080 | 56,1% | 3,556 GiB | 0,000 / 0,103 / 0,076 |
+| Pure C mixed / 6 | 4,414 / 12,284 / 37,521 | 0,798 / 0,764 / 0,806 | 0,520 / 0,623 / 0,945 | 79,5% | 3,570 GiB | 0,000 / 0,077 / 0,076 |
+| Pure C mixed / 8 | 3,903 / 12,375 / 35,398 | 0,787 / 0,731 / 0,774 | 0,493 / 0,584 / 0,860 | 101,5% | 3,571 GiB | 0,000 / 0,077 / 0,101 |
+| Pure C INT8 / 2 | 6,373 / 19,786 / 57,620 | 1,306 / 1,248 / 1,297 | 0,762 / 0,945 / 1,563 | 28,8% | 3,612 GiB | 0,000 / 0,051 / 0,067 |
+| Pure C INT8 / 4 | 4,931 / 14,001 / 42,549 | 0,939 / 0,898 / 0,943 | 0,560 / 0,691 / 1,095 | 54,8% | 3,615 GiB | 0,000 / 0,051 / 0,118 |
+| Pure C INT8 / 6 | 4,436 / 13,044 / 38,949 | 0,853 / 0,829 / 0,874 | 0,543 / 0,643 / 0,981 | 79,7% | 3,607 GiB | 0,000 / 0,051 / 0,067 |
+| Pure C INT8 / 8 | 4,117 / 12,963 / 38,888 | 0,872 / 0,845 / 0,890 | 0,524 / 0,620 / 0,934 | 101,9% | 3,608 GiB | 0,000 / 0,051 / 0,118 |
+| Nativo Q4 / 2 | 8,849 / 30,971 / 100,721 | 1,809 / 1,796 / 1,835 | 3,498 / 11,024 / 35,370 | 15,8% | 2,358 GiB | 0,100 / 0,154 / 0,261 |
+| Nativo Q4 / 4 | 7,000 / 20,662 / 66,424 | 1,182 / 1,187 / 1,209 | 2,652 / 7,040 / 22,488 | 29,3% | 2,334 GiB | 0,200 / 0,256 / 0,151 |
+| Nativo Q4 / 6 | 6,094 / 18,955 / 58,963 | 1,120 / 1,115 / 1,132 | 2,398 / 6,597 / 20,599 | 43,8% | 2,313 GiB | 0,100 / 0,128 / 0,269 |
+| Nativo Q4 / 8 | 6,230 / 20,726 / 58,563 | 1,153 / 1,136 / 1,155 | 2,454 / 7,156 / 20,108 | 58,1% | 2,260 GiB | 0,100 / 0,205 / 0,244 |
+
+No equipamento avaliado, Pure C mixed é a rota mais rápida em todas as
+combinações de texto e threads comparadas. 8 threads ganhou no tempo bruto
+curto e longo, mas não no médio; o ganho de 6→8 é pequeno no RTF e leva o pico
+amostrado de CPU para aproximadamente toda a capacidade da máquina. Se o
+aplicativo estiver sendo usado simultaneamente para reprodução/edição, 6
+threads oferece o melhor compromisso observado; em geração isolada e quando
+cada segundo importa, selecionar 8 é a escolha mais rápida. Dois threads
+reduzem a pressão de CPU, mas deixam o Turbo com RTF 1,23–1,26 nos textos
+médio/longos. O nativo Q4 fica mais lento e demora muito mais para entregar o
+primeiro áudio, mesmo usando menos RAM; não é recomendado como perfil Turbo
+neste computador. INT8 não superou consistentemente mixed em velocidade; seu
+WER mediano foi menor em alguns comprimentos, mas as diferenças variam por
+amostra e não medem qualidade vocal.
+
+O cálculo de CPU é amostrado por intervalo, pode exceder 100% por variação do
+sampling e deve ser tratado como tendência, não telemetria de precisão. Os
+testes usaram apenas três sínteses estocásticas por combinação, um perfil e um
+roteiro por tamanho. WER não prova naturalidade, identidade, estabilidade ou
+qualidade para publicação; ainda falta comparar as amostras por audição humana.
+Isso impede declarar um vencedor de qualidade acústica, mas não altera o
+resultado de desempenho medido.
+
+Reprodução dos ensaios 2/4: use o comando documentado acima, altere `--threads`
+para `2` ou `4` e informe uma nova pasta externa. Os relatórios ASR detalhados
+estão junto de `results.json` em cada pasta; nenhuma gravação ou amostra foi
+adicionada ao repositório.
