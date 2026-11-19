@@ -48,6 +48,10 @@ class Clip:
     pos_x: int = 0                  # deslocamento a partir do centro do canvas
     pos_y: int = 0
     font_size: int = 60
+    font_family: str = 'Arial'
+    font_color: str = '#FFFFFF'
+    stroke_color: str = '#000000'
+    stroke_width: int = 3
     include_audio: bool = True
     source_length: float = 0.0       # duracao maxima da fonte para recuperar bordas
     stack_order: int = 0            # z dentro da mesma camada; maior na frente

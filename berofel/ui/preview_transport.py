@@ -97,11 +97,11 @@ class PreviewTransport(QWidget):
         self.final_frame_button.setToolTip('Renderizar um quadro composto na resolução do projeto')
         self.final_frame_button.clicked.connect(self.final_frame_requested)
         row.addWidget(self.final_frame_button)
-        self._apply_compact(self.width()<450)
+        self._apply_compact(self.width()<680)
 
     def resizeEvent(self,event):
         super().resizeEvent(event)
-        self._apply_compact(event.size().width()<450)
+        self._apply_compact(event.size().width()<680)
         self._apply_density(event.size().width())
 
     def _apply_compact(self,compact: bool):

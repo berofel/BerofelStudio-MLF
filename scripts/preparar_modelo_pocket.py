@@ -47,11 +47,11 @@ def main():
         detail=str(exc).strip()
         print(f'[PENDENTE] Ativação do modelo de clonagem não concluída: {type(exc).__name__}: {detail[:1000]}',flush=True)
         if 'recusou o checkpoint' in detail:
-            print('Ação: abra https://huggingface.co/kyutai/pocket-tts, confirme login e aceite os termos; depois repita AUTORIZAR_POCKET_TTS.bat.',flush=True)
+            print('Ação: abra https://huggingface.co/kyutai/pocket-tts e aceite os termos; depois use Narração > Preparar clonagem local ou AUTORIZAR_POCKET_TTS.bat.',flush=True)
         elif 'pela rede' in detail:
-            print('Ação: verifique conexão, firewall ou proxy e repita AUTORIZAR_POCKET_TTS.bat quando o Hugging Face estiver acessível.',flush=True)
+            print('Ação: verifique conexão, firewall ou proxy e repita Narração > Preparar clonagem local ou AUTORIZAR_POCKET_TTS.bat quando o Hugging Face estiver acessível.',flush=True)
         else:
-            print('Ação: confira o erro acima; depois repita AUTORIZAR_POCKET_TTS.bat e TESTAR_POCKET_TTS.bat.',flush=True)
+            print('Ação: confira o erro acima; depois repita Narração > Preparar clonagem local (ou AUTORIZAR_POCKET_TTS.bat) e TESTAR_POCKET_TTS.bat.',flush=True)
         return 2
 
 if __name__=='__main__':

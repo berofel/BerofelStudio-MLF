@@ -24,7 +24,10 @@ def _make_title_png(c, filepath, width, height):
     im = Image.new('RGBA',(width,height),(0,0,0,0))
     draw = ImageDraw.Draw(im)
     try:
-        fontpath = ('C:/Windows/Fonts/arialbd.ttf' if os.name=='nt'
+        font_name=(getattr(c,'font_family','Arial') or 'Arial').casefold()
+        font_file={'arial':'arialbd.ttf','calibri':'calibrib.ttf','segoe ui':'segoeuib.ttf',
+                   'verdana':'verdanab.ttf'}.get(font_name,'arialbd.ttf')
+        fontpath = (f'C:/Windows/Fonts/{font_file}' if os.name=='nt'
                     else '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')
         font = ImageFont.truetype(fontpath,max(12,int(c.font_size)))
     except OSError:
@@ -44,10 +47,20 @@ def _make_title_png(c, filepath, width, height):
         wrapped.append(line)
     line_height=int(c.font_size*1.3)
     base_y=(height-line_height*len(wrapped))//2
+    def rgba(value,alpha):
+        raw=str(value or '#FFFFFF').lstrip('#')
+        if len(raw)==3:raw=''.join(ch*2 for ch in raw)
+        try:rgb=bytes.fromhex(raw)
+        except ValueError:rgb=b'\xff\xff\xff'
+        if len(rgb)!=3:rgb=b'\xff\xff\xff'
+        return (*rgb,alpha)
+    fill=rgba(getattr(c,'font_color','#FFFFFF'),255)
+    stroke=rgba(getattr(c,'stroke_color','#000000'),210)
     for j,line in enumerate(wrapped):
         # stroke cria contorno legivel sobre clipes claros
         draw.text((width//2,base_y+j*line_height),line,font=font,
-                  anchor='mt',fill=(255,255,255,255),stroke_width=3,stroke_fill=(0,0,0,210))
+                  anchor='mt',fill=fill,stroke_width=max(0,min(12,int(getattr(c,'stroke_width',3)))),
+                  stroke_fill=stroke)
     im.save(filepath)
 
 

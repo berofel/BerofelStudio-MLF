@@ -22,7 +22,7 @@ def explain_processing_error(message: str) -> tuple[str, str, str]:
             'O Pocket TTS está usando pesos que permitem apenas as vozes do catálogo. '
             'Sua amostra não foi processada.',
             'Aceite os termos em https://huggingface.co/kyutai/pocket-tts, execute '
-            'AUTORIZAR_POCKET_TTS.bat na pasta do editor e tente novamente. '
+            'Narração > Preparar clonagem local e tente novamente (ou use AUTORIZAR_POCKET_TTS.bat). '
             'O arquivo original da amostra permanece intacto.',
         )
     if 'winerror 206' in normalized and 'qwen' in normalized:

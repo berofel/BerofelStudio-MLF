@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
 class StudioHeader(QWidget):
     project_action = Signal(str)
     stage_requested = Signal(str)
-    narration_requested = Signal()
 
     def __init__(self, version: str, parent=None):
         super().__init__(parent)
@@ -55,7 +54,7 @@ class StudioHeader(QWidget):
         root.addWidget(self.task_slot,1)
 
         self.local_status=QLabel('● IA LOCAL');self.local_status.setObjectName('localStatus')
-        self.local_status.setToolTip('Silero, Faster-Whisper, Qwen e Pocket TTS funcionam localmente quando instalados.')
+        self.local_status.setToolTip('Silero, Faster-Whisper e Qwen3-TTS Base funcionam localmente quando instalados.')
         root.addWidget(self.local_status)
 
         self.project_menu_button=QToolButton();self.project_menu_button.setText('Projeto ▾')
@@ -69,14 +68,6 @@ class StudioHeader(QWidget):
         self.project_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         root.addWidget(self.project_menu_button)
 
-        self.ai_button=QPushButton('⚙ Ações IA');self.ai_button.setObjectName('quietAction')
-        self.ai_button.setToolTip('Abrir ações independentes e escolher o alcance da análise')
-        self.ai_button.clicked.connect(lambda:self.stage_requested.emit('analyze'))
-        root.addWidget(self.ai_button)
-        self.narration_button=QPushButton('🎙 Narração');self.narration_button.setObjectName('quietAction')
-        self.narration_button.setToolTip('Abrir a aba Narração no inspetor')
-        self.narration_button.clicked.connect(self.narration_requested)
-        root.addWidget(self.narration_button)
         self.save_button=QPushButton('Salvar');self.save_button.setObjectName('quietAction')
         self.save_button.clicked.connect(lambda:self.project_action.emit('save'))
         root.addWidget(self.save_button)
@@ -102,9 +93,6 @@ class StudioHeader(QWidget):
         self.project_name.setMinimumWidth(42 if compact else 70)
         self.project_name.setMaximumWidth(100 if compact else 190)
         self.project_menu_button.setText('Proj.' if compact else 'Projeto ▾')
-        self.ai_button.setText('⚙ IA' if compact else '⚙ Ações IA')
-        self.narration_button.setText('🎙' if compact else '🎙 Narração')
-        self.narration_button.setAccessibleName('Narração')
         self.save_button.setText('💾' if compact else 'Salvar')
         self.save_button.setAccessibleName('Salvar projeto')
 

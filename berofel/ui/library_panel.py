@@ -138,6 +138,21 @@ class LibraryDock(QFrame):
         self.stack.setCurrentIndex(index)
         for name,button in self.nav_buttons.items():button.setChecked(name==key)
 
+    def add_nav_button(self,key,label,icon,callback):
+        """Acrescenta um acesso de ferramenta à rail lateral da biblioteca."""
+        if key in self.nav_buttons:return self.nav_buttons[key]
+        rail=self.findChild(QFrame,'libraryRail')
+        if rail is None:return None
+        nav=rail.layout()
+        button=QToolButton();button.setObjectName('libraryNavButton')
+        button.setText(f'{icon}\n{label}')
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        button.setCheckable(True);button.setFixedHeight(54)
+        button.clicked.connect(callback)
+        nav.insertWidget(max(0,nav.count()-1),button)
+        self.nav_buttons[key]=button
+        return button
+
     def set_media(self,paths):
         self.media_list.clear()
         for source in paths:

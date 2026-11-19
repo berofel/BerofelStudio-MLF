@@ -144,7 +144,7 @@ class ActionsPanel(QScrollArea):
             ('context','Analisar contexto · Qwen (sem corte automático)'),
             ('subtitles','Criar legendas automáticas editáveis'),
             ('srt','Exportar legendas SRT ao final'),
-            ('narration','Narração · Pocket TTS (texto/voz do painel)')]
+            ('narration','Narração · Qwen3-TTS Base (texto/voz do painel)')]
         for key,label in chosen_actions:
             check=QCheckBox(label)
             check.setToolTip(f'{label}. Pode combinar com outras ações; o editor resolve as dependências.')

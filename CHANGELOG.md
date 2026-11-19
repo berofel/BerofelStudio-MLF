@@ -1,3 +1,16 @@
+## 0.10.0-alpha.1 — restauração do Qwen3-TTS (18/11/2026)
+
+- Diretriz de motor único: somente Qwen3-TTS Base 0.6B no fluxo padrão. Worker persistente carrega uma vez por sessão e reutiliza prompt de clonagem versionado. Benchmark Ryzen 7 5700G/16 GB: RTF 6,47 (curto) e 5,76 (longo), pico RSS 6,41 GiB; não é tempo real. INT8/INT4, streaming e backend nativo permanecem não qualificados. Ver `docs/BENCHMARK_QWEN3_TTS_20261118.md`.
+- Comparação pontual do texto curto: 4 threads mediram 62,530 s/RTF 6,06 e RSS 5,73 GiB; 8 threads mediram 66,776 s/RTF 6,47 e RSS 6,41 GiB. O padrão local foi reduzido a 4 threads; são medições únicas, não um ótimo universal.
+
+- Qwen3-TTS Base 0.6B passa a ser o único motor selecionável e padrão para novas narrações. Novas solicitações exigem amostra de referência autorizada e transcrição; Pocket TTS não é mais carregado pelo painel nem instalado pelos instaladores padrão. Seus arquivos/caches existentes não são apagados.
+- Corrigido o caminho de instalação isolado do Qwen3 com `imageio-ffmpeg`, usado para normalizar referências; geração mantém `local_files_only` e modo offline após o download inicial.
+- O worker limitava nenhuma geração curta: a API do Qwen aplicava o default de 2048 tokens também a uma frase, o que produziu timeout no CPU. Agora `max_new_tokens` é estimado pelo tamanho do texto e limitado a 2048.
+- Perfis de voz Qwen persistem a gravação privada e a transcrição de referência. A gravação de origem permanece intacta.
+- O instalador principal e `INSTALAR_TODAS_AS_IAS.bat` pedem confirmação explícita antes do download do modelo de voz (~2,5 GB); setup é isolado e reutilizável.
+- Evidência real offline no Windows: referência local salva + transcrição produziram WAV mono 24 kHz, 10,96 s, sinal válido, em 72,2 s (pico agregado amostrado 5,76 GiB). No fluxo real da janela Qt, a chamada Qwen nova inseriu narração na timeline, reproduziu/buscou pelo player (saída silenciada para o teste), exportou WAV e MP4 com áudio/vídeo, decodificou áudio não silencioso do MP4 e salvou/reabriu o projeto; fluxo completo 49,2 s. A transcrição e os caminhos privados não são registrados.
+- 1.7B, semelhança perceptiva/biométrica, execução em rede bloqueada por firewall e reprodução audível pelos alto-falantes não foram validados; o worker de inferência foi validado offline com pesos já instalados.
+
 ## 0.10.0-alpha.1 — atualização local de prévia
 
 - O instalador principal agora oferece configurar o Pocket TTS local no mesmo fluxo. A confirmação antecede a instalação das dependências CPU potencialmente grandes; os pesos gated de clonagem só são baixados após confirmação separada de que os termos oficiais já foram aceitos. O BAT dedicado continua disponível para instalação/reparo.

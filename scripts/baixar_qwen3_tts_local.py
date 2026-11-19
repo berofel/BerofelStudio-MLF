@@ -7,8 +7,15 @@ from huggingface_hub import snapshot_download
 root=Path(os.environ['LOCALAPPDATA'])/'BFS'/'qwen3_tts'
 model=root/'model'
 model.mkdir(parents=True,exist_ok=True)
-snapshot_download(repo_id='Qwen/Qwen3-TTS-12Hz-0.6B-Base',
-    revision='main',local_dir=str(model),token=False)
+try:
+    snapshot_download(repo_id='Qwen/Qwen3-TTS-12Hz-0.6B-Base',
+        revision='main',local_dir=str(model),token=False,max_workers=2)
+except Exception as exc:
+    raise RuntimeError(
+        'Falha ao baixar Qwen3-TTS do Hugging Face. Confira a conexão e o espaço livre; '
+        'os arquivos parciais foram mantidos para retomar. Causa original: '
+        f'{type(exc).__name__}: {exc}'
+    ) from exc
 required=tuple(model/name for name in (
     'config.json','model.safetensors','preprocessor_config.json',
     'tokenizer_config.json','vocab.json','merges.txt','speech_tokenizer/config.json',

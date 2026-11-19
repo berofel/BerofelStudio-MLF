@@ -12,9 +12,14 @@ from berofel.services import qwen3_tts_local as qwen
 
 
 class QwenLocalCloneTests(unittest.TestCase):
+    def test_qwen_installer_provisions_ffmpeg_module_for_isolated_worker(self):
+        script=Path(__file__).resolve().parents[1]/'scripts'/'instalar_qwen3_tts_local.ps1'
+        source=script.read_text(encoding='utf-8')
+        self.assertIn('imageio-ffmpeg',source)
+        self.assertIn('imageio_ffmpeg',source)
+
     def test_narration_service_routes_only_selected_qwen_requests(self):
-        request=NarrationRequest(text='teste',voice='voice.wav',consent=True,
-                                 engine='qwen3-tts-local')
+        request=NarrationRequest(text='teste',voice='voice.wav',consent=True)
         expected={'path':'local.wav','duration':1.,'cache_hit':False}
         with patch('berofel.services.qwen3_tts_local.generate_local_clone',
                    return_value=expected) as backend:
@@ -66,8 +71,7 @@ class QwenLocalCloneTests(unittest.TestCase):
     def test_missing_model_reports_explicit_install_step_before_any_worker(self):
         with tempfile.TemporaryDirectory() as folder:
             sample=Path(folder)/'voice.wav';sample.write_bytes(b'voice')
-            request=NarrationRequest(text='teste',voice=str(sample),consent=True,
-                                     engine='qwen3-tts-local')
+            request=NarrationRequest(text='teste',voice=str(sample),consent=True)
             with patch.object(qwen,'is_ready',return_value=False):
                 with self.assertRaisesRegex(RuntimeError,'INSTALAR_QWEN3_TTS_LOCAL.bat'):
                     qwen.generate_local_clone(request)
@@ -92,7 +96,10 @@ class QwenLocalCloneTests(unittest.TestCase):
                     requests.append(('load',args,kwargs));return cls()
                 def generate_voice_clone(self,**kwargs):
                     requests.append(('clone',kwargs));return [np.zeros(2400,dtype=np.float32)],24000
-            package=types.SimpleNamespace(Qwen3TTSModel=FakeModel)
+                def create_voice_clone_prompt(self,**kwargs):
+                    requests.append(('prompt',kwargs));return ['prepared prompt']
+            package=types.SimpleNamespace(Qwen3TTSModel=FakeModel,
+                                          VoiceClonePromptItem=object)
             fake_prepare=lambda _src,_dst:(str(sample),None)
             job=root/'job.json'
             job.write_text(json.dumps({'consent':True,'model_path':str(model),
@@ -105,9 +112,45 @@ class QwenLocalCloneTests(unittest.TestCase):
             self.assertEqual(load[2]['device_map'],'cpu')
             self.assertTrue(load[2]['local_files_only'])
             clone=next(item for item in requests if item[0]=='clone')[1]
-            self.assertEqual(clone['ref_text'],'texto referência')
+            self.assertEqual(clone['voice_clone_prompt'],['prepared prompt'])
+            self.assertEqual(clone['max_new_tokens'],96)
             self.assertTrue(output.is_file())
             self.assertEqual(sample.read_bytes(),b'original')
+
+    def test_warm_worker_loads_model_once_and_reuses_voice_prompt(self):
+        import io
+        import sys
+        import numpy as np
+        from berofel.services import qwen3_tts_worker as worker
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);sample=root/'reference.wav';sample.write_bytes(b'authorized sample')
+            requests=[]
+            class FakeModel:
+                def create_voice_clone_prompt(self,**kwargs):
+                    requests.append(('prompt',kwargs));return ['prepared']
+                def generate_voice_clone(self,**kwargs):
+                    requests.append(('generate',kwargs))
+                    return [np.ones(2400,dtype=np.float32)*.1],24000
+            model=FakeModel();jobs=[]
+            for index in range(2):
+                jobs.append(json.dumps({'text':f'fala {index}','reference':str(sample),
+                    'reference_text':'texto exato','language':'Portuguese','consent':True,
+                    'output':str(root/f'out{index}.wav'),'model_fingerprint':'fingerprint'}))
+            jobs.append(json.dumps({'operation':'shutdown'}))
+            incoming=io.StringIO('\n'.join(jobs)+'\n');outgoing=io.StringIO()
+            with patch.object(worker,'_load_model',return_value=model) as loader, \
+                 patch.object(worker,'prepare_audio_prompt',return_value=(str(sample),None)), \
+                 patch.object(sys,'stdin',incoming),patch.object(sys,'stdout',outgoing):
+                worker.serve(str(root/'unused-model'))
+            loader.assert_called_once()
+            self.assertEqual(sum(item[0]=='prompt' for item in requests),1,outgoing.getvalue())
+            self.assertEqual(sum(item[0]=='generate' for item in requests),2)
+            responses=[json.loads(line) for line in outgoing.getvalue().splitlines()]
+            self.assertFalse(responses[1]['result']['prompt_cache_hit'])
+            self.assertTrue(responses[2]['result']['prompt_cache_hit'])
+            self.assertTrue(responses[3]['shutdown'])
+            self.assertTrue((root/'out0.wav').is_file())
+            self.assertTrue((root/'out1.wav').is_file())
 
 
 if __name__=='__main__':unittest.main()

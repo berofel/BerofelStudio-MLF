@@ -82,7 +82,15 @@ class ActionsUITests(unittest.TestCase):
         QApplication.sendEvent(combo,QWheelEvent(QPointF(10,10),QPointF(10,10),
             QPoint(0,0),QPoint(0,-120),Qt.MouseButton.NoButton,
             Qt.KeyboardModifier.NoModifier,Qt.ScrollPhase.ScrollUpdate,False))
-        self.assertNotEqual(combo.currentIndex(),before_index)
+        QApplication.sendEvent(spin,QWheelEvent(QPointF(10,10),QPointF(10,10),
+            QPoint(0,0),QPoint(0,-120),Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,Qt.ScrollPhase.ScrollUpdate,False))
+        QApplication.sendEvent(slider,QWheelEvent(QPointF(10,10),QPointF(10,10),
+            QPoint(0,0),QPoint(0,-120),Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,Qt.ScrollPhase.ScrollUpdate,False))
+        self.assertEqual((combo.currentIndex(),spin.value(),slider.value()),
+                         (before_index,before_spin,before_slider),
+                         'Foco no controle não deve habilitar alteração pela roda.')
         area.close()
 
     def test_timecode_and_scope_ui(self):
@@ -215,53 +223,80 @@ class ActionsUITests(unittest.TestCase):
             self.assertEqual(analyze.call_args.args[1],words)
             dialog.close();win.close()
 
-    def test_custom_voice_panel_explains_one_time_model_activation(self):
+    def test_custom_voice_panel_selects_qwen_local_clone_only(self):
         panel=NarrationPanel()
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
-        panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('pocket-tts'))
+        self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
         self.assertFalse(panel.sample_path.isHidden())
-        self.assertFalse(panel.activate_cloning.isHidden())
-        self.assertIn('huggingface.co/kyutai/pocket-tts',panel.license_note.text())
-        self.assertIn('AUTORIZAR_POCKET_TTS.bat',panel.license_note.text())
-        self.assertIn('autorização expressa',panel.license_note.text())
-        with tempfile.TemporaryDirectory(prefix='bfs_clone_log_') as log_dir, \
-                patch.dict(os.environ,{'LOCALAPPDATA':log_dir}):
-            with patch('berofel.ui.narration_panel.subprocess.Popen') as launch:
-                launch.return_value.poll.return_value=None
-                panel.activate_cloning.click()
-        self.assertTrue(launch.called)
-        self.assertEqual(launch.call_args.args[0][0:4],['cmd.exe','/d','/c','call'])
-        self.assertTrue(launch.call_args.args[0][4].endswith('AUTORIZAR_POCKET_TTS.bat'))
-        self.assertEqual(launch.call_args.kwargs['env']['BFS_NO_PAUSE'],'1')
-        self.assertTrue(launch.call_args.kwargs['env']['BFS_CLONE_ACTIVATION_LOG'].endswith('pocket_clone_activation.log'))
-        self.assertIn('Conclua o login',panel.clone_status.text())
-        launch.return_value.poll.return_value=0
-        panel._poll_clone_activation()
-        self.assertIn('encoder aceitou uma amostra sintética',panel.clone_status.text())
-        self.assertTrue(panel.activate_cloning.isEnabled())
-        with tempfile.TemporaryDirectory(prefix='bfs_clone_log_') as log_dir, \
-                patch.dict(os.environ,{'LOCALAPPDATA':log_dir}):
-            with patch('berofel.ui.narration_panel.subprocess.Popen') as launch:
-                launch.return_value.poll.return_value=1
-                panel._activate_cloning()
-                Path(log_dir,'BFS','logs','pocket_clone_activation.log').write_text(
-                    '[PENDENTE] Não foi possível acessar o Hugging Face pela rede.',encoding='utf-8')
-                panel._poll_clone_activation()
-            self.assertIn('pela rede',panel.clone_status.text())
-        self.assertTrue(panel.activate_cloning.isEnabled())
+        self.assertTrue(panel.activate_cloning.isHidden())
+        self.assertIn('Qwen3-TTS Base',panel.license_note.text())
+        self.assertFalse(panel.clone_engine.isVisible())
         panel.close()
 
+    def test_new_custom_voice_uses_qwen_and_requires_reference_audio(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_qwen_voice_ui_') as folder:
+            sample=Path(folder)/'reference.wav';sample.write_bytes(b'RIFF'+b'valid reference'*10)
+            panel=NarrationPanel()
+            panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+            panel.sample_path.setText(str(sample))
+            panel.authorized.setChecked(True)
+            panel.reference_text.setText('Texto exato da referência gravada.')
+            panel.text.setPlainText('Teste de voz local.')
+            captured=[]
+            panel.on_generate=lambda request,insert:captured.append((request,insert))
+            panel._generate(False)
+            self.assertEqual(captured[0][0].engine,'qwen3-tts-local')
+            self.assertEqual(captured[0][0].voice,str(sample))
+            panel.close()
+
+    def test_voice_profile_is_reusable_and_delete_preserves_source_audio(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_voice_profile_ui_') as folder, \
+                patch.dict(os.environ,{'BEROFEL_VOICE_PROFILE_DIR':str(Path(folder)/'profiles')}):
+            source=Path(folder)/'my_voice.wav';original=b'RIFF'+b'voice audio'*50
+            source.write_bytes(original)
+            panel=NarrationPanel()
+            panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+            panel.sample_path.setText(str(source));panel.authorized.setChecked(True)
+            panel.reference_text.setText('A referência usada para esta voz local.')
+            with patch('berofel.ui.narration_panel.QInputDialog.getText',
+                       return_value=('Minha voz',True)):
+                panel._save_voice_profile()
+            profile_id=str(panel.voice.currentData()).split(':',1)[1]
+            private=Path(panel.sample_path.text())
+            self.assertNotEqual(private,source)
+            self.assertEqual(private.read_bytes(),original)
+            panel.text.setPlainText('Teste de perfil local.')
+            captured=[];panel.on_generate=lambda request,insert:captured.append(request)
+            panel._generate(False)
+            self.assertEqual(captured[0].voice,str(private))
+
+            with patch('berofel.ui.narration_panel.QInputDialog.getText',
+                       return_value=('Voz revisada',True)):
+                panel._rename_voice_profile()
+            self.assertIn('Voz revisada',panel.voice.currentText())
+            with patch('berofel.ui.narration_panel.QMessageBox.question',
+                       return_value=QMessageBox.StandardButton.Yes):
+                panel._delete_voice_profile()
+            self.assertFalse(private.exists())
+            self.assertEqual(source.read_bytes(),original)
+            self.assertEqual(panel.voice.currentData(),'__custom__')
+            panel.close()
+
     def test_qwen_voice_clone_request_routes_locally_with_optional_reference_transcript(self):
+        import tempfile
         panel=NarrationPanel()
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
         panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
-        panel.sample_path.setText(r'C:\Audio\minha_voz.wav')
+        sample=tempfile.NamedTemporaryFile(suffix='.wav',delete=False)
+        sample.close()
+        panel.sample_path.setText(sample.name)
         panel.authorized.setChecked(True)
         panel.text.setPlainText('Olá, esta é uma narração de teste.')
         panel.reference_text.setText('Este texto foi falado na gravação original.')
         requests=[]
         panel.on_generate=lambda request,insert:requests.append((request,insert))
         panel._generate(False)
+        Path(sample.name).unlink(missing_ok=True)
         self.assertEqual(len(requests),1)
         request,insert=requests[0]
         self.assertEqual(request.engine,'qwen3-tts-local')
@@ -682,9 +717,12 @@ class ActionsUITests(unittest.TestCase):
         self.assertIs(win.process_panel.parentWidget(),win.header.task_slot)
         self.assertLessEqual(win.header.height(),62)
         self.assertEqual(win.side_tabs.indexOf(win.actions_panel),0)
-        expected_tabs=(['IA','Clipes','Narração'] if win.width()<1180 else
-                       ['Assistente IA','Propriedades','🎙 Narração'])
-        self.assertEqual([win.side_tabs.tabText(i) for i in range(3)],expected_tabs)
+        expected_tabs=(['IA','Clipes','Voz','Leg.'] if win.width()<1180 else
+                       ['Assistente IA','Propriedades','🎙 Narração','Legendas'])
+        self.assertEqual([win.side_tabs.tabText(i) for i in range(4)],expected_tabs)
+        self.assertNotIn('ai_button',win.header.__dict__)
+        self.assertNotIn('narration_button',win.header.__dict__)
+        self.assertEqual(win.side_tabs.indexOf(win.captions_panel),3)
         self.assertIs(win.side_tabs.currentWidget(),win.actions_panel)
         self.assertIsNotNone(win.process_panel)
         win.open_actions()
@@ -695,10 +733,36 @@ class ActionsUITests(unittest.TestCase):
         self.assertEqual(win.library.marker_list.count(),len(win.project.markers))
         win.close()
 
+    def test_caption_library_opens_docked_editor_without_modal_dialog(self):
+        from unittest.mock import patch
+        win=MainWindow()
+        try:
+            with patch('berofel.ui.window.QInputDialog.getMultiLineText',
+                       side_effect=AssertionError('não deve abrir pop-up')):
+                win.open_captions()
+            self.assertIs(win.side_tabs.currentWidget(),win.captions_panel)
+            self.assertEqual(win.captions_panel.caption_list.count(),0)
+            win.captions_panel.text_edit.setPlainText('Legenda criada no painel')
+            win.captions_panel.add_button.click()
+            clip=win.project.clip(win.selected_ids[0])
+            self.assertEqual(clip.kind,'text')
+            self.assertEqual(clip.text,'Legenda criada no painel')
+            self.assertIs(win.side_tabs.currentWidget(),win.captions_panel)
+            self.assertEqual(win.captions_panel.caption_list.count(),1)
+            win.captions_panel.font_size.setValue(58)
+            win.captions_panel.font_size.editingFinished.emit()
+            self.assertEqual(win.project.clip(clip.id).font_size,58)
+            win.captions_panel.preset_requested.emit(3)
+            self.assertEqual(win.project.clip(clip.id).font_size,54)
+        finally:
+            win.close()
+
     def test_header_removes_redundant_steps_and_keeps_top_actions(self):
         win=MainWindow()
         try:
             self.assertFalse(hasattr(win.header,'stage_buttons'))
+            self.assertFalse(hasattr(win.header,'ai_button'))
+            self.assertFalse(hasattr(win.header,'narration_button'))
             with patch('berofel.ui.window.QFileDialog.getOpenFileNames',
                        return_value=(['sample.mp4'],'Vídeos')):
                 win.library.import_requested.emit()
@@ -1343,25 +1407,29 @@ class ActionsUITests(unittest.TestCase):
                 self.assertEqual(win.findChild(QLabel,'previewHeading').text(),'PRÉVIA')
                 if width<1180:
                     self.assertFalse(win.header.local_status.isVisible())
-                    self.assertTrue(win.header.ai_button.isVisible())
-                    self.assertTrue(win.header.narration_button.isVisible())
+                    self.assertFalse(hasattr(win.header,'ai_button'))
+                    self.assertFalse(hasattr(win.header,'narration_button'))
                     for button in (win.header.project_menu_button,win.header.save_button,
                                    win.header.export_button):
                         self.assertTrue(button.isVisible())
                         self.assertGreaterEqual(button.width(),button.sizeHint().width())
                     self.assertIs(win.side_tabs.widget(2),win.narration_panel)
-                    self.assertGreaterEqual(win.side_tabs.width(),220)
-                    self.assertEqual([win.side_tabs.tabText(i) for i in range(3)],
-                                     ['IA','Clipes','Narração'])
+                    self.assertIs(win.side_tabs.widget(3),win.captions_panel)
+                    self.assertGreaterEqual(win.side_tabs.width(),150)
+                    self.assertEqual([win.side_tabs.tabText(i) for i in range(4)],
+                                     ['IA','Clipes','Voz','Leg.'])
                     self.assertEqual(win.actions_panel.horizontalScrollBar().maximum(),0)
                     self.assertEqual(win.actions_panel.widget().width(),
                                      win.actions_panel.viewport().width())
-                    self.assertTrue(win.transport._compact)
-                    self.assertEqual(win.transport.quality.itemText(0),'640 px')
+                    self.assertEqual(win.transport._compact,win.transport.width()<680)
                     self.assertEqual(win.transport.volume.accessibleName(),'Volume da prévia')
-                    for widget in (win.transport.begin_button,win.transport.end_button,
-                                   win.transport.volume_label,win.transport.final_frame_button):
-                        self.assertFalse(widget.isVisible())
+                    if win.transport._compact:
+                        self.assertEqual(win.transport.quality.itemText(0),'640 px')
+                        for widget in (win.transport.begin_button,win.transport.end_button,
+                                       win.transport.volume_label,win.transport.final_frame_button):
+                            self.assertFalse(widget.isVisible())
+                    else:
+                        self.assertEqual(win.transport.quality.itemText(0),'Leve · 640px')
                     controls=(win.transport.back_button,win.transport.previous_frame_button,
                               win.transport.play_button,win.transport.next_frame_button,
                               win.transport.forward_button,win.transport.time_label,
@@ -1375,8 +1443,8 @@ class ActionsUITests(unittest.TestCase):
                     self.assertLessEqual(right,win.transport.width())
                 else:
                     self.assertTrue(win.header.local_status.isVisible())
-                    self.assertTrue(win.header.ai_button.isVisible())
-                    self.assertTrue(win.header.narration_button.isVisible())
+                    self.assertFalse(hasattr(win.header,'ai_button'))
+                    self.assertFalse(hasattr(win.header,'narration_button'))
                     self.assertFalse(win.transport._compact)
                     self.assertEqual(win.transport.quality.itemText(0),'Leve · 640px')
                 jobs=rect(win.process_panel);timeline=rect(timeline_box)
@@ -1401,7 +1469,7 @@ class ActionsUITests(unittest.TestCase):
     def test_window_geometry_and_panel_widths_persist_on_reopen(self):
         first=MainWindow()
         first.resize(780,620);first.show();self.app.processEvents()
-        first.horizontal.setSizes([76,300,520,360]);self.app.processEvents()
+        first.horizontal.setSizes([300,520,360]);self.app.processEvents()
         first.workspace_splitter.setSizes([300,200]);self.app.processEvents()
         first.preview_quality.setCurrentIndex(2)
         first.transport.volume.setValue(42)

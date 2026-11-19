@@ -1,7 +1,9 @@
-"""Narração offline via Pocket TTS: cache persistente e subprocesso Batata Quente.
+"""Dispatch de narração do editor e adaptador legado de Pocket TTS.
 
-Este módulo não importa torch nem pocket_tts no processo Qt. Os WAV finais são
-copiados para uma pasta durável antes de serem adicionados à timeline.
+Novos pedidos usam Qwen3-TTS Base e são roteados ao worker local persistente.
+O código Pocket abaixo é mantido apenas para compatibilidade explícita com
+requisições antigas; não é exibido nem instalado pelo fluxo padrão. Este módulo
+não importa torch nem pocket_tts no processo Qt.
 """
 from __future__ import annotations
 
@@ -37,7 +39,6 @@ LANGUAGES = (
     ('Português', 'portuguese'), ('English', 'english'),
     ('Español', 'spanish'), ('Français', 'french'),
     ('Italiano', 'italian'), ('Deutsch', 'german'),
-    ('Nederlands', 'dutch'),
 )
 
 
@@ -193,7 +194,9 @@ class NarrationRequest:
     quantize: bool = False
     project_path: str = ''
     title: str = 'Narração'
-    engine: str = 'pocket-tts'
+    # Legacy Pocket remains available only for old callers/projects. New
+    # narration requests use Qwen3-TTS Base and an explicit voice reference.
+    engine: str = 'qwen3-tts-local'
     reference_text: str = ''
 
 

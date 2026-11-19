@@ -11,6 +11,7 @@ import re
 from contextlib import contextmanager
 
 from .pocket_tts_service import _PRECOMPUTED_VOICE_IDS
+from .audio_reference import prepare_audio_prompt as _prepare_audio_reference
 
 
 def activation_failure_message(exc):
@@ -83,7 +84,8 @@ def require_local_voice_cloning_weights(language='portuguese'):
         path=Path(source).expanduser()
         if path.is_file():return path
         raise RuntimeError('O checkpoint local de clonagem não foi encontrado. '
-                           'Execute AUTORIZAR_POCKET_TTS.bat uma vez com internet.')
+                           'Use Narração > Preparar clonagem local uma vez com internet '
+                           '(o AUTORIZAR_POCKET_TTS.bat continua disponível como alternativa).')
     address=source[5:]
     address,separator,revision=address.rpartition('@')
     if not separator:
@@ -101,7 +103,8 @@ def require_local_voice_cloning_weights(language='portuguese'):
         raise RuntimeError(
             'Os pesos completos de clonagem do Pocket TTS ainda não estão neste PC. '
             'A geração normal não acessa a internet. Conecte-se, aceite os termos oficiais '
-            'e execute AUTORIZAR_POCKET_TTS.bat para baixar e validar o modelo uma vez. '
+            'e use Narração > Preparar clonagem local para baixar e validar o modelo uma vez '
+            '(ou AUTORIZAR_POCKET_TTS.bat como alternativa). '
             f'Detalhe local: {type(exc).__name__}: {str(exc)[:400]}'
         ) from exc
 
@@ -117,7 +120,8 @@ def require_voice_cloning(model, request: dict) -> None:
         raise RuntimeError(
             'Este Pocket TTS está usando pesos somente de catálogo; clonagem de áudio está desativada até preparar os pesos oficiais completos. '
             'Eles precisam ser autorizados e baixados uma vez. Depois ficam no PC e a amostra/geração são processadas localmente. '
-            'Execute AUTORIZAR_POCKET_TTS.bat para preparar o modelo e tente novamente.'
+            'Use Narração > Preparar clonagem local para preparar o modelo e tente novamente '
+            '(ou AUTORIZAR_POCKET_TTS.bat como alternativa).'
         )
 
 
@@ -155,43 +159,14 @@ def _offline_model_access():
 
 def prepare_audio_prompt(voice: str, output_path: str | Path,
                         ffmpeg: str | None = None) -> tuple[str, Path | None]:
-    """Normalize user audio for Pocket TTS without touching its source file.
-
-    Pocket TTS reads 16-bit WAV through the standard library; MP3/FLAC/OGG/M4A
-    require optional ``soundfile`` support that is not part of our install.
-    FFmpeg is already bundled with the editor, so use it to produce a short,
-    mono PCM16 WAV. Precomputed .safetensors, Hugging Face voices, and Pocket
-    TTS's built-in ``rafael`` speaker ID pass through without filesystem checks.
-    """
+    """Preserve Pocket's catalog IDs and reuse the shared file normalizer."""
     # ``rafael`` is Pocket TTS's predefined Portuguese speaker id, not a file.
     # Let TTSModel resolve its cached catalog state just like the UI expects.
     if (voice.startswith('hf://') or voice == 'rafael' or
             voice in _PRECOMPUTED_VOICE_IDS or
             Path(voice).suffix.lower() == '.safetensors'):
         return voice, None
-    source = Path(voice)
-    if not source.is_file():
-        raise FileNotFoundError(f'Amostra da voz não encontrada: {voice}')
-    target = Path(output_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if ffmpeg is None:
-        from berofel.services.ffmpeg import ffmpeg_path
-        ffmpeg = ffmpeg_path()
-    command = [ffmpeg, '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
-               '-i', str(source), '-map', '0:a:0', '-vn', '-t', '30', '-ac', '1',
-               '-ar', '24000', '-c:a', 'pcm_s16le', str(target)]
-    try:
-        result = subprocess.run(command, capture_output=True, text=True,
-                                encoding='utf-8', errors='replace',
-                                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        if result.returncode != 0 or not target.is_file() or target.stat().st_size <= 44:
-            target.unlink(missing_ok=True)
-            detail=(result.stderr or result.stdout or 'FFmpeg não produziu áudio válido.')[-1000:]
-            raise RuntimeError(f'Não foi possível preparar a amostra da voz: {detail}')
-        return str(target), target
-    except Exception:
-        target.unlink(missing_ok=True)
-        raise
+    return _prepare_audio_reference(voice,output_path,ffmpeg)
 
 
 def create_voice_prompt_state(model,voice_prompt):

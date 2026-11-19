@@ -5,11 +5,11 @@ chcp 65001 >nul
 title BerofelStudio - Instalar todas as IAs
 set "ERR=0"
 echo =======================================================
-echo  Silero + Faster-Whisper + Qwen + Pocket TTS
+echo  Silero + Faster-Whisper + Qwen3-TTS
  echo =======================================================
 echo O ambiente do editor deve ser instalado primeiro.
 echo Os pacotes, modelos e vozes serao baixados se necessario.
-echo A autorizacao do modelo Pocket TTS pode exigir uma conta Hugging Face.
+echo Qwen3-TTS roda localmente apos o download inicial do modelo.
 echo.
 if not exist "%LOCALAPPDATA%\BFS\venv\Scripts\python.exe" (
   echo [ERRO] Execute instalar_dependencias.bat primeiro.
@@ -30,18 +30,24 @@ if errorlevel 1 (
   set "ERR=1"
 )
 echo.
-echo [2/3] Qwen3 + llama.cpp...
+echo [2/3] Qwen3 + llama.cpp (assistente de IA)...
 "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\instalar_qwen.ps1"
 if errorlevel 1 (
   echo [AVISO] Qwen nao foi preparado. Consulte logs.
   set "ERR=1"
 )
 echo.
-echo [3/3] Pocket TTS + amostras CC0...
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\instalar_pocket.ps1"
-if errorlevel 1 (
-  echo [ERRO] Falha ao instalar Pocket TTS. Consulte logs.
-  set "ERR=1"
+echo [3/3] Qwen3-TTS Base (clonagem e narracao local)
+set "INSTALL_QWEN_TTS="
+set /p "INSTALL_QWEN_TTS=Baixar aproximadamente 2,5 GB do modelo de voz agora? [s/N]: "
+if /i "%INSTALL_QWEN_TTS%"=="s" (
+  "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\instalar_qwen3_tts_local.ps1"
+  if errorlevel 1 (
+    echo [ERRO] Falha ao preparar Qwen3-TTS. Consulte %LOCALAPPDATA%\BFS\logs\qwen3_install.log
+    set "ERR=1"
+  )
+) else (
+  echo [INFO] Qwen3-TTS foi adiado; use INSTALAR_QWEN3_TTS_LOCAL.bat quando desejar.
 )
 echo.
 if "%ERR%"=="0" (
@@ -49,9 +55,7 @@ if "%ERR%"=="0" (
 ) else (
   echo [AVISO] Um ou mais componentes falharam. Confira logs e execute novamente.
 )
-echo IMPORTANTE: Pocket TTS pode exigir aceitar as condicoes do modelo no Hugging Face.
-echo Se necessario: AUTORIZAR_POCKET_TTS.bat
-echo Teste de voz real: TESTAR_POCKET_TTS.bat
+echo Para validar clonagem real: use uma referencia autorizada em Narração.
 echo Para abrir: ABRIR_BEROFELSTUDIO.bat
 echo.
 pause

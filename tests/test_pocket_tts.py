@@ -68,18 +68,12 @@ class PocketTTSOfflineTests(unittest.TestCase):
         self.assertNotIn('secret-token',output.getvalue())
         prepare.assert_called_once_with()
 
-    def test_gui_activation_does_not_open_cmd_or_expose_token_in_arguments(self):
+    def test_narration_panel_does_not_offer_pocket_activation_or_external_voice_api(self):
         panel=Path(__file__).resolve().parents[1]/'berofel'/'ui'/'narration_panel.py'
         content=panel.read_text(encoding='utf-8')
-        start=content.index('    def _activate_cloning(self):')
-        end=content.index('    def _install_qwen(self):',start)
-        activation=content[start:end]
-        self.assertNotIn('cmd.exe',activation)
-        self.assertNotIn('CREATE_NEW_CONSOLE',activation)
-        self.assertIn('QLineEdit.EchoMode.Password',activation)
-        self.assertIn('stdin=subprocess.PIPE',activation)
-        self.assertIn('CREATE_NO_WINDOW',activation)
-        self.assertIn('https://huggingface.co/kyutai/pocket-tts',activation)
+        self.assertIn("engine='qwen3-tts-local'",content)
+        self.assertIn('self.activate_cloning.hide()',content)
+        self.assertNotIn('https://huggingface.co/kyutai/pocket-tts',content)
 
     def test_pocket_installer_does_not_claim_personal_cloning_when_weights_are_missing(self):
         script=Path(__file__).resolve().parents[1]/'scripts'/'instalar_pocket.ps1'
@@ -90,14 +84,12 @@ class PocketTTSOfflineTests(unittest.TestCase):
                       content)
         self.assertIn('Pocket TTS e clonagem de voz foram validados.',content)
 
-    def test_main_windows_installer_offers_pocket_and_gated_clone_with_explicit_confirmation(self):
+    def test_main_windows_installer_offers_qwen_and_no_longer_installs_pocket(self):
         root=Path(__file__).resolve().parents[1]
         content=(root/'scripts'/'instalar_windows.ps1').read_text(encoding='utf-8')
-        self.assertIn("'instalar_pocket.ps1') -CatalogOnly",content)
-        self.assertIn('Instalar Pocket TTS agora? [S/n]',content)
-        self.assertIn('ja aceitou os termos oficiais',content.lower())
-        self.assertIn("'preparar_modelo_pocket.py')",content)
-        self.assertIn('instalar_dependencias.bat novamente para inclui-lo',content)
+        self.assertIn("'instalar_qwen3_tts_local.ps1')",content)
+        self.assertIn('Preparar Qwen3-TTS Base local agora?',content)
+        self.assertNotIn("'instalar_pocket.ps1') -CatalogOnly",content)
 
     def test_authorization_probe_exercises_audio_prompt_encoder_without_user_audio(self):
         import wave
@@ -495,7 +487,7 @@ class PocketTTSOfflineTests(unittest.TestCase):
                     audio.writeframes(b'\x00\x00' * 16000)
                 Path(result_file).write_text(json.dumps({'duration':1., 'sample_rate':16000}),encoding='utf-8')
             try:
-                request=NarrationRequest(text='Bom dia.',voice='rafael',project_path=str(project),title='Teste')
+                request=NarrationRequest(text='Bom dia.',voice='rafael',project_path=str(project),title='Teste',engine='pocket-tts')
                 a=generate_narration(request,runner=simulated_worker)
                 b=generate_narration(request,runner=simulated_worker)
                 self.assertEqual(len(called),1)
@@ -504,7 +496,7 @@ class PocketTTSOfflineTests(unittest.TestCase):
                 self.assertNotEqual(a['path'],b['path'])
                 self.assertTrue(Path(a['path']).exists())
                 self.assertEqual(Path(a['path']).parent,persistent_folder(str(project)))
-                c=generate_narration(NarrationRequest(text='Boa noite.',voice='rafael',project_path=str(project)),runner=simulated_worker)
+                c=generate_narration(NarrationRequest(text='Boa noite.',voice='rafael',project_path=str(project),engine='pocket-tts'),runner=simulated_worker)
                 self.assertEqual(len(called),2)
                 self.assertTrue(Path(c['path']).is_file())
                 cache_root=Path(os.environ['BEROFEL_AI_CACHE']).parent/'pocket_tts'
@@ -572,15 +564,15 @@ class PocketTTSOfflineTests(unittest.TestCase):
                     {'duration':1.,'sample_rate':16000}),encoding='utf-8')
             try:
                 first=generate_narration(NarrationRequest(text='Primeiro',voice='rafael',
-                    project_path=str(project)),runner=simulated_worker)
+                    project_path=str(project),engine='pocket-tts'),runner=simulated_worker)
                 second=generate_narration(NarrationRequest(text='Segundo',voice='rafael',
-                    project_path=str(project)),runner=simulated_worker)
+                    project_path=str(project),engine='pocket-tts'),runner=simulated_worker)
                 self.assertTrue(Path(first['path']).is_file())
                 self.assertTrue(Path(second['path']).is_file())
                 root=Path(os.environ['BEROFEL_AI_CACHE']).parent/'pocket_tts'
                 self.assertEqual(len(list(root.rglob('audio.wav'))),1)
                 again=generate_narration(NarrationRequest(text='Primeiro',voice='rafael',
-                    project_path=str(project)),runner=simulated_worker)
+                    project_path=str(project),engine='pocket-tts'),runner=simulated_worker)
                 self.assertFalse(again['cache_hit'])
                 self.assertEqual(len(called),3)
                 self.assertTrue(Path(first['path']).is_file(),
@@ -606,7 +598,7 @@ class PocketTTSOfflineTests(unittest.TestCase):
                 Path(result_file).write_text(json.dumps(
                     {'duration':1.,'sample_rate':16000}),encoding='utf-8')
             request=NarrationRequest(text='Teste de versão.',voice='rafael',
-                                     project_path=str(project))
+                                     project_path=str(project),engine='pocket-tts')
             try:
                 with patch('berofel.services.pocket_tts_service.package_version',
                            side_effect=['4.0.1','4.0.1','4.0.2']):
@@ -638,7 +630,7 @@ class PocketTTSOfflineTests(unittest.TestCase):
                 Path(result_file).write_text(json.dumps(
                     {'duration':1.,'sample_rate':16000}),encoding='utf-8')
             request=NarrationRequest(text='Teste de voz.',voice=str(sample),consent=True,
-                                     project_path=str(project))
+                                     project_path=str(project),engine='pocket-tts')
             try:
                 first=generate_narration(request,runner=simulated_worker)
                 sample.write_bytes(b'BBBB')

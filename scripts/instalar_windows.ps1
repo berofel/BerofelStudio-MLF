@@ -147,27 +147,14 @@ try {
     Step '6/8 - Autoteste do motor FFmpeg (dois videos + audio)'
     Run-Python @((Join-Path $root 'scripts\diagnostico_motor.py'))
 
-    Step '7/8 - Pocket TTS local (instalacao automatica)'
-    Write-Host 'O Pocket TTS usa PyTorch para CPU e pode exigir um download grande. O instalador baixara apenas dependencias ausentes.'
-    $installPocket = Read-Host 'Instalar Pocket TTS agora? [S/n]'
-    if ($installPocket -notmatch '^(n|nao|no)$') {
+    Step '7/8 - Qwen3-TTS Base (opcional, ambiente isolado)'
+    $installQwen3 = Read-Host 'Preparar Qwen3-TTS Base local agora? Sao baixados aprox. 2,5 GB [s/N]'
+    if ($installQwen3 -match '^(s|sim|y|yes)$') {
         $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'instalar_pocket.ps1') -CatalogOnly
-        if ($LASTEXITCODE -ne 0) { throw 'A instalacao local do Pocket TTS falhou. Consulte o log proprio do Pocket TTS.' }
-
-        $prepareClone = Read-Host 'Voce ja aceitou os termos oficiais e quer baixar agora os pesos gated de clonagem? [s/N]'
-        if ($prepareClone -match '^(s|sim|y|yes)$') {
-            Write-Host 'Preparando e validando os pesos de clonagem com uma amostra sintetica, sem usar audio pessoal...'
-            & $venvExe (Join-Path $PSScriptRoot 'preparar_modelo_pocket.py')
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warning 'A clonagem pessoal nao foi ativada. As vozes locais de catalogo continuam instaladas.'
-                Write-Host 'Depois aceite os termos/verifique a rede e use Narracao > Preparar clonagem local.' -ForegroundColor Yellow
-            }
-        } else {
-            Write-Host 'Clonagem pessoal ficou pendente de autorizacao; a sintese local de catalogo foi instalada.' -ForegroundColor Yellow
-        }
+        & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'instalar_qwen3_tts_local.ps1')
+        if ($LASTEXITCODE -ne 0) { throw 'A instalacao local do Qwen3-TTS falhou. Consulte o log proprio do Qwen3.' }
     } else {
-        Write-Warning 'Pocket TTS foi adiado. Execute instalar_dependencias.bat novamente para inclui-lo.'
+        Write-Host 'Qwen3-TTS foi adiado. Use Narração > Preparar Qwen3 local quando desejar.' -ForegroundColor Yellow
     }
 
     Step '8/8 - Verificacao final da instalacao principal'
@@ -179,8 +166,8 @@ try {
         throw 'Instalacao terminou, mas nao foi possivel ler a versao do codigo local.'
     }
     Write-Host "`n[OK] Instalacao do BerofelStudio $($appVersion.Trim()) concluida." -ForegroundColor Green
-    Write-Host 'Pocket TTS local: preparado pelo instalador principal quando confirmado.'
-    Write-Host 'Whisper/Silero e Qwen de compatibilidade: INSTALAR_TODAS_AS_IAS.bat.'
+    Write-Host 'Motor de narração: Qwen3-TTS Base; Pocket TTS não é mais instalado nem selecionado.'
+    Write-Host 'Whisper/Silero: INSTALAR_TODAS_AS_IAS.bat.'
     Write-Host "Abra: $root\ABRIR_BEROFELSTUDIO.bat" -ForegroundColor Green
     Write-Host "Log de instalacao: $logFile"
     exit 0

@@ -8,7 +8,7 @@ from dataclasses import replace as dataclass_replace
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl, QThreadPool, QTimer, QSize, Signal, QSettings
-from PySide6.QtGui import QAction, QKeySequence, QPixmap, QPainter, QPainterPath, QColor, QFontDatabase
+from PySide6.QtGui import QAction, QKeySequence, QPixmap, QPainter, QPainterPath, QColor, QFontDatabase, QFont
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -47,6 +47,7 @@ from berofel.services.tasks import Task
 from berofel.ui.timeline import TimelineWidget
 from berofel.ui.process_panel import ProcessPanel, make_processing_error_dialog
 from berofel.ui.narration_panel import NarrationPanel
+from berofel.ui.caption_panel import CaptionPanel
 from berofel.ui.studio_header import StudioHeader
 from berofel.ui.library_panel import LibraryDock
 from berofel.ui.preview_transport import PreviewTransport
@@ -116,6 +117,8 @@ class PreviewImage(QWidget):
         self.selection_time=0.0
         self.canvas=(1280,720)
         self._drag_origin=None
+        self._drag_delta=(0.0,0.0)
+        self.preview_text=None
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAccessibleName('Importar vídeo')
@@ -134,9 +137,14 @@ class PreviewImage(QWidget):
             self.update()
 
     def set_selection(self,clip,width,height,at=0.0):
+        if clip is not self.selection:self.preview_text=None
         self.selection=clip
         self.selection_time=at
         self.canvas=(max(1,width),max(1,height))
+        self.update()
+
+    def set_preview_text(self,text):
+        self.preview_text=str(text)
         self.update()
 
     def _image_geometry(self):
@@ -169,11 +177,20 @@ class PreviewImage(QWidget):
             dy=event.position().y()-self._drag_origin.y()
             _,_,w,h=self._image_geometry()
             self._drag_origin=None
+            self._drag_delta=(0.0,0.0)
             self.unsetCursor()
             if abs(dx)+abs(dy)>=2:
                 self.transformed.emit(round(dx*self.canvas[0]/max(1,w)),round(dy*self.canvas[1]/max(1,h)))
             event.accept();return
         super().mouseReleaseEvent(event)
+
+    def mouseMoveEvent(self,event):
+        if self._drag_origin is not None:
+            self._drag_delta=(event.position().x()-self._drag_origin.x(),
+                              event.position().y()-self._drag_origin.y())
+            self.update()
+            event.accept();return
+        super().mouseMoveEvent(event)
 
     def keyPressEvent(self,event):
         if (self.pixmap is None and self.selection is None and
@@ -200,7 +217,6 @@ class PreviewImage(QWidget):
             p.drawPixmap(x,y,scaled)
         else:
             from PySide6.QtCore import QRectF
-            from PySide6.QtGui import QFont
             cx,cy=self.width()/2,self.height()/2
             compact=self.height()<145
             play=QPainterPath()
@@ -229,6 +245,8 @@ class PreviewImage(QWidget):
             scale=max(.05,float(value_at(self.selection,'scale',self.selection_time)))
             px=x+w/2+value_at(self.selection,'pos_x',self.selection_time)*w/self.canvas[0]
             py=y+h/2+value_at(self.selection,'pos_y',self.selection_time)*h/self.canvas[1]
+            if self._drag_origin is not None:
+                px+=self._drag_delta[0];py+=self._drag_delta[1]
             box=QRectF(px-w*scale*.45,py-h*scale*.45,w*scale*.9,h*scale*.9)
             p.save()
             p.translate(px,py)
@@ -240,6 +258,17 @@ class PreviewImage(QWidget):
                           (-w*scale*.45,h*scale*.45),(w*scale*.45,h*scale*.45)):
                 p.fillRect(QRectF(hx-3,hy-3,6,6),QColor('#f8d57a'))
             p.restore()
+            if (self.selection.kind=='text' and
+                    (self._drag_origin is not None or self.preview_text is not None)):
+                from PySide6.QtCore import QRectF
+                text=(self.selection.text if self.preview_text is None else self.preview_text)
+                p.save();p.setFont(QFont(getattr(self.selection,'font_family','Arial'),
+                                         max(8,int(self.selection.font_size*min(w/self.canvas[0],h/self.canvas[1])/1.35)),
+                                         QFont.Weight.Bold))
+                p.setPen(QColor(getattr(self.selection,'font_color','#FFFFFF')))
+                bounds=QRectF(px-w*.43,py-h*.43,w*.86,h*.86)
+                p.drawText(bounds,int(Qt.AlignmentFlag.AlignCenter|Qt.TextFlag.TextWordWrap),text)
+                p.restore()
             p.setPen(QColor('#c1eaff'))
             p.drawText(int(x+5),int(y+18),'Arraste para posicionar · Ctrl+roda: escala')
 
@@ -609,11 +638,13 @@ class MainWindow(QMainWindow):
             available=screen.availableGeometry()
             w=max(1,available.width()-18)
             h=max(1,available.height()-18)
+            self._screen_available_width=w
             self.resize(min(1360,w),min(850,h))
-            self.setMinimumSize(min(670,w),min(490,h))
+            self.setMinimumSize(min(630,w),min(490,h))
         else:
+            self._screen_available_width=1200
             self.resize(1200,760)
-            self.setMinimumSize(670,490)
+            self.setMinimumSize(630,490)
         self._build()
         self._hide_auxiliary_scrollbars()
         self._restore_ui_state()
@@ -646,19 +677,24 @@ class MainWindow(QMainWindow):
             area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
+    def _pane_minimum(self,preferred):
+        # Reserva handles e margens mesmo em telas pequenas/DPI alto.
+        budget=max(80,int((self._screen_available_width-32)/3))
+        return min(int(preferred),budget)
+
     def resizeEvent(self,event):
         super().resizeEvent(event)
         tabs=getattr(self,'side_tabs',None)
         if tabs is not None:
-            minimum=220 if event.size().width()<1180 else 180
+            minimum=self._pane_minimum(150)
             if tabs.minimumWidth()!=minimum:tabs.setMinimumWidth(minimum)
             self._apply_compact_tabs(event.size().width()<1180)
 
     def _apply_compact_tabs(self,compact):
         if not hasattr(self,'side_tabs'):return
-        labels=('IA','Clipes','Narração') if compact else (
-            'Assistente IA','Propriedades','🎙 Narração')
-        full=('Assistente IA','Propriedades','Narração')
+        labels=('IA','Clipes','Voz','Leg.') if compact else (
+            'Assistente IA','Propriedades','🎙 Narração','Legendas')
+        full=('Assistente IA','Propriedades','Narração','Legendas')
         for index,(label,name) in enumerate(zip(labels,full)):
             self.side_tabs.setTabText(index,label)
             self.side_tabs.setTabToolTip(index,name)
@@ -673,7 +709,6 @@ class MainWindow(QMainWindow):
         self.project_name=self.header.project_name
         self.header.project_action.connect(self._header_project_action)
         self.header.stage_requested.connect(self._header_stage_action)
-        self.header.narration_requested.connect(self.open_narration)
         self.process_panel=ProcessPanel(self.header,compact=True)
         self.header.set_task_widget(self.process_panel)
         outer.addWidget(self.header)
@@ -721,37 +756,33 @@ class MainWindow(QMainWindow):
         self.horizontal.setHandleWidth(5)
         editor_layout.addWidget(self.horizontal,1)
 
-        self.tool_rail=QFrame();self.tool_rail.setObjectName('timelineToolRail')
-        self.tool_rail.setFixedWidth(76)
-        rail_layout=QVBoxLayout(self.tool_rail)
-        rail_layout.setContentsMargins(4,5,4,4);rail_layout.setSpacing(4)
-        rail_heading=QLabel('FERRAM.')
-        rail_heading.setObjectName('timelineToolHeading')
-        rail_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        rail_layout.addWidget(rail_heading)
         self.tool_scroll=QScrollArea()
         self.tool_scroll.setObjectName('timelineToolScroll')
         self.tool_scroll.setWidgetResizable(True)
         self.tool_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.tool_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.tool_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.tool_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.tool_scroll.setFixedHeight(38)
         self.timeline_tool_holder=QWidget()
-        self.timeline_tool_layout=QVBoxLayout(self.timeline_tool_holder)
-        self.timeline_tool_layout.setContentsMargins(0,0,0,0)
-        self.timeline_tool_layout.setSpacing(4)
+        self.timeline_tool_layout=QHBoxLayout(self.timeline_tool_holder)
+        self.timeline_tool_layout.setContentsMargins(2,0,2,0)
+        self.timeline_tool_layout.setSpacing(3)
         self.timeline_tool_buttons=[]
         self.tool_scroll.setWidget(self.timeline_tool_holder)
-        rail_layout.addWidget(self.tool_scroll,1)
-        self.horizontal.addWidget(self.tool_rail)
+        self.tool_rail=self.tool_scroll  # compatibilidade com atalhos/temas antigos
 
         # Biblioteca lateral: categorias e filtros ficam na UI; arquivos e
         # operações editoriais permanecem no projeto canônico atual.
         self.library=LibraryDock(self)
+        self.library.setMinimumWidth(self._pane_minimum(160))
         self.media_list=self.library.media_list
         self.library.import_requested.connect(self.import_media)
         self.library.relink_requested.connect(self.relink_selected_media)
         self.library.marker_activated.connect(self.seek_to)
         self.media_list.itemDoubleClicked.connect(lambda _:self.add_media())
+        self.library.add_nav_button('actions','Ações','⚙',self.open_actions)
+        self.library.add_nav_button('narration','Narração','🎙',self.open_narration)
+        self.library.add_nav_button('captions','Legendas','T',self.open_captions)
         self.horizontal.addWidget(self.library)
 
         # Preview central: stream composto (FFmpeg + Qt); MP4 é só fallback.
@@ -787,7 +818,7 @@ class MainWindow(QMainWindow):
         self.audio.setVolume(.85)
         self.player.setAudioOutput(self.audio)
         self.player.setVideoOutput(self.video)
-        center.setMinimumWidth(220)
+        center.setMinimumWidth(self._pane_minimum(180))
         self.horizontal.addWidget(center)
 
         # Propriedades fixas na direita. Conteudo interno quebra verticalmente.
@@ -801,7 +832,7 @@ class MainWindow(QMainWindow):
         self.props_layout.setContentsMargins(7,5,7,5)
         self.props_layout.setSpacing(7)
         self.props_scroll.setWidget(self.props_inner)
-        self.props_scroll.setMinimumWidth(150)
+        self.props_scroll.setMinimumWidth(0)
         self.side_tabs=QTabWidget()
         self.actions_panel=ActionsPanel(self)
         self.actions_panel.on_execute=self.execute_modular
@@ -811,6 +842,7 @@ class MainWindow(QMainWindow):
         self.side_tabs.addTab(self.props_scroll, 'Propriedades')
         self.narration_panel=NarrationPanel(self)
         self.narration_panel.on_generate=self.generate_narration_ui
+        self.narration_panel.on_prepare_voice=self.prepare_narration_voice
         self.narration_panel.on_use_transcript=self.use_selected_transcript
         self.narration_panel.on_voice_eq_begin=self.begin_voice_eq_edit
         self.narration_panel.on_voice_eq_change=self.apply_voice_eq_edit
@@ -818,10 +850,21 @@ class MainWindow(QMainWindow):
         self.narration_panel.on_copy_voice_adjustments=self.copy_voice_adjustments
         self.narration_panel.on_paste_voice_adjustments=self.paste_voice_adjustments
         self.side_tabs.addTab(self.narration_panel, '🎙 Narração')
+        self.captions_panel=CaptionPanel(self)
+        self.captions_panel.caption_selected.connect(self.select_caption_from_panel)
+        self.captions_panel.add_requested.connect(self.add_caption_from_panel)
+        self.captions_panel.apply_text_requested.connect(self.apply_caption_text)
+        self.captions_panel.property_changed.connect(self.change_caption_property)
+        self.captions_panel.preview_text_changed.connect(self.preview_caption_text)
+        self.captions_panel.preset_requested.connect(self.apply_caption_preset)
+        self.side_tabs.addTab(self.captions_panel, 'Legendas')
         self._apply_compact_tabs(self.width()<1180)
-        self.side_tabs.setMinimumWidth(180)
+        self.narration_panel.setMinimumWidth(0)
+        self.narration_panel.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Expanding)
+        self.side_tabs.setMinimumWidth(self._pane_minimum(150))
+        self.side_tabs.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Expanding)
         self.horizontal.addWidget(self.side_tabs)
-        self.horizontal.setSizes([76,250,720,320])
+        self.horizontal.setSizes([250,720,320])
         # Nenhum painel troca de posicao ao reduzir janela.
 
         # O progresso compacto vive no cabeçalho; não reduz altura do preview
@@ -838,6 +881,7 @@ class MainWindow(QMainWindow):
         timeline_heading.setObjectName('timelineHeading')
         timeline_heading.setWordWrap(False)
         bar.addWidget(timeline_heading)
+        bar.addWidget(self.tool_scroll,1)
         bar.addStretch()
         self.track_combo=QComboBox()
         self.track_combo.setMinimumWidth(92)
@@ -851,7 +895,7 @@ class MainWindow(QMainWindow):
         add.clicked.connect(self.add_title)
         bar.addWidget(add)
         bl.addLayout(bar)
-        # Edição e navegação ficam numa barra vertical ao lado da Biblioteca.
+        # Ferramentas compactas ficam ao lado do cabeçalho da timeline.
         self.select_tool_btn=QToolButton();self.select_tool_btn.setText('↖ V')
         self.select_tool_btn.setObjectName('timelineSelectTool')
         self.select_tool_btn.setCheckable(True);self.select_tool_btn.setChecked(True)
@@ -967,7 +1011,7 @@ class MainWindow(QMainWindow):
 
     def restore_default_layout(self):
         """Recupera proporções usáveis sem tocar no conteúdo do projeto."""
-        self.horizontal.setSizes([76,250,720,320])
+        self.horizontal.setSizes([250,720,320])
         self.workspace_splitter.setSizes([420,320])
         self.side_tabs.setCurrentIndex(0)
         self.timeline.view.pps=21.0
@@ -1127,16 +1171,15 @@ class MainWindow(QMainWindow):
         return label
 
     def _fit_timeline_toolbar(self):
-        # A barra é vertical e compacta; texto completo permanece no tooltip.
+        # A barra é horizontal e compacta; texto completo permanece no tooltip.
         for button in self.timeline_tool_buttons:
             button.setMinimumWidth(0)
-            button.setMaximumWidth(68)
-            button.setMinimumHeight(32)
+            button.setMaximumWidth(36)
+            button.setFixedSize(32,30)
         self.timeline_tool_holder.adjustSize()
 
     def _add_timeline_tool(self, button):
-        button.setFixedWidth(64)
-        button.setMinimumHeight(32)
+        button.setFixedSize(32,30)
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.timeline_tool_layout.addWidget(button)
         self.timeline_tool_buttons.append(button)
@@ -1156,9 +1199,9 @@ class MainWindow(QMainWindow):
         if isinstance(raw,str):raw=raw.split(',')
         try:sizes=[int(value) for value in raw]
         except (TypeError,ValueError):sizes=[]
-        if len(sizes)==3 and any(value>0 for value in sizes):
-            sizes=[76,*sizes]  # migra proporções salvas antes da faixa de ferramentas
         if len(sizes)==4 and any(value>0 for value in sizes):
+            sizes=sizes[1:]  # migra proporções salvas antes da remoção da faixa lateral
+        if len(sizes)==3 and any(value>0 for value in sizes):
             self.horizontal.setSizes(sizes)
         raw_workspace=settings.value('ui/workspace_sizes',[])
         if isinstance(raw_workspace,str):raw_workspace=raw_workspace.split(',')
@@ -1230,6 +1273,66 @@ class MainWindow(QMainWindow):
     def open_narration(self):
         self.side_tabs.setCurrentWidget(self.narration_panel)
 
+    def open_captions(self):
+        self.captions_panel.set_context(self.project,self.selected_ids)
+        self.side_tabs.setCurrentWidget(self.captions_panel)
+        self.library.show_page('media')
+        self.statusBar().showMessage('Painel de legendas aberto: selecione uma legenda ou escreva uma nova.')
+
+    def select_caption_from_panel(self,clip_id):
+        clip=self.project.clip(str(clip_id))
+        if not clip or clip.kind!='text':return
+        self.selected_ids=[clip.id]
+        self.refresh([clip.id])
+        self.side_tabs.setCurrentWidget(self.captions_panel)
+
+    def add_caption_from_panel(self,text):
+        if not str(text).strip():
+            self.statusBar().showMessage('Escreva o texto da legenda no painel antes de adicionar.')
+            self.captions_panel.text_edit.setFocus()
+            return
+        at=max(0.,self.timeline.view.cursor_time)
+        self.snapshot()
+        clip=create_manual_caption(self.project,str(text),at,at+3.0)
+        self.refresh([clip.id])
+        self.side_tabs.setCurrentWidget(self.captions_panel)
+        self.statusBar().showMessage('Legenda adicionada no playhead; Ctrl+Z para desfazer.')
+
+    def apply_caption_text(self,clip_id,text):
+        clip=self.project.clip(str(clip_id))
+        if not clip or clip.kind!='text':return
+        if clip.id not in self.selected_ids:
+            self.selected_ids=[clip.id]
+        self.change_prop('text',str(text))
+        self.side_tabs.setCurrentWidget(self.captions_panel)
+
+    def change_caption_property(self,clip_id,field,value):
+        clip=self.project.clip(str(clip_id))
+        if not clip or clip.kind!='text':return
+        if clip.id not in self.selected_ids:
+            self.selected_ids=[clip.id]
+        self.change_prop(str(field),value)
+        self.side_tabs.setCurrentWidget(self.captions_panel)
+
+    def preview_caption_text(self,clip_id,text):
+        if self.selected_ids==[str(clip_id)]:
+            self.preview_image.set_preview_text(str(text))
+
+    def apply_caption_preset(self,index):
+        if len(self.selected_ids)!=1:return
+        clip=self.project.clip(self.selected_ids[0])
+        if not clip or clip.kind!='text' or not self.project.track_is_editable(clip.track_id):return
+        styles={1:('Arial',44,'#FFFFFF',3),
+                2:('Arial',38,'#FFFFFF',2),
+                3:('Arial',54,'#FFD166',4),
+                4:('Segoe UI',36,'#F2F5F8',1)}
+        style=styles.get(int(index))
+        if not style:return
+        self.snapshot()
+        (clip.font_family,clip.font_size,clip.font_color,clip.stroke_width)=style
+        self.refresh([clip.id])
+        self.side_tabs.setCurrentWidget(self.captions_panel)
+
     def use_selected_transcript(self):
         """Extrai apenas palavras dos clipes selecionados, conforme tempo atual."""
         selected=set(self.selected_ids)
@@ -1262,7 +1365,7 @@ class MainWindow(QMainWindow):
         try:
             validate_request(request.text, request.voice, request.language, request.consent)
         except (ValueError, FileNotFoundError, PermissionError) as exc:
-            QMessageBox.warning(self,'Pocket TTS',str(exc))
+            QMessageBox.warning(self,'Narração Qwen3-TTS',str(exc))
             return
         from dataclasses import replace
         request=replace(request,project_path=self.project.path)
@@ -1301,6 +1404,30 @@ class MainWindow(QMainWindow):
             self._ai_busy=False
             self.narration_panel.busy(False)
         task.signals.finished.connect(finish)
+
+    def prepare_narration_voice(self,reference: str,reference_text: str,name: str=''):
+        """Warm the shared Base model and prepare a reusable profile prompt."""
+        if self._ai_busy or self.active_task is not None:
+            self.narration_panel.status.setText(
+                'Perfil salvo. A preparação será feita na próxima narração, pois a fila de IA está ocupada.')
+            return
+        from berofel.services.qwen3_tts_local import is_ready,prepare_local_voice_prompt
+        if not is_ready():
+            self.narration_panel.status.setText(
+                'Perfil salvo. Instale o Qwen3-TTS Base para preparar sua voz localmente.')
+            return
+        self._ai_busy=True
+        self.narration_panel.busy(True)
+        def ready(result):
+            cached='já preparado' if result.get('prompt_cache_hit') else 'preparado e salvo no cache local'
+            self.narration_panel.status.setText(
+                f'Perfil de voz {cached}. O modelo Qwen3 permanece carregado nesta sessão.')
+        task=self._task(prepare_local_voice_prompt,ready,reference,reference_text,
+                        label='Preparar perfil Qwen3'+(f' · {name}' if name else ''))
+        if task is None:
+            self._ai_busy=False;self.narration_panel.busy(False);return
+        task.signals.finished.connect(
+            lambda:(setattr(self,'_ai_busy',False),self.narration_panel.busy(False)))
 
     def _unavailable(self,feature):
         QMessageBox.information(self,feature,f'{feature} esta identificado na interface, '
@@ -1425,6 +1552,8 @@ class MainWindow(QMainWindow):
                 seen.add(key);library.append(p)
         self.library.set_media(library)
         self.library.set_markers(self.project.markers)
+        if hasattr(self,'captions_panel'):
+            self.captions_panel.set_context(self.project,selected)
         self.track_combo.blockSignals(True)
         self.track_combo.clear()
         for t in self.project.tracks:
@@ -1443,6 +1572,8 @@ class MainWindow(QMainWindow):
         if hasattr(self,'narration_panel'):
             lane=self.project.track(chosen.track_id) if chosen else None
             self.narration_panel.set_clip(chosen,editable=bool(lane and not lane.locked))
+        if chosen and chosen.kind=='text' and hasattr(self,'side_tabs'):
+            self.side_tabs.setCurrentWidget(self.captions_panel)
         self._update_properties()
         self.actions_panel.set_context(self.project,selected,self.active_track_id,
                                        self.timeline.view.cursor_time)
@@ -1630,7 +1761,11 @@ class MainWindow(QMainWindow):
         if hasattr(self,'narration_panel'):
             lane=self.project.track(selected_clip.track_id) if selected_clip else None
             self.narration_panel.set_clip(selected_clip,editable=bool(lane and not lane.locked))
+        if hasattr(self,'captions_panel'):
+            self.captions_panel.set_context(self.project,ids)
         self._update_properties()
+        if selected_clip and selected_clip.kind=='text':
+            self.side_tabs.setCurrentWidget(self.captions_panel)
         if hasattr(self,'actions_panel'):
             self.actions_panel.set_context(self.project,self.selected_ids,self.active_track_id,
                                            self.timeline.view.cursor_time)
@@ -1744,10 +1879,29 @@ class MainWindow(QMainWindow):
             if c.kind=='text':
                 self._numeric_prop(c,'font_size','Tamanho da letra (px)',12,200,integer=True)
                 edit=QTextEdit();edit.setPlainText(c.text);edit.setMinimumHeight(90)
-                self._property_row('Texto do título',edit)
+                edit.textChanged.connect(lambda e=edit:self.preview_image.set_preview_text(e.toPlainText()))
+                self._property_row('Texto da legenda (prévia imediata)',edit)
                 apply=QPushButton('Aplicar texto')
                 apply.clicked.connect(lambda:self.change_prop('text',edit.toPlainText()))
                 self._property_target_layout.addWidget(apply)
+                family=QComboBox()
+                for name in ('Arial','Calibri','Segoe UI','Verdana','Georgia'):
+                    family.addItem(name)
+                family.setCurrentText(c.font_family)
+                family.currentTextChanged.connect(lambda value:self.change_prop('font_family',value))
+                self._property_row('Fonte',family)
+                color=QLineEdit(c.font_color);color.setMaxLength(7)
+                color.setPlaceholderText('#FFFFFF')
+                color.editingFinished.connect(lambda field=color:self.change_prop('font_color',field.text()))
+                self._property_row('Cor do texto (hexadecimal)',color)
+                stroke=QSpinBox();stroke.setRange(0,12);stroke.setValue(c.stroke_width)
+                stroke.valueChanged.connect(lambda value:self.change_prop('stroke_width',value))
+                self._property_row('Contorno da legenda',stroke)
+                templates=QComboBox()
+                for name in ('Modelo de legenda','Clássica','Compacta','Destaque','Discreta'):
+                    templates.addItem(name)
+                templates.activated.connect(lambda index:self.apply_caption_preset(index) if index else None)
+                self._property_row('Estilo pronto',templates)
 
         if audio_kind:
             audio=self._property_group('Áudio e limpeza')
@@ -1897,6 +2051,9 @@ class MainWindow(QMainWindow):
         if len(self.selected_ids)!=1:return
         c=self.project.clip(self.selected_ids[0])
         if not c or not self.project.track_is_editable(c.track_id):return
+        if field in ('font_color','stroke_color') and not QColor(str(value)).isValid():
+            self.statusBar().showMessage('Use uma cor hexadecimal válida, por exemplo #FFFFFF.')
+            return
         if field=='speed':
             self.set_speed(c.id,value);return
         if field=='preserve_pitch':
@@ -3772,6 +3929,11 @@ class MainWindow(QMainWindow):
             # Inclui prévias interativas e processos de IA; não deixa filhos
             # FFmpeg/llama/Whisper órfãos ao sair.
             QThreadPool.globalInstance().waitForDone(4000)
+        try:
+            from berofel.services.qwen3_tts_local import stop_local_worker
+            stop_local_worker()
+        except Exception:
+            pass
         self.stop_playback(wait_for_cleanup=True)
         self.timeline.view.visual_cache.close()
         for p in self._preview_files:

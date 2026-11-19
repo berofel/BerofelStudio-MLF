@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import hashlib
+import atexit
 import json
 import os
 from pathlib import Path
+import queue
 import shutil
 import subprocess
+import threading
 import time
 
 from .ai_cache import cache_root, source_identity, digest, write_json
@@ -21,6 +24,10 @@ REQUIRED_MODEL_FILES=('config.json','model.safetensors','preprocessor_config.jso
     'tokenizer_config.json','vocab.json','merges.txt','speech_tokenizer/config.json',
     'speech_tokenizer/configuration.json','speech_tokenizer/model.safetensors',
     'speech_tokenizer/preprocessor_config.json')
+
+_WORKER_LOCK=threading.RLock()
+_WORKER_PROCESS=None
+_WORKER_MODEL_KEY=''
 
 
 def runtime_root() -> Path:
@@ -64,6 +71,142 @@ def _model_fingerprint(folder: Path) -> dict:
         except OSError:files.append((name,None,None))
     return {'id':MODEL_ID,'revision':MODEL_REVISION,'files':files,
             'qwen_tts':QWEN_TTS_VERSION}
+
+
+def _prompt_cache_file(reference: Path,reference_text: str,model: Path) -> Path:
+    model_id=digest(_model_fingerprint(model))
+    text_hash=hashlib.sha256(reference_text.strip().encode('utf-8')).hexdigest()
+    key_data={'schema':1,'model':model_id,
+        'reference_sha256':_voice_fingerprint(reference)['sha256'],
+        'reference_text_sha256':text_hash,
+        'x_vector_only_mode':not bool(reference_text.strip())}
+    key=hashlib.sha256(json.dumps(key_data,sort_keys=True,separators=(',',':'))
+                       .encode('utf-8')).hexdigest()
+    cache_override=os.environ.get('BEROFEL_QWEN3_PROMPT_CACHE','')
+    root=Path(cache_override).expanduser() if cache_override else runtime_root()/'cache'/'voice_prompts'
+    return root/f'{key}.npz'
+
+
+def stop_local_worker():
+    """Stop the isolated warm model when the editor exits or a request cancels."""
+    global _WORKER_PROCESS,_WORKER_MODEL_KEY
+    with _WORKER_LOCK:
+        process=_WORKER_PROCESS
+        _WORKER_PROCESS=None;_WORKER_MODEL_KEY=''
+        if process is None:return
+        try:
+            if process.poll() is None:
+                try:
+                    process.stdin.write(json.dumps({'operation':'shutdown'})+'\n')
+                    process.stdin.flush()
+                except (OSError,ValueError,AttributeError):pass
+                try:process.wait(timeout=5)
+                except subprocess.TimeoutExpired:process.terminate()
+            process.wait(timeout=5)
+        except (OSError,subprocess.TimeoutExpired):
+            try:process.kill()
+            except OSError:pass
+
+
+atexit.register(stop_local_worker)
+
+
+def _read_worker_line(process, timeout, control=None):
+    lines=queue.Queue(maxsize=1)
+    def read():
+        try:lines.put((True,process.stdout.readline()))
+        except Exception as exc:lines.put((False,exc))
+    threading.Thread(target=read,name='QwenWorkerReply',daemon=True).start()
+    deadline=time.monotonic()+timeout
+    while True:
+        if control and control.cancelled:
+            stop_local_worker();control.checkpoint()
+        remaining=deadline-time.monotonic()
+        if remaining<=0:
+            stop_local_worker()
+            raise TimeoutError(f'Qwen3-TTS excedeu o limite local de {timeout}s.')
+        try:ok,value=lines.get(timeout=min(.2,remaining))
+        except queue.Empty:
+            if process.poll() is not None:
+                stop_local_worker()
+                raise RuntimeError('O worker Qwen3 encerrou antes de responder.')
+            continue
+        if not ok:raise RuntimeError(f'Falha lendo resposta do worker Qwen3: {value}')
+        if not value:
+            stop_local_worker()
+            raise RuntimeError('O worker Qwen3 fechou o canal de resposta.')
+        try:return json.loads(value)
+        except ValueError as exc:
+            stop_local_worker()
+            raise RuntimeError('O worker Qwen3 retornou resposta inválida.') from exc
+
+
+def _ensure_worker(model: Path, control=None):
+    global _WORKER_PROCESS,_WORKER_MODEL_KEY
+    model_key=digest(_model_fingerprint(model))
+    if (_WORKER_PROCESS is not None and _WORKER_PROCESS.poll() is None and
+            _WORKER_MODEL_KEY==model_key):
+        return _WORKER_PROCESS
+    stop_local_worker()
+    env=os.environ.copy()
+    env.update({'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1',
+                'HF_HUB_DISABLE_TELEMETRY':'1'})
+    configured=str(Path(__file__).resolve().parents[2])
+    python=str(python_path())
+    command=[python,'-u','-m','berofel.services.qwen3_tts_worker','--server',str(model)]
+    process=subprocess.Popen(command,cwd=configured,env=env,stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,encoding='utf-8',
+        errors='replace',bufsize=1,creationflags=_process_flags())
+    _WORKER_PROCESS=process;_WORKER_MODEL_KEY=model_key
+    response=_read_worker_line(process,timeout=900,control=control)
+    if not response.get('ready'):
+        stop_local_worker()
+        raise RuntimeError('O worker Qwen3 não confirmou o carregamento do modelo Base.')
+    return process
+
+
+def _runtime_request(request_data: dict,model: Path,control=None) -> dict:
+    global _WORKER_PROCESS
+    timeout_value=os.environ.get('BEROFEL_QWEN3_REQUEST_TIMEOUT','1800')
+    try:timeout=max(60,min(3600,int(timeout_value)))
+    except ValueError:timeout=1800
+    with _WORKER_LOCK:
+        process=_ensure_worker(model,control)
+        try:
+            process.stdin.write(json.dumps(request_data,ensure_ascii=False)+'\n')
+            process.stdin.flush()
+        except (OSError,ValueError) as exc:
+            stop_local_worker()
+            raise RuntimeError('Não foi possível enviar a tarefa ao worker Qwen3 local.') from exc
+        response=_read_worker_line(process,timeout=timeout,control=control)
+        if not response.get('ok'):
+            kind=str(response.get('error_type','RuntimeError'))
+            detail=str(response.get('error','falha sem detalhe'))
+            raise RuntimeError(f'Qwen3-TTS {kind}: {detail}')
+        return response
+
+
+def prepare_local_voice_prompt(reference: str,reference_text: str,*,
+        progress=None,control=None,stage=None) -> dict:
+    """Prepare/cache a profile prompt without synthesizing sample audio."""
+    path=Path(reference)
+    if not path.is_file():raise FileNotFoundError('A gravação de referência não foi encontrada.')
+    text=str(reference_text or '').strip()
+    if not text:raise ValueError('Informe a transcrição exata da gravação de referência.')
+    if not is_ready():raise RuntimeError('O modelo Qwen3-TTS Base não está instalado. Use INSTALAR_QWEN3_TTS_LOCAL.bat.')
+    model=model_path();prompt_file=_prompt_cache_file(path,text,model)
+    data={'operation':'prepare','consent':True,'reference':str(path.resolve()),
+        'reference_text':text,'language':'Portuguese','model_path':str(model),
+        'model_fingerprint':digest(_model_fingerprint(model)),
+        'prompt_cache_path':str(prompt_file),
+        'output':str(prompt_file.with_suffix('.wav'))}
+    if stage:stage('Qwen3-TTS Base • preparando perfil de referência')
+    if progress:progress(0,1)
+    response=_runtime_request(data,model,control)
+    if progress:progress(1,1)
+    return {'prepared':True,'prompt_cache_hit':bool(response.get('prompt_cache_hit')),
+            'worker_pid':response.get('worker_pid'),
+            'model_load_count':response.get('model_load_count')}
 
 
 def _prune_cache(folder: Path,keep: Path,max_mb: int=2048):
@@ -123,40 +266,42 @@ def generate_local_clone(request: NarrationRequest, progress=None, runner=None,
         except (OSError,ValueError):pass
     if not cache_hit:
         if control:control.checkpoint()
-        if stage:stage('Qwen3-TTS local • clonando e gerando no CPU')
+        if _WORKER_PROCESS is None or _WORKER_PROCESS.poll() is not None:
+            if stage:stage('Qwen3-TTS Base • carregando modelo CPU nesta sessão')
+        elif stage:
+            stage('Qwen3-TTS Base • usando modelo carregado e perfil local')
         job=directory/'request.json';result_file=directory/'worker_result.json'
+        prompt_file=_prompt_cache_file(reference,request.reference_text,model)
+        prompt_file.parent.mkdir(parents=True,exist_ok=True)
         job.unlink(missing_ok=True);result_file.unlink(missing_ok=True)
         write_json(job,{'text':request.text.strip(),'reference':str(reference),
             'reference_text':request.reference_text.strip(),
             'language':LANGUAGES[request.language],'model_path':str(model),
+            'model_fingerprint':digest(_model_fingerprint(model)),
+            'prompt_cache_path':str(prompt_file),
             'output':str(wav),'consent':True})
         try:
             if runner is not None:runner(job,result_file)
             else:
-                env=os.environ.copy()
-                cmd=[str(python_path()),'-m','berofel.services.qwen3_tts_worker',
-                     str(job),str(result_file)]
-                if control:
-                    proc=control.run(cmd,cwd=str(Path(__file__).resolve().parents[2]),
-                        env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
-                        encoding='utf-8',errors='replace',timeout=3600,
-                        creationflags=_process_flags())
-                else:
-                    proc=subprocess.run(cmd,cwd=str(Path(__file__).resolve().parents[2]),
-                        env=env,capture_output=True,text=True,encoding='utf-8',
-                        errors='replace',timeout=3600,creationflags=_process_flags())
-                if proc.returncode!=0:
-                    raise RuntimeError('Qwen3-TTS local: '+(proc.stderr or proc.stdout)[-1800:])
+                response=_runtime_request(json.loads(job.read_text(encoding='utf-8')),
+                                          model,control)
+                write_json(result_file,response['result'])
             if not wav.is_file() or wav.stat().st_size<=44 or not result_file.is_file():
                 raise RuntimeError('Qwen3-TTS local não entregou um WAV válido.')
             result=json.loads(result_file.read_text(encoding='utf-8'))
             duration=float(result['duration'])
             if not .01<duration<24*3600:raise RuntimeError('Duração de voz Qwen inválida.')
-            write_json(metadata,{'key':key,'duration':duration,'engine':'qwen3-tts-local'})
+            prompt_cache_hit=bool(result.get('prompt_cache_hit'))
+            write_json(metadata,{'key':key,'duration':duration,
+                'engine':'qwen3-tts-local','prompt_cache_hit':prompt_cache_hit,
+                'worker_pid':result.get('worker_pid'),
+                'model_load_count':result.get('model_load_count')})
         finally:
             job.unlink(missing_ok=True);result_file.unlink(missing_ok=True)
     else:
-        duration=float(data['duration']);os.utime(metadata,None)
+        duration=float(data['duration'])
+        prompt_cache_hit=bool(data.get('prompt_cache_hit'))
+        os.utime(metadata,None)
         if stage:stage('Qwen3-TTS local • áudio recuperado do cache')
     if control:control.checkpoint()
     if progress:progress(2,3)
@@ -172,5 +317,8 @@ def generate_local_clone(request: NarrationRequest, progress=None, runner=None,
     except OSError:pass
     if progress:progress(3,3)
     return {'path':str(output),'duration':duration,'cache_hit':cache_hit,
+        'prompt_cache_hit':prompt_cache_hit,
+        'worker_pid':(data.get('worker_pid') if cache_hit else result.get('worker_pid')),
+        'model_load_count':(data.get('model_load_count') if cache_hit else result.get('model_load_count')),
         'voice':request.voice,'language':request.language,'title':request.title,
         'engine':'qwen3-tts-local'}

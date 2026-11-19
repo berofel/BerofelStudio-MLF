@@ -1,2 +1,2 @@
-# Requisitos do editor principal; IA e Pocket TTS são adicionados pelos instaladores opcionais.
+# Requisitos do editor principal; motores de IA são adicionados pelos instaladores opcionais.
 -r requirements-core.txt

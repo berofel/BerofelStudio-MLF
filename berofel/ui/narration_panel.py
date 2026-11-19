@@ -9,13 +9,14 @@ from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QTextEdit,
                                QPushButton, QCheckBox, QFileDialog, QLineEdit, QHBoxLayout,
                                QMessageBox, QScrollArea, QInputDialog,
-                               QGroupBox)
+                               QGroupBox, QSizePolicy, QBoxLayout)
 from .wheel_controls import (WheelGuardComboBox as QComboBox,
     WheelGuardDoubleSpinBox as QDoubleSpinBox, WheelGuardSlider as QSlider)
 
-from berofel.services.pocket_tts_service import LANGUAGES, VOICE_PRESETS, NarrationRequest, preset_voice
+from berofel.services.pocket_tts_service import LANGUAGES, NarrationRequest
 from berofel.services.voice_dsp import VOICE_EQ_PRESETS, clip_voice_eq
 from berofel.services.voice_presets import VoicePresetManager
+from berofel.services.voice_profiles import VoiceProfileManager
 
 
 class NarrationPanel(QScrollArea):
@@ -23,6 +24,7 @@ class NarrationPanel(QScrollArea):
         super().__init__(parent)
         self.on_generate = None
         self.on_use_transcript = None
+        self.on_prepare_voice = None
         self.last_audio = ''
         self.setWidgetResizable(True)
         self.setVerticalScrollBarPolicy(self.verticalScrollBarPolicy())
@@ -31,6 +33,11 @@ class NarrationPanel(QScrollArea):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(9)
+        page.setMinimumWidth(0)
+        page.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred)
+        self._content_page=page
+        self._compact=False
+        self._base_content_font=page.font()
         label = QLabel('🎙 NARRAÇÃO · VOZ LOCAL')
         label.setStyleSheet('color:#9cc7ff;font-weight:800;font-size:13px;')
         layout.addWidget(label)
@@ -47,6 +54,9 @@ class NarrationPanel(QScrollArea):
         fill = QPushButton('↳ Trazer transcrição dos blocos selecionados')
         fill.clicked.connect(lambda: self.on_use_transcript() if self.on_use_transcript else None)
         layout.addWidget(fill)
+        self._responsive_buttons=[
+            (fill,'↳ Usar transcrição selecionada','↳ Usar transcrição'),
+        ]
 
         layout.addWidget(QLabel('Idioma da narração'))
         self.language = QComboBox()
@@ -54,12 +64,13 @@ class NarrationPanel(QScrollArea):
             self.language.addItem(name, code)
         layout.addWidget(self.language)
 
-        layout.addWidget(QLabel('Voz (catálogo ou clonagem autorizada)'))
+        layout.addWidget(QLabel('Perfil de voz Qwen3 (clonagem local autorizada)'))
         self.voice = QComboBox()
-        self.voice.addItem('Rafael · voz oficial em português', 'rafael')
-        for preset in VOICE_PRESETS:
-            self.voice.addItem(preset['name'], preset['id'])
+        self.voice_profiles=VoiceProfileManager()
+        self._voice_profile_error=''
+        self._append_voice_profile_items()
         self.voice.addItem('Minha voz / amostra com autorização', '__custom__')
+        self.voice.setCurrentIndex(self.voice.findData('__custom__'))
         self.voice.currentIndexChanged.connect(self._update_custom)
         layout.addWidget(self.voice)
 
@@ -71,15 +82,26 @@ class NarrationPanel(QScrollArea):
         choose.clicked.connect(self._choose_sample)
         layout.addWidget(choose)
         self.choose_sample = choose
+        profile_actions=QHBoxLayout()
+        self.save_voice_profile=QPushButton('Salvar perfil')
+        self.rename_voice_profile=QPushButton('Renomear perfil')
+        self.delete_voice_profile=QPushButton('Excluir perfil')
+        self.save_voice_profile.clicked.connect(self._save_voice_profile)
+        self.rename_voice_profile.clicked.connect(self._rename_voice_profile)
+        self.delete_voice_profile.clicked.connect(self._delete_voice_profile)
+        for button in (self.save_voice_profile,self.rename_voice_profile,self.delete_voice_profile):
+            profile_actions.addWidget(button)
+        layout.addLayout(profile_actions)
+        self._voice_profile_action_rows=[profile_actions]
         self.authorized = QCheckBox('Confirmo autorização expressa para clonar esta voz.')
         layout.addWidget(self.authorized)
-        self.activate_cloning = QPushButton('🔐 Preparar clonagem local…')
-        self.activate_cloning.clicked.connect(self._activate_cloning)
-        layout.addWidget(self.activate_cloning)
-        layout.addWidget(QLabel('Motor para voz personalizada'))
+        # Pocket TTS is no longer an active narration engine. Keep the request
+        # field for project/API compatibility, but expose Qwen Base only.
+        self.activate_cloning = QPushButton('')
+        self.activate_cloning.hide()
         self.clone_engine = QComboBox()
-        self.clone_engine.addItem('Qwen3-TTS local · CPU · baixar uma vez', 'qwen3-tts-local')
-        self.clone_engine.addItem('Pocket TTS · precisa de pesos autorizados', 'pocket-tts')
+        self.clone_engine.addItem('Qwen3-TTS Base · local', 'qwen3-tts-local')
+        self.clone_engine.setVisible(False)
         self.clone_engine.currentIndexChanged.connect(self._update_custom)
         layout.addWidget(self.clone_engine)
         self.reference_text = QLineEdit()
@@ -92,16 +114,13 @@ class NarrationPanel(QScrollArea):
         self.qwen_status.setWordWrap(True)
         self.qwen_status.setStyleSheet('color:#8b9db3;font-size:11px;')
         layout.addWidget(self.qwen_status)
-        self.clone_status = QLabel('')
-        self.clone_status.setWordWrap(True)
-        self.clone_status.setStyleSheet('color:#8b9db3;font-size:11px;')
-        self.clone_status.setObjectName('voiceCloneStatus')
-        layout.addWidget(self.clone_status)
-        self._clone_activation_process = None
-        self._clone_watch_timer = QTimer(self)
-        self._clone_watch_timer.setInterval(500)
-        self._clone_watch_timer.timeout.connect(self._poll_clone_activation)
-        self.license_note = QLabel('Voz oficial Kyutai. Para redistribuição/licenças, consulte os termos do modelo.')
+        self._qwen_install_process=None
+        self._qwen_install_log_handle=None
+        self._qwen_install_log_path=None
+        self._qwen_install_timer=QTimer(self)
+        self._qwen_install_timer.setInterval(1000)
+        self._qwen_install_timer.timeout.connect(self._poll_qwen_install)
+        self.license_note = QLabel('Qwen3-TTS Base · clonagem local a partir de referência autorizada.')
         self.license_note.setWordWrap(True)
         self.license_note.setStyleSheet('color:#8b9db3;font-size:11px;')
         self.license_note.setOpenExternalLinks(True)
@@ -130,11 +149,14 @@ class NarrationPanel(QScrollArea):
         preset_actions.addWidget(self.rename_voice_preset)
         preset_actions.addWidget(self.delete_voice_preset)
         layout.addLayout(preset_actions)
+        self._responsive_action_rows=[profile_actions,preset_actions]
         self.eq_sliders={};self.eq_readouts={}
+        self._eq_rows=[]
+        self._eq_value_boxes=[]
         for key,label in (('bass_db','Graves'),('mids_db','Médios'),('treble_db','Agudos')):
             row=QWidget();row_layout=QHBoxLayout(row)
             row_layout.setContentsMargins(0,0,0,0);row_layout.setSpacing(4)
-            name=QLabel(label);name.setMinimumWidth(48)
+            name=QLabel(label);name.setMinimumWidth(0)
             slider=QSlider(Qt.Orientation.Horizontal);slider.setRange(-120,120);slider.setPageStep(10)
             value=QDoubleSpinBox();value.setRange(-12.,12.);value.setDecimals(1)
             value.setSingleStep(.1);value.setSuffix(' dB');value.setFixedWidth(78)
@@ -144,12 +166,18 @@ class NarrationPanel(QScrollArea):
             value.valueChanged.connect(lambda number,target=slider:target.setValue(round(number*10)))
             slider.sliderPressed.connect(self._start_eq_drag)
             slider.sliderReleased.connect(self._finish_eq_drag)
-            row_layout.addWidget(name);row_layout.addWidget(slider,1);row_layout.addWidget(value);row_layout.addWidget(reset)
+            controls=QWidget();controls_layout=QHBoxLayout(controls)
+            controls_layout.setContentsMargins(0,0,0,0);controls_layout.setSpacing(3)
+            controls_layout.addWidget(value);controls_layout.addWidget(reset)
+            row_layout.addWidget(name);row_layout.addWidget(slider,1);row_layout.addWidget(controls)
             layout.addWidget(row)
             self.eq_sliders[key]=slider;self.eq_readouts[key]=value
+            self._eq_rows.append((row_layout,name,slider,controls))
+            self._eq_value_boxes.append(value)
         pitch_row=QWidget();pitch_layout=QHBoxLayout(pitch_row)
         pitch_layout.setContentsMargins(0,0,0,0);pitch_layout.setSpacing(4)
-        pitch_layout.addWidget(QLabel('Pitch'))
+        self.pitch_label=QLabel('Pitch');self.pitch_label.setMinimumWidth(0)
+        pitch_layout.addWidget(self.pitch_label)
         self.pitch_slider=QSlider(Qt.Orientation.Horizontal)
         self.pitch_slider.setRange(-40,40);self.pitch_slider.setPageStep(10)
         self.pitch_readout=QDoubleSpinBox();self.pitch_readout.setRange(-4.,4.)
@@ -162,9 +190,11 @@ class NarrationPanel(QScrollArea):
         self.pitch_slider.sliderPressed.connect(self._start_eq_drag)
         self.pitch_slider.sliderReleased.connect(self._finish_eq_drag)
         self.pitch_readout.valueChanged.connect(lambda value:self.pitch_slider.setValue(round(value*10)))
-        pitch_layout.addWidget(self.pitch_slider,1)
-        pitch_layout.addWidget(self.pitch_readout)
-        pitch_layout.addWidget(self.pitch_reset)
+        pitch_controls=QWidget();pitch_controls_layout=QHBoxLayout(pitch_controls)
+        pitch_controls_layout.setContentsMargins(0,0,0,0);pitch_controls_layout.setSpacing(3)
+        pitch_controls_layout.addWidget(self.pitch_readout);pitch_controls_layout.addWidget(self.pitch_reset)
+        pitch_layout.addWidget(self.pitch_slider,1);pitch_layout.addWidget(pitch_controls)
+        self._pitch_row=(pitch_layout,self.pitch_label,self.pitch_slider,pitch_controls)
         layout.addWidget(pitch_row)
         self.formant_group=QGroupBox('Ressonância Vocal · indisponível')
         self.formant_group.setObjectName('voiceFormantUnavailable')
@@ -179,7 +209,8 @@ class NarrationPanel(QScrollArea):
         layout.addWidget(self.formant_group)
         speed_row=QWidget();speed_layout=QHBoxLayout(speed_row)
         speed_layout.setContentsMargins(0,0,0,0);speed_layout.setSpacing(4)
-        speed_layout.addWidget(QLabel('Velocidade'))
+        self.speed_label=QLabel('Velocidade');self.speed_label.setMinimumWidth(0)
+        speed_layout.addWidget(self.speed_label)
         self.speed_slider=QSlider(Qt.Orientation.Horizontal)
         self.speed_slider.setRange(70,130);self.speed_slider.setSingleStep(5);self.speed_slider.setPageStep(5)
         self.speed_readout=QDoubleSpinBox();self.speed_readout.setRange(.70,1.30)
@@ -187,6 +218,7 @@ class NarrationPanel(QScrollArea):
         self.speed_readout.setSuffix('×');self.speed_readout.setFixedWidth(78)
         speed_layout.addWidget(self.speed_slider,1);speed_layout.addWidget(self.speed_readout)
         layout.addWidget(speed_row)
+        self._speed_row=(speed_layout,self.speed_label,self.speed_slider,self.speed_readout)
         self.speed_status=QLabel('A velocidade recalcula a duração deste clipe e segue o Undo da timeline.')
         self.speed_status.setWordWrap(True);self.speed_status.setStyleSheet('color:#8b9db3;font-size:11px;')
         layout.addWidget(self.speed_status)
@@ -212,6 +244,18 @@ class NarrationPanel(QScrollArea):
         voice_actions.addWidget(self.copy_voice_adjustments)
         voice_actions.addWidget(self.paste_voice_adjustments)
         layout.addLayout(voice_actions)
+        self._responsive_action_rows.append(voice_actions)
+        self._responsive_buttons.extend([
+            (self.save_voice_profile,'Salvar perfil','Salvar perfil'),
+            (self.rename_voice_profile,'Renomear perfil','Renomear'),
+            (self.delete_voice_profile,'Excluir perfil','Excluir'),
+            (self.save_voice_preset,'Salvar preset','Salvar'),
+            (self.rename_voice_preset,'Renomear','Renomear'),
+            (self.delete_voice_preset,'Excluir','Excluir'),
+            (self.copy_voice_adjustments,'Copiar ajustes','Copiar'),
+            (self.paste_voice_adjustments,'Colar ajustes','Colar'),
+            (self.eq_reset,'Restaurar todas as bandas','Restaurar EQ'),
+        ])
         self.eq_help=QLabel('EQ e pitch não repetem o TTS. Pitch de -4 a +4 semitons preserva aproximadamente a duração; prévia e exportação usam o mesmo processamento.')
         self.eq_help.setWordWrap(True)
         self.eq_help.setStyleSheet('color:#8b9db3;font-size:11px;')
@@ -233,9 +277,19 @@ class NarrationPanel(QScrollArea):
         self.listen.setEnabled(False)
         self.listen.clicked.connect(self._listen)
         layout.addWidget(self.listen)
+        self._responsive_buttons.extend([
+            (choose,'📁 Escolher amostra de voz','📁 Amostra'),
+            (self.activate_cloning,'🔐 Preparar clonagem local…','🔐 Clonagem local'),
+            (self.install_qwen,'⬇ Preparar Qwen3 local','⬇ Preparar Qwen3'),
+            (self.insert,'▶ Gerar e adicionar na timeline','▶ Gerar na timeline'),
+            (self.generate_file,'♬ Gerar somente o WAV','♬ Gerar WAV'),
+            (self.listen,'♫ Ouvir a última narração','♫ Ouvir narração'),
+        ])
         self.status = QLabel('O modelo é carregado apenas durante a geração (Batata Quente).')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        if self._voice_profile_error:
+            self.status.setText(self._voice_profile_error)
         layout.addStretch()
         self.setWidget(page)
         self._player = QMediaPlayer(self)
@@ -272,6 +326,58 @@ class NarrationPanel(QScrollArea):
         self.name.textChanged.connect(self._schedule_preferences_save)
         self._update_custom()
         self.set_clip(None)
+        self._make_controls_responsive()
+
+    def resizeEvent(self,event):
+        super().resizeEvent(event)
+        self._update_responsive_layout()
+
+    def showEvent(self,event):
+        super().showEvent(event)
+        self._update_responsive_layout()
+
+    def _update_responsive_layout(self):
+        if not hasattr(self,'_content_page') or not hasattr(self,'_eq_rows'):return
+        width=self.viewport().width()
+        compact=width<340
+        if compact==self._compact:return
+        self._compact=compact
+        self._content_page.layout().setContentsMargins(5 if compact else 8,5 if compact else 8,
+                                                      5 if compact else 8,5 if compact else 8)
+        self._content_page.layout().setSpacing(6 if compact else 9)
+        for row,name,slider,controls in self._eq_rows:
+            row.setDirection(QBoxLayout.Direction.TopToBottom if compact else QBoxLayout.Direction.LeftToRight)
+            name.setMinimumWidth(0 if compact else 48)
+            slider.setMinimumWidth(0)
+        for row,name,slider,controls in (self._pitch_row,self._speed_row):
+            row.setDirection(QBoxLayout.Direction.TopToBottom if compact else QBoxLayout.Direction.LeftToRight)
+            slider.setMinimumWidth(0)
+        for row in getattr(self,'_responsive_action_rows',[]):
+            row.setDirection(QBoxLayout.Direction.TopToBottom if compact else QBoxLayout.Direction.LeftToRight)
+        for spin in self._eq_value_boxes+[self.pitch_readout,self.speed_readout]:
+            spin.setFixedWidth(62 if compact else 78)
+        for button,full,short in self._responsive_buttons:
+            button.setText(short if compact else full)
+        base=self._base_content_font
+        base=type(base)(base)
+        if compact:base.setPointSizeF(max(8.0,base.pointSizeF()-.7))
+        self._content_page.setFont(base)
+        self._content_page.updateGeometry()
+
+    def _make_controls_responsive(self):
+        for button,_,_ in self._responsive_buttons:
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
+        for button in self._content_page.findChildren(QPushButton):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
+        for checkbox in self._content_page.findChildren(QCheckBox):
+            checkbox.setMinimumWidth(0)
+            checkbox.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
+        for widget_type in (QComboBox,QLineEdit):
+            for control in self._content_page.findChildren(widget_type):
+                control.setMinimumWidth(0)
+                control.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
 
     def set_clip(self,clip,editable=True):
         """Load per-clip DSP values without triggering a write or TTS call."""
@@ -493,14 +599,15 @@ class NarrationPanel(QScrollArea):
 
     def _restore_preferences(self):
         settings=self._settings
-        voice=str(settings.value('narration/voice','rafael'))
+        voice=str(settings.value('narration/voice','__custom__'))
         voice_index=self.voice.findData(voice)
         if voice_index>=0:self.voice.setCurrentIndex(voice_index)
         language=str(settings.value('narration/language','portuguese'))
         language_index=self.language.findData(language)
         if language_index>=0:self.language.setCurrentIndex(language_index)
-        self.sample_path.setText(str(settings.value('narration/sample_path','')))
-        engine=str(settings.value('narration/clone_engine','qwen3-tts-local'))
+        if not self._voice_profile_id(voice):
+            self.sample_path.setText(str(settings.value('narration/sample_path','')))
+        engine='qwen3-tts-local'
         index=self.clone_engine.findData(engine)
         if index>=0:self.clone_engine.setCurrentIndex(index)
         self.reference_text.setText(str(settings.value('narration/reference_text','')))
@@ -529,69 +636,142 @@ class NarrationPanel(QScrollArea):
         super().closeEvent(event)
 
     def _update_custom(self):
-        custom = self.voice.currentData() == '__custom__'
+        selected=self.voice.currentData()
+        profile_id=self._voice_profile_id(selected)
+        custom = selected == '__custom__' or bool(profile_id)
+        profile=None
+        if profile_id:
+            try:
+                profile=self.voice_profiles.get(profile_id)
+                self.sample_path.setText(profile['sample_path'])
+                self.reference_text.setText(profile.get('reference_text',''))
+                language_index=self.language.findData(profile.get('language','portuguese'))
+                if language_index>=0:self.language.setCurrentIndex(language_index)
+                if Path(profile['sample_path']).suffix.lower()=='.safetensors':
+                    self._voice_profile_error='Este perfil antigo do Pocket TTS não contém uma gravação de referência compatível com Qwen3. Importe um WAV, MP3, FLAC, OGG ou M4A.'
+            except (OSError,ValueError,KeyError) as exc:
+                self.sample_path.clear()
+                self._voice_profile_error=str(exc)
         self.sample_path.setVisible(custom)
-        self.choose_sample.setVisible(custom)
+        self.choose_sample.setVisible(selected=='__custom__')
         self.authorized.setVisible(custom)
+        self.save_voice_profile.setVisible(selected=='__custom__')
+        self.rename_voice_profile.setVisible(bool(profile_id))
+        self.delete_voice_profile.setVisible(bool(profile_id))
         qwen = custom and self.clone_engine.currentData() == 'qwen3-tts-local'
-        pocket_clone = custom and self.clone_engine.currentData() == 'pocket-tts'
-        self.activate_cloning.setVisible(pocket_clone)
-        self.clone_engine.setVisible(custom)
+        self.activate_cloning.hide()
+        self.clone_engine.hide()
         self.reference_text.setVisible(qwen)
         self.install_qwen.setVisible(qwen)
         self.qwen_status.setVisible(qwen and bool(self.qwen_status.text()))
         self.quantize.setVisible(not qwen)
-        self.clone_status.setVisible(pocket_clone and bool(self.clone_status.text()))
-        selected = self.voice.currentData()
         if custom:
             if qwen:
                 self.license_note.setText('Qwen3-TTS Base 0.6B: pesos públicos Apache-2.0; preparação baixa o modelo (~2,5 GB) e cria ambiente isolado. Depois, referência e síntese rodam localmente, sem enviar sua gravação. Forneça o texto exato da amostra para melhor resultado; sem ele, o modo só pelo vetor de voz pode reduzir a qualidade. Use somente voz autorizada.')
             else:
-                self.license_note.setText(
-                    'Pocket TTS: a amostra e a síntese são processadas localmente, mas a clonagem pessoal exige aceitar os termos e obter os pesos oficiais em '
-                    '<a href="https://huggingface.co/kyutai/pocket-tts">Hugging Face · Pocket TTS</a>. '
-                    'Use AUTORIZAR_POCKET_TTS.bat. Confirme autorização expressa para a voz. Os pesos apenas de catálogo não clonam voz pessoal.')
-        elif selected == 'rafael':
-            self.license_note.setText('Preset oficial português (Kyutai). A amostra não é redistribuída no ZIP.')
+                self.license_note.setText('Importe uma referência de voz autorizada para gerar com Qwen3-TTS Base.')
         else:
-            self.license_note.setText('Amostra do Voice-Zero disponibilizada como CC0 pela Kyutai. '
-                                      'Pronúncia em português pode variar.')
+            self.license_note.setText('Qwen3-TTS Base usa áudio de referência e sua transcrição para clonagem local. A amostra não sai deste computador.')
 
     def _choose_sample(self):
         path, _ = QFileDialog.getOpenFileName(
             self, 'Escolher amostra autorizada', '',
-            'Amostras de voz (*.wav *.mp3 *.flac *.ogg *.m4a *.safetensors);;Todos os arquivos (*)')
+            'Amostras de voz (*.wav *.mp3 *.flac *.ogg *.m4a);;Todos os arquivos (*)')
         if path:
+            if self.voice.currentData()!='__custom__':
+                index=self.voice.findData('__custom__')
+                if index>=0:self.voice.setCurrentIndex(index)
             self.sample_path.setText(path)
 
-    def _activate_cloning(self):
-        app_root=Path(__file__).resolve().parents[2]
-        authorizer=app_root/'AUTORIZAR_POCKET_TTS.bat'
-        if not authorizer.is_file():
-            QMessageBox.warning(self,'Ativar clonagem',
-                f'Não encontrei o autorizador do Pocket TTS nesta pasta:\n{authorizer}')
-            return
+    @staticmethod
+    def _voice_profile_id(value):
+        value=str(value or '')
+        prefix='voice-profile:'
+        return value[len(prefix):] if value.startswith(prefix) else ''
+
+    def _append_voice_profile_items(self,select_data=None):
+        selected=select_data if select_data is not None else self.voice.currentData()
+        self.voice.blockSignals(True)
+        for index in reversed(range(self.voice.count())):
+            if self._voice_profile_id(self.voice.itemData(index)):
+                self.voice.removeItem(index)
         try:
-            env=os.environ.copy()
-            log_root=Path(env.get('LOCALAPPDATA',str(Path.home())))/'BFS'/'logs'
-            log_root.mkdir(parents=True,exist_ok=True)
-            self._clone_activation_log=log_root/'pocket_clone_activation.log'
-            self._clone_activation_log.unlink(missing_ok=True)
-            env['BFS_CLONE_ACTIVATION_LOG']=str(self._clone_activation_log)
-            # O autorizador roda a prova sintética do encoder antes de retornar.
-            # Evita manter a janela de console parada em um `pause`, permitindo
-            # ao painel apresentar o resultado real sem outra inferência.
-            env['BFS_NO_PAUSE']='1'
-            self._clone_activation_process=subprocess.Popen(
-                ['cmd.exe','/d','/c','call',str(authorizer)],cwd=str(app_root),env=env,
-                creationflags=getattr(subprocess,'CREATE_NEW_CONSOLE',0))
-            self.activate_cloning.setEnabled(False)
-            self._set_clone_status('Conclua o login no console que abriu. O encoder será validado ao final; esta prova usa áudio sintético.')
-            self._clone_watch_timer.start()
-        except OSError as exc:
-            self._clone_activation_process=None
-            QMessageBox.warning(self,'Ativar clonagem',
-                f'Não foi possível abrir o autorizador. Execute AUTORIZAR_POCKET_TTS.bat manualmente.\n{exc}')
+            profiles=self.voice_profiles.list_profiles()
+            self._voice_profile_error=''
+            for profile in profiles:
+                self.voice.addItem(f'Perfil local · {profile["name"]}',
+                                   f'voice-profile:{profile["id"]}')
+        except (OSError,ValueError,KeyError) as exc:
+            self._voice_profile_error=f'Não foi possível carregar os perfis de voz locais: {exc}'
+        index=self.voice.findData(selected)
+        if index>=0:self.voice.setCurrentIndex(index)
+        self.voice.blockSignals(False)
+        if self._voice_profile_error and hasattr(self,'status'):
+            self.status.setText(self._voice_profile_error)
+
+    def _save_voice_profile(self):
+        if self.voice.currentData()!='__custom__':return
+        if not self.authorized.isChecked():
+            QMessageBox.warning(self,'Perfil de voz',
+                'Confirme que possui autorização expressa para armazenar esta referência de voz.')
+            return
+        source=self.sample_path.text().strip()
+        if not source:
+            QMessageBox.warning(self,'Perfil de voz','Escolha primeiro uma gravação de referência.')
+            return
+        name,ok=QInputDialog.getText(self,'Salvar perfil de voz local','Nome do perfil:')
+        if not ok:return
+        try:
+            reference_text=self.reference_text.text().strip()
+            if not reference_text:
+                QMessageBox.warning(self,'Perfil de voz','Informe a transcrição exata da gravação para ativar a clonagem Qwen3 com referência textual.')
+                return
+            profile=self.voice_profiles.create(name,source,self.language.currentData() or 'portuguese',reference_text)
+            data=f'voice-profile:{profile["id"]}'
+            self._append_voice_profile_items(data)
+            self._update_custom()
+            self.status.setText(f'Perfil “{profile["name"]}” salvo em pasta privada local. A amostra original foi preservada.')
+            if self.on_prepare_voice:
+                self.on_prepare_voice(profile['sample_path'],reference_text,profile['name'])
+        except (OSError,ValueError,KeyError) as exc:
+            QMessageBox.warning(self,'Perfil de voz',str(exc))
+
+    def _rename_voice_profile(self):
+        profile_id=self._voice_profile_id(self.voice.currentData())
+        if not profile_id:return
+        try:current=self.voice_profiles.get(profile_id)
+        except (OSError,ValueError,KeyError) as exc:
+            QMessageBox.warning(self,'Perfil de voz',str(exc));return
+        name,ok=QInputDialog.getText(self,'Renomear perfil de voz','Novo nome:',text=current['name'])
+        if not ok:return
+        try:
+            renamed=self.voice_profiles.rename(profile_id,name)
+            data=f'voice-profile:{profile_id}'
+            self._append_voice_profile_items(data)
+            self._update_custom()
+            self.status.setText(f'Perfil renomeado para “{renamed}”.')
+        except (OSError,ValueError,KeyError) as exc:
+            QMessageBox.warning(self,'Perfil de voz',str(exc))
+
+    def _delete_voice_profile(self):
+        profile_id=self._voice_profile_id(self.voice.currentData())
+        if not profile_id:return
+        try:profile=self.voice_profiles.get(profile_id)
+        except (OSError,ValueError,KeyError) as exc:
+            QMessageBox.warning(self,'Perfil de voz',str(exc));return
+        answer=QMessageBox.question(self,'Excluir perfil local',
+            f'Excluir o perfil “{profile["name"]}” e a cópia privada armazenada pelo BerofelStudio?\n\n'
+            'O arquivo original que você selecionou não será removido.',
+            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer!=QMessageBox.StandardButton.Yes:return
+        try:
+            self.voice_profiles.delete(profile_id)
+            self._append_voice_profile_items('__custom__')
+            self._update_custom()
+            self.status.setText(f'Perfil “{profile["name"]}” excluído. O original permaneceu intacto.')
+        except (OSError,ValueError,KeyError) as exc:
+            QMessageBox.warning(self,'Perfil de voz',str(exc))
 
     def _install_qwen(self):
         from berofel.services.qwen3_tts_local import is_ready
@@ -605,66 +785,79 @@ class NarrationPanel(QScrollArea):
             QMessageBox.StandardButton.No)
         if answer!=QMessageBox.StandardButton.Yes:return
         app_root=Path(__file__).resolve().parents[2]
-        installer=app_root/'INSTALAR_QWEN3_TTS_LOCAL.bat'
+        installer=app_root/'scripts'/'instalar_qwen3_tts_local.ps1'
         if not installer.is_file():
             QMessageBox.warning(self,'Qwen3 local',f'Instalador ausente: {installer}')
             return
         try:
+            log_root=Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'BFS'/'logs'
+            log_root.mkdir(parents=True,exist_ok=True)
+            self._qwen_install_log_path=log_root/'qwen3_install.log'
+            self._qwen_install_log_handle=self._qwen_install_log_path.open('w',encoding='utf-8',errors='replace')
+            env=os.environ.copy()
+            env['BFS_NO_PAUSE']='1'
             self._qwen_install_process=subprocess.Popen(
-                ['cmd.exe','/d','/c','call',str(installer)],cwd=str(app_root),
-                creationflags=getattr(subprocess,'CREATE_NEW_CONSOLE',0))
-            self.qwen_status.setText('Instalação iniciada em console separado. Quando terminar, feche e reabra o BerofelStudio.')
+                ['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',str(installer)],
+                cwd=str(app_root),env=env,
+                stdout=self._qwen_install_log_handle,stderr=subprocess.STDOUT,
+                creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            self.qwen_status.setText('Instalação do Qwen3 em segundo plano. Acompanhe o progresso aqui.')
             self.qwen_status.setVisible(True)
+            self._qwen_install_timer.start()
         except OSError as exc:
+            if self._qwen_install_log_handle:
+                self._qwen_install_log_handle.close();self._qwen_install_log_handle=None
             QMessageBox.warning(self,'Qwen3 local',f'Não foi possível iniciar o instalador: {exc}')
 
-    def _set_clone_status(self,text):
-        self.clone_status.setText(text)
-        self.clone_status.setVisible(self.voice.currentData()=='__custom__' and bool(text))
-
-    def _poll_clone_activation(self):
-        process=self._clone_activation_process
+    def _poll_qwen_install(self):
+        process=self._qwen_install_process
         if process is None:
-            self._clone_watch_timer.stop()
-            return
-        try:
-            return_code=process.poll()
-        except Exception as exc:
-            self._clone_watch_timer.stop()
-            self._clone_activation_process=None
-            self.activate_cloning.setEnabled(True)
-            self._set_clone_status(f'Não foi possível confirmar a ativação: {exc}')
-            return
-        if return_code is None:
-            return
-        self._clone_watch_timer.stop()
-        self._clone_activation_process=None
-        self.activate_cloning.setEnabled(True)
-        if return_code==0:
-            self._set_clone_status('Clonagem local ativada: o encoder aceitou uma amostra sintética. Selecione sua gravação autorizada; o perfil de voz será guardado no cache local para reutilização.')
-        else:
-            log_path=getattr(self,'_clone_activation_log',None)
+            self._qwen_install_timer.stop();return
+        code=process.poll()
+        if code is None:
             try:
-                diagnostic=log_path.read_text(encoding='utf-8',errors='replace').strip() if log_path else ''
-            except OSError:
-                diagnostic=''
-            if diagnostic:
-                diagnostic=diagnostic[-900:]
-                self._set_clone_status(f'Ativação não concluída; pesos existentes preservados.\n{diagnostic}')
-            else:
-                self._set_clone_status('Ativação não concluída. Confira o console do autorizador e o login/termos do Hugging Face; pesos existentes preservados.')
+                self._qwen_install_log_handle.flush()
+                lines=self._qwen_install_log_path.read_text(encoding='utf-8',errors='replace').splitlines()
+                detail=next((line.strip() for line in reversed(lines) if line.strip()),'Preparando ambiente local...')
+                self.qwen_status.setText(f'Instalação Qwen3 em segundo plano · {detail[-180:]}')
+            except OSError:pass
+            return
+        self._qwen_install_timer.stop()
+        if self._qwen_install_log_handle:
+            self._qwen_install_log_handle.close();self._qwen_install_log_handle=None
+        if code==0:
+            self.qwen_status.setText('Qwen3 local instalado. Feche e reabra o BerofelStudio para usar a clonagem.')
+        else:
+            self.qwen_status.setText(f'Instalação Qwen3 falhou (código {code}). Log: {self._qwen_install_log_path}')
 
     def set_text(self, text: str):
         self.text.setPlainText(text)
 
     def _generate(self, add_to_timeline: bool):
-        custom = self.voice.currentData() == '__custom__'
+        selected_voice=self.voice.currentData()
+        profile_id=self._voice_profile_id(selected_voice)
+        custom = selected_voice == '__custom__' or bool(profile_id)
         if custom and not self.authorized.isChecked():
             QMessageBox.warning(self, 'Autorização',
                                 'Para usar uma voz personalizada, confirme que possui autorização expressa.')
             return
-        voice = self.sample_path.text().strip() if custom else preset_voice(self.voice.currentData())
-        engine=self.clone_engine.currentData() if custom else 'pocket-tts'
+        if profile_id:
+            try:voice=self.voice_profiles.get(profile_id)['sample_path']
+            except (OSError,ValueError,KeyError) as exc:
+                QMessageBox.warning(self,'Perfil de voz',str(exc));return
+        else:
+            voice = self.sample_path.text().strip() if custom else ''
+        if not custom:
+            QMessageBox.warning(self,'Perfil de voz Qwen3',
+                'Qwen3-TTS Base precisa de uma gravação de referência. Selecione um perfil local ou importe uma amostra autorizada.')
+            return
+        if not voice or not Path(voice).is_file():
+            QMessageBox.warning(self,'Amostra de voz','Escolha uma gravação de referência válida antes de gerar.')
+            return
+        if not self.reference_text.text().strip():
+            QMessageBox.warning(self,'Transcrição da referência','Informe o texto falado na gravação para obter clonagem Qwen3 com referência textual.')
+            return
+        engine='qwen3-tts-local'
         req = NarrationRequest(text=self.text.toPlainText(), voice=voice,
                                language=self.language.currentData(),
                                consent=custom and self.authorized.isChecked(),
@@ -679,7 +872,7 @@ class NarrationPanel(QScrollArea):
         self.insert.setDisabled(busy)
         self.generate_file.setDisabled(busy)
         if busy:
-            self.status.setText('Gerando em processo separado. O modelo será descarregado ao terminar...')
+            self.status.setText('Qwen3-TTS em processo local isolado; o modelo é reutilizado durante esta sessão.')
 
     def set_result(self, path: str, duration: float, cache_hit: bool):
         self.last_audio = path
