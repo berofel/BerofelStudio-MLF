@@ -220,6 +220,34 @@ Resultados JSON locais foram gravados no diretório externo de benchmark; os
 WAVs temporários foram removidos. Nenhum modelo, perfil ou áudio de usuário foi
 alterado. São medições de latência, não avaliação de qualidade perceptiva.
 
+### Sweep adicional de threads acima de 8 (19/11/2026)
+
+O limite experimental do adaptador foi contornado apenas no processo de
+benchmark, sem alterar o código do editor. Mesmo backend Q4, texto médio novo
+(231 caracteres), perfil autorizado já condicionado, 6 frames/chunk, offline,
+duas repetições por valor e sem cache de áudio. A tabela usa mediana; cada WAV
+variou em duração por amostragem estocástica.
+
+| Threads | Primeiro chunk mediano | Geração mediana | RTF mediano | Pico CPU agregado observado | Pico RSS agregado |
+|---:|---:|---:|---:|---:|---:|
+| 6 | 6,951 s | 18,494 s | 1,099 | 39,2% | 1,936 GiB |
+| 8 | 7,280 s | 19,600 s | 1,126 | 56,8% | 1,936 GiB |
+| 10 | 7,735 s | 20,576 s | 1,104 | 64,1% | 1,936 GiB |
+| 12 | 7,551 s | 19,641 s | 1,096 | 76,8% | 1,936 GiB |
+| 16 | 8,823 s | 20,276 s | 1,171 | 100,3% | 1,936 GiB |
+
+12 threads ficou somente ~0,2% abaixo do RTF de 6 threads, sem redução
+confiável do tempo absoluto; seu primeiro chunk foi ~0,6 s mais lento. A
+medição curta equivalente também não apontou vantagem consistente de 10–12,
+e 16 threads saturou a CPU e foi mais lento. Mantive o limite do editor em 8
+e Turbo em 6 threads: subir a concorrência não oferece ganho prático comprovado
+neste Ryzen 7 5700G, e 6 threads preserva melhor a margem para a interface.
+Esse sweep é pequeno e não representa todo uso simultâneo do computador.
+
+O ensaio foi executado por uma cópia temporária do benchmark em diretório
+externo; o WAV temporário foi apagado após a validação de sinal. Não houve
+mudança no runtime, modelo, cache persistente ou configuração do editor.
+
 - `tests.test_qwen3_native_tts` e testes Turbo do painel: testes focados passaram; teste opcional real passou usando modelo/perfil local.
 - Validação real adicional pelo controle **Gerar** na interface, em sessão offline (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`), com perfil autorizado configurado: Turbo Q4 enviou 10 chunks/453.120 bytes e Equilibrado Q4 enviou 10 chunks/460.800 bytes ao callback de prévia. Em ambos, o WAV produzido não estava silencioso, o player reproduziu/pausou e buscou posição (volume silenciado no teste automatizado), o bloco foi inserido na timeline, WAV e MP4 foram exportados com áudio e o projeto foi salvo/reaberto. A checagem do fluxo confirma ainda que o embedding vocal preparado foi reutilizado. O tempo total do smoke test Qt foi 7,2 s (Turbo) e 7,4 s (Equilibrado), incluindo montagem/exportação; não é latência de síntese. Script reproduzível: `scripts/validar_fluxo_qwen3_editor.py --configured-fast-profile --native-engine qwen3-tts-native-q4` ou `qwen3-tts-native-q4-balanced` com `--confirm-own-or-authorized-voice`. A saída física foi silenciada; a escuta subjetiva A/B ainda precisa do usuário.
 - Repetição do fluxo de UI depois de tornar o tamanho do chunk configurável, mantendo o padrão 6: offline, Turbo enviou 12 chunks/552.960 bytes (8,3 s no smoke completo) e Equilibrado 10 chunks/430.080 bytes (7,0 s). Ambos voltaram a passar WAV, player/busca, timeline, exportações e reabertura do projeto.
