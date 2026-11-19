@@ -400,6 +400,10 @@ primeiro chunk e ~6,80 s totais para a frase curta. Assim, iniciar o novo
 servidor não melhora a primeira reprodução de uma sessão; o benefício possível
 é em solicitações seguintes e textos longos.
 
+O percentual de CPU não foi coletado com amostragem independente nesta rodada;
+não infiro utilização a partir do número de threads. Pico de RSS foi lido do
+processo servidor após as solicitações.
+
 Como proxy de inteligibilidade, Faster-Whisper Base/int8 local (beam 1) deu
 WER mediano j6/j8 de 0,00/0,069 nos textos médios e 0,00/0,00 nos longos,
 sem clipping detectado. O conjunto é pequeno e o ASR pode errar segmentação;
