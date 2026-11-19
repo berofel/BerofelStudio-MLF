@@ -1102,3 +1102,61 @@ etapas. Assim, além dos campos que cronometramos no cliente, não há telemetri
 interna adicional acessível neste build sem instrumentar/recompilar o runtime.
 A conclusão sobre limite de observabilidade foi verificada no executável local,
 não inferida apenas da documentação upstream.
+
+#### Perfil interno do CLI Pure C: Talker, Code Predictor e decoder (19/11/2026)
+
+O binário local imprime `Prefill`, `Talker step`, `Code Predictor`, `Speech decoder`,
+tempo de geração e TTFA no caminho CLI. Isso permite medir as etapas do mesmo
+runtime, embora não exponha cada camada do Talker/CP separadamente. Criei
+`scripts/benchmark_qwen3_purec_stages.py` para executar o CLI real com perfil
+x-vector local autorizado, seeds pareados por repetição, 6 threads, 3 repetições,
+textos curtos/médios, WAV validado e captura de log, RAM e CPU. O modelo é
+carregado em processo novo a cada amostra; o custo de carregar fica separado do
+tempo interno de geração. A rodada offline produziu 12 WAVs em
+`C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_PureCStages_20261119`.
+
+Medianas registradas pelo CLI (não somar os tempos do decoder como etapas
+seriais: ele sobrepõe a geração e só a drenagem final se soma à espera):
+
+| Modo solicitado | Texto | Carregamento | Prefill | Talker | Code Predictor | Decoder total (drenagem) | Geração / RTF | TTFA CLI | RAM pico |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `--quant-mixed-cpu` | Curto | 0,984 s | 0,377 s | 1,088 s | **2,673 s** | 2,525 s (0,228 s) | 4,4 s / **0,83** | 1,261 s | 3,429 GiB |
+| `--int8` | Curto | 0,859 s | 0,380 s | 0,889 s | **2,343 s** | 2,162 s (0,210 s) | 3,9 s / 0,90 | 1,310 s | 3,457 GiB |
+| `--quant-mixed-cpu` | Médio | 0,972 s | 0,500 s | 4,602 s | **9,032 s** | 8,942 s (0,163 s) | 14,4 s / **0,77** | 1,434 s | 3,456 GiB |
+| `--int8` | Médio | 0,855 s | 0,500 s | 4,716 s | **10,264 s** | 9,368 s (0,228 s) | 15,8 s / 0,83 | 1,450 s | 3,505 GiB |
+
+Neste perfil, Code Predictor é o maior dos dois estágios autoregressivos
+serializados: aproximadamente 66–73% da soma Talker + Code Predictor. O decoder
+leva tempo de parede parecido com o CP, mas executa em paralelo; o dreno final
+mediano ficou entre 0,16 e 0,23 s. O mixed teve RTF menor em curto e médio,
+embora `--int8` tenha geração bruta mediana mais rápida no curto porque o áudio
+resultante também foi menor. São apenas três saídas estocásticas por caso; as
+métricas não substituem audição humana.
+
+**Ressalva de precisão observada nos logs locais:** para `--quant-mixed-cpu`, o
+mesmo processo imprime `QWEN_CP_PREC=int4` e `Quantizing CP weights to Q4_0`,
+mas depois a seção `MODEL SOURCES` diz `CP linear: ... BF16 -> INT8 at load` e a
+linha de camadas também mostra `[INT8]`. O modo `--int8` registra INT8 de forma
+consistente. Portanto a tabela identifica o mixed como *flag solicitado* e não
+trata o formato final do CP como comprovado; o descompasso precisa ser explicado
+pelo runtime antes de afirmar sua precisão efetiva. O benchmark captura essas
+linhas por WAV em `precision_log_lines` no JSON, preservando evidência para uma
+investigação posterior. Nenhuma configuração foi alterada ou promovida com base
+em uma interpretação incerta do log.
+
+A primeira execução de prova direta (curta) reportou 1,143 s Talker, 2,744 s
+Code Predictor, 2,630 s decoder com 0,254 s de drain, 0,386 s prefill, RTF
+0,82, 0,925 s carregamento e TTFA de 1,278 s. Os resultados estão coerentes com
+a rodada de três repetições e confirmam que o caminho CLI dá visibilidade
+interna que o endpoint HTTP de streaming não oferece. O endpoint server continua
+sendo a medição de experiência do editor, com TTFA ~0,5 s nas medições anteriores.
+
+Reproduza com o Python local do editor:
+
+```powershell
+$env:HF_HUB_OFFLINE = '1'
+$env:TRANSFORMERS_OFFLINE = '1'
+& "$env:LOCALAPPDATA\BFS\venv\Scripts\python.exe" scripts/benchmark_qwen3_purec_stages.py `
+  --confirm-own-or-authorized-voice --threads 6 --lengths short medium --repeats 3 `
+  --modes mixed int8 --output-dir "$env:USERPROFILE\Desktop\PureC_Stage_Benchmark"
+```
