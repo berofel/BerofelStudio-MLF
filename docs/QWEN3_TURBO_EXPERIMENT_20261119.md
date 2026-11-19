@@ -187,6 +187,39 @@ Não foram obtidas métricas separadas de prefill/talker/code predictor para o r
 
 ## Testes / evidência da integração
 
+### Sweep de tamanho do chunk de prévia (19/11/2026)
+
+Foi comparado o tamanho do chunk PCM em 1, 2, 3, 4, 5 e 6 frames na rota
+persistente do serviço, com texto curto inédito em português, perfil autorizado
+já preparado, cache de frase isolado, modo offline e duas repetições por valor.
+Cada execução também testou Equilibrado; a tabela resume Turbo (6 threads).
+Os resultados são medianas de apenas duas amostras e a duração gerada variou
+entre amostras. O tempo até o primeiro chunk é desde a solicitação, incluindo
+carga do servidor quando ocorria.
+
+| Frames | Primeiro chunk mediano | Geração mediana | RTF mediano | RSS agregado máximo por rodada |
+|---:|---:|---:|---:|---:|
+| 1 | 3,108 s | 11,575 s | 2,082 | 1,911 GiB |
+| 2 | 3,144 s | 8,217 s | 1,500 | 1,916 GiB |
+| 3 | 3,256 s | 7,312 s | 1,297 | 1,922 GiB |
+| 4 | 3,554 s | 7,514 s | 1,204 | 1,923 GiB |
+| 5 | 3,453 s | 6,751 s | 1,155 | 1,928 GiB |
+| 6 | 3,484 s | 6,526 s | 1,110 | 1,932 GiB |
+
+Chunks de 1 frame anteciparam o primeiro PCM em somente ~0,38 s em relação a
+6 frames, mas levaram ~77% mais tempo para concluir a geração. O tamanho 5
+ficou próximo em latência inicial e cerca de 3,4% mais lento em RTF que 6; com
+duas amostras não há evidência de vantagem consistente. Mantive 6 frames como
+padrão, priorizando a conclusão rápida sem uma perda mensurável de responsividade
+inicial. O primeiro chunk ainda leva aproximadamente 3,1–3,5 s no perfil Turbo
+nesta medição; o stream não torna o modelo instantâneo.
+
+Script reproduzível: `scripts/benchmark_qwen3_native_lengths.py
+--confirm-own-or-authorized-voice --repeats 2 --lengths curta --chunk-frames N`.
+Resultados JSON locais foram gravados no diretório externo de benchmark; os
+WAVs temporários foram removidos. Nenhum modelo, perfil ou áudio de usuário foi
+alterado. São medições de latência, não avaliação de qualidade perceptiva.
+
 - `tests.test_qwen3_native_tts` e testes Turbo do painel: testes focados passaram; teste opcional real passou usando modelo/perfil local.
 - Validação real adicional pelo controle **Gerar** na interface, em sessão offline (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`), com perfil autorizado configurado: Turbo Q4 enviou 10 chunks/453.120 bytes e Equilibrado Q4 enviou 10 chunks/460.800 bytes ao callback de prévia. Em ambos, o WAV produzido não estava silencioso, o player reproduziu/pausou e buscou posição (volume silenciado no teste automatizado), o bloco foi inserido na timeline, WAV e MP4 foram exportados com áudio e o projeto foi salvo/reaberto. A checagem do fluxo confirma ainda que o embedding vocal preparado foi reutilizado. O tempo total do smoke test Qt foi 7,2 s (Turbo) e 7,4 s (Equilibrado), incluindo montagem/exportação; não é latência de síntese. Script reproduzível: `scripts/validar_fluxo_qwen3_editor.py --configured-fast-profile --native-engine qwen3-tts-native-q4` ou `qwen3-tts-native-q4-balanced` com `--confirm-own-or-authorized-voice`. A saída física foi silenciada; a escuta subjetiva A/B ainda precisa do usuário.
 - Repetição do fluxo de UI depois de tornar o tamanho do chunk configurável, mantendo o padrão 6: offline, Turbo enviou 12 chunks/552.960 bytes (8,3 s no smoke completo) e Equilibrado 10 chunks/430.080 bytes (7,0 s). Ambos voltaram a passar WAV, player/busca, timeline, exportações e reabertura do projeto.
