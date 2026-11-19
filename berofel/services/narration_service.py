@@ -67,6 +67,11 @@ def generate_narration(request: NarrationRequest, progress: Callable | None = No
         return generate_native_clone(request,progress=progress,runner=runner,
                                      control=control,stage=stage,
                                      audio_chunk=audio_chunk)
+    if request.engine == 'qwen3-tts-purec-mixed':
+        from .qwen3_purec_tts import generate_purec_clone
+        return generate_purec_clone(request,progress=progress,runner=runner,
+                                    control=control,stage=stage,
+                                    audio_chunk=audio_chunk)
     if request.engine != 'qwen3-tts-local':
         raise ValueError('O BerofelStudio usa exclusivamente Qwen3-TTS Base para narração.')
     validate_request(request.text,request.voice,request.language,request.consent)

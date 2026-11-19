@@ -413,16 +413,67 @@ em BF16; o ganho de velocidade não provocou piora mensurável nesse indicador,
 mas a duração gerada mudou entre precisões. WAVs comparáveis e manifestos com
 as transcrições ficam fora do Git na pasta de benchmark para escuta local.
 
-O servidor experimental não está integrado ao Berofel Studio. `ldd` confirmou
-dependências redistribuíveis fora do Windows padrão: `msys-2.0.dll`, GCC runtime,
-OpenBLAS, OpenMP e WinPthreads. Antes de adicionar essa rota ao seletor Turbo,
-faltam empacotamento e validação dos avisos/licenças dessas bibliotecas, teste
-de reprodução auditiva pelo usuário e execução dos fluxos de narração dentro da
-GUI (perfil, timeline, DSP e WAV/MP4). Por isso o backend Q4 integrado continua
-sendo a única rota Turbo no editor e não houve alteração de motor, modelo,
-perfil, configurações ou distribuição. A amostra Pure C não deve ser descrita
-como validada no editor.
+#### Integração experimental no Berofel Studio
 
-O Pure C declara MIT; OpenBLAS usa BSD-3-Clause ([documentação oficial](https://www.openmathlib.org/OpenBLAS/docs/)); o pacote `msys2-runtime` declara GPL-3.0-or-later ([manifesto upstream](https://github.com/msys2/MSYS2-packages/blob/master/msys2-runtime/PKGBUILD)); e as bibliotecas GCC só recebem a exceção de runtime onde o arquivo aplicável traz o aviso correspondente ([GCC Runtime Library Exception](https://www.gnu.org/licenses/gcc-exception-3.1.html)). Isso torna indispensável auditar os avisos e obrigações de cada DLL exata antes de distribuir o build; o executável experimental e suas DLLs não foram copiados para a aplicação.
+O Pure C foi conectado ao serviço canônico de narração por meio do backend
+opt-in `qwen3-tts-purec-mixed`; o modelo Original permanece padrão e o Q4
+existente continua selecionável como fallback. O seletor só oferece Pure C se
+encontrar o executável e os pesos Base locais. O perfil de voz é um x-vector
+privado em cache, preparado uma vez e reutilizado; a síntese usa o servidor
+HTTP local em processo oculto, e envia PCM incremental ao player Qt. Como o
+servidor upstream carrega um único x-vector na inicialização, trocar de perfil
+reinicia o servidor/modelo; fechar o editor encerra o worker. Alterar o texto
+não refaz a preparação do perfil. O modo Pure C não exige transcrição de
+referência porque usa somente o x-vector; a rota Original continua aceitando a
+transcrição de referência.
+
+O adaptador está em `berofel/services/qwen3_purec_tts.py`, roteado por
+`narration_service.py`, exposto condicionalmente em `narration_panel.py` e
+integrado ao fluxo da janela, streaming, inserção na timeline e encerramento do
+worker. Não foi adicionado pacote Python. A build experimental local e suas
+DLLs foram instaladas em `%LOCALAPPDATA%\BFS\qwen3_tts\purec\bin`; o modelo
+existente em `%LOCALAPPDATA%\BFS\qwen3_tts\model` é reutilizado sem cópia ou
+alteração. O PATH global não foi editado. Avisos de licença estão na pasta
+`%LOCALAPPDATA%\BFS\qwen3_tts\purec\licenses`.
+
+Validação real pela janela Qt em modo offscreen, usando perfil autorizado,
+interface de narração, execução em worker, inserção do WAV na timeline e
+exportação: um caso gerou clipe de 6,24 s; exportou WAV de 6,24 s e MP4 de
+6,24 s, ambos com áudio, e o MP4 também com vídeo. Uma rodada de integração
+anterior mediu, para voz temporária diferente e 8 threads, perfil 1,85 s,
+carga do modelo 2,13 s, geração 3,39 s para 4,56 s de voz e primeiro PCM em
+0,477 s após a requisição. O teste usa execução silenciosa de áudio do host; a
+rota de streaming foi exercitada, mas a qualidade ainda requer escuta humana.
+
+O runtime MSYS2/OpenBLAS instalado é apenas local para este experimento e não
+foi copiado para o repositório. `ldd` confirmou dependências fora do Windows
+padrão: `msys-2.0.dll`, GCC runtime, OpenBLAS, OpenMP e WinPthreads. Apesar dos
+avisos copiados, ainda não existe instalador público que valide e empacote os
+componentes/termos aplicáveis; não distribua esse runtime com releases antes de
+completar essa revisão. A versão testada do editor detecta automaticamente o
+backend no próximo início. A instância antiga já aberta continua carregando a
+versão anterior até ser fechada e reiniciada.
+
+#### Vinculação do servidor local
+
+Na inspeção final do servidor, foi identificado que o padrão upstream vinculava
+o listener HTTP a `INADDR_ANY`, o que poderia expor a API de clonagem/síntese à
+rede local. A cópia experimental do fonte foi corrigida para vincular somente
+`127.0.0.1`; o executável local foi recompilado e substituído. O SHA-256 da
+build no diretório de benchmark e do executável instalado em
+`%LOCALAPPDATA%\BFS\qwen3_tts\purec\bin\qwen_tts.exe` confere:
+`3A5F89D923BFDBEA29327BD4111ECD651AFA3EF448B2643B6EA8AD63DD907D13`.
+O listener foi iniciado em porta de teste e `Get-NetTCPConnection` confirmou
+`127.0.0.1:<porta>`, sem bind wildcard. O patch de fonte está em
+`patches/qwen3_purec_loopback.patch` para reproduzir a alteração sobre o commit
+upstream registrado acima. O binário local é experimental e não distribuído.
+
+Depois da substituição, o teste Qt real foi repetido com os caminhos padrão do
+editor e modo offline: narração gerada de 7,04 s, WAV e MP4 com 7,04 s, áudio
+presente em ambos e vídeo presente no MP4. O teste não realizou avaliação
+auditiva. A checagem automatizada completa e a revisão de licença do runtime
+redistribuível ainda são necessárias antes de qualquer release.
+
+O Pure C declara MIT; OpenBLAS usa BSD-3-Clause ([documentação oficial](https://www.openmathlib.org/OpenBLAS/docs/)); o pacote `msys2-runtime` declara GPL-3.0-or-later ([manifesto upstream](https://github.com/msys2/MSYS2-packages/blob/master/msys2-runtime/PKGBUILD)); e as bibliotecas GCC só recebem a exceção de runtime onde o arquivo aplicável traz o aviso correspondente ([GCC Runtime Library Exception](https://www.gnu.org/licenses/gcc-exception-3.1.html)). O executável e DLLs foram copiados para o diretório local de runtime do usuário apenas para validação. A distribuição pública continua bloqueada até auditar avisos e obrigações de cada DLL exata.
 
 Para rollback de código: `git switch feat/qwen3-base-optimized` ou checkout de `backup/qwen3-0.6b-stable`. Para rollback integral, restaure a pasta externa; o bundle Git sozinho não contém dados de voz/modelos. O backend original não foi alterado nem removido.

@@ -1375,10 +1375,12 @@ class MainWindow(QMainWindow):
         position=self.timeline.view.cursor_time
         self._ai_busy=True
         self.narration_panel.busy(True)
-        streaming=request.engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced')
+        streaming=request.engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced',
+                                    'qwen3-tts-purec-mixed')
         if streaming:self.narration_stream.begin()
         engine_label=({'qwen3-tts-native-q4':'Qwen Turbo Q4 · 6 threads experimental',
-                       'qwen3-tts-native-q4-balanced':'Qwen Equilibrado Q4 · 8 threads experimental'}
+                       'qwen3-tts-native-q4-balanced':'Qwen Equilibrado Q4 · 8 threads experimental',
+                       'qwen3-tts-purec-mixed':'Qwen Turbo Pure C mixed · 6 threads experimental'}
                       .get(request.engine,'Qwen3-TTS Base local'))
         self.statusBar().showMessage(f'Batata Quente: {engine_label} gerando em processo isolado...')
         def ready(result):
@@ -1422,6 +1424,25 @@ class MainWindow(QMainWindow):
         if self._ai_busy or self.active_task is not None:
             self.narration_panel.status.setText(
                 'Perfil salvo. A preparação será feita na próxima narração, pois a fila de IA está ocupada.')
+            return
+        if self.narration_panel.clone_engine.currentData()=='qwen3-tts-purec-mixed':
+            from berofel.services.qwen3_purec_tts import is_ready,prepare_voice_profile
+            if not is_ready():
+                self.narration_panel.status.setText(
+                    'Perfil salvo. Configure o executável Pure C, runtime MSYS2/OpenBLAS e Qwen3 Base local para preparar esse modo.')
+                return
+            self._ai_busy=True
+            self.narration_panel.busy(True)
+            def purec_ready(result):
+                cached='já estava preparado' if result.get('cache_hit') else 'preparado e armazenado localmente'
+                self.narration_panel.status.setText(
+                    f'Perfil Pure C {cached}. A voz será reutilizada enquanto o modelo estiver ativo.')
+            task=self._task(prepare_voice_profile,purec_ready,reference,reference_text,True,
+                            label='Preparar perfil Pure C'+(f' · {name}' if name else ''))
+            if task is None:
+                self._ai_busy=False;self.narration_panel.busy(False);return
+            task.signals.finished.connect(
+                lambda:(setattr(self,'_ai_busy',False),self.narration_panel.busy(False)))
             return
         from berofel.services.qwen3_tts_local import is_ready,prepare_local_voice_prompt
         if not is_ready():
@@ -3953,6 +3974,15 @@ class MainWindow(QMainWindow):
             stop_local_worker()
         except Exception:
             pass
+        for module_name, stop_name in (
+            ('berofel.services.qwen3_native_tts','stop_native_worker'),
+            ('berofel.services.qwen3_purec_tts','stop_purec_worker'),
+        ):
+            try:
+                module=__import__(module_name,fromlist=[stop_name])
+                getattr(module,stop_name)()
+            except Exception:
+                pass
         self.stop_playback(wait_for_cleanup=True)
         self.timeline.view.visual_cache.close()
         for p in self._preview_files:

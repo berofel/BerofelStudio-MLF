@@ -118,6 +118,13 @@ class NarrationPanel(QScrollArea):
                 self.clone_engine.addItem('Equilibrado · Q4 · 8 threads', 'qwen3-tts-native-q4-balanced')
         except (OSError,ValueError,ImportError):
             pass
+        try:
+            from berofel.services.qwen3_purec_tts import is_ready as purec_qwen_ready
+            if purec_qwen_ready():
+                self.clone_engine.addItem('Turbo · Pure C mixed · 6 threads (experimental)',
+                                           'qwen3-tts-purec-mixed')
+        except (OSError,ValueError,ImportError):
+            pass
         self.clone_engine.setVisible(False)
         self.clone_engine.currentIndexChanged.connect(self._update_custom)
         layout.addWidget(self.clone_engine)
@@ -693,7 +700,7 @@ class NarrationPanel(QScrollArea):
         self.delete_voice_profile.setVisible(bool(profile_id))
         engine=self.clone_engine.currentData()
         qwen = custom and engine in ('qwen3-tts-local','qwen3-tts-native-q4',
-                                     'qwen3-tts-native-q4-balanced')
+                                     'qwen3-tts-native-q4-balanced','qwen3-tts-purec-mixed')
         self.activate_cloning.hide()
         self.clone_engine.setVisible(custom and self.clone_engine.count()>1)
         self.reference_text.setVisible(qwen)
@@ -701,7 +708,9 @@ class NarrationPanel(QScrollArea):
         self.qwen_status.setVisible(qwen and bool(self.qwen_status.text()))
         self.quantize.hide()  # INT8/INT4 have not passed cloning and quality validation.
         if custom:
-            if engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced') and qwen:
+            if engine=='qwen3-tts-purec-mixed' and qwen:
+                self.license_note.setText('Turbo Pure C experimental: Qwen3 Base local com Talker INT8 e Code Predictor INT4. O perfil vocal é preparado em cache e o servidor é mantido ativo para a voz selecionada. Trocar de perfil recarrega o modelo. Usa runtime MSYS2/OpenBLAS configurado localmente; compare a amostra antes de escolher.')
+            elif engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced') and qwen:
                 profile_name='Turbo · Q4 · 6 threads' if engine=='qwen3-tts-native-q4' else 'Equilibrado · Q4 · 8 threads'
                 self.license_note.setText(f'{profile_name} experimental: usa o modelo Qwen3-TTS Base 0.6B nativo e o x-vector preparado. Prioriza velocidade; a clonagem detalhada continua disponível em Original. A naturalidade varia entre gerações; compare as amostras antes de escolher. Use apenas voz autorizada.')
             elif qwen:
@@ -799,7 +808,7 @@ class NarrationPanel(QScrollArea):
         if not ok:return
         try:
             reference_text=self.reference_text.text().strip()
-            if not reference_text:
+            if not reference_text and self.clone_engine.currentData()!='qwen3-tts-purec-mixed':
                 QMessageBox.warning(self,'Perfil de voz','Informe a transcrição exata da gravação para ativar a clonagem Qwen3 com referência textual.')
                 return
             profile=self.voice_profiles.create(name,source,self.language.currentData() or 'portuguese',
@@ -958,7 +967,8 @@ class NarrationPanel(QScrollArea):
     def set_result(self, path: str, duration: float, cache_hit: bool, engine: str=''):
         self.last_audio = path
         mode={'qwen3-tts-local':'Original','qwen3-tts-native-q4':'Turbo · Q4 · 6 threads',
-              'qwen3-tts-native-q4-balanced':'Equilibrado · Q4 · 8 threads'}.get(engine,engine or 'Qwen3-TTS')
+              'qwen3-tts-native-q4-balanced':'Equilibrado · Q4 · 8 threads',
+              'qwen3-tts-purec-mixed':'Turbo · Pure C mixed · 6 threads (experimental)'}.get(engine,engine or 'Qwen3-TTS')
         if not self.audio_history or Path(self.audio_history[-1][0])!=Path(path):
             self.audio_history.append((path,mode))
             self.audio_history=self.audio_history[-8:]
