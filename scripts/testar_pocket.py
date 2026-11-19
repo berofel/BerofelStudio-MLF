@@ -53,7 +53,8 @@ def main():
                     consent=False
                 request=NarrationRequest(text='Olá! Este é um teste do BerofelStudio.',
                     voice=voice,language='portuguese',consent=consent,
-                    project_path=str(root/'Projeto_teste.bfs'),title='Teste Pocket TTS')
+                    project_path=str(root/'Projeto_teste.bfs'),title='Teste Pocket TTS',
+                    engine='pocket-tts')
                 first=generate_narration(request)
                 second=generate_narration(request)
                 for result in (first,second):
