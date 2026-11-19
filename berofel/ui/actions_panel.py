@@ -236,7 +236,7 @@ class ActionsPanel(QScrollArea):
         labels={'silence':'Silêncio · Silero','transcribe':'Transcrever · Whisper',
                 'fillers':'Vícios · Qwen','context':'Contexto · Qwen',
                 'subtitles':'Legendas automáticas','srt':'Exportar SRT',
-                'narration':'Narração · Pocket TTS'}
+                'narration':'Narração · Qwen3-TTS Base'}
         for key,check in self.action_checks.items():
             check.setText(labels[key] if compact else self._action_labels[key])
         self.batch_button.setText('▶ APLICAR EDIÇÃO' if compact
@@ -265,7 +265,7 @@ class ActionsPanel(QScrollArea):
             return
         labels={'silence':'Silero','whisper':'Whisper',
                 'whisper_qwen':'Whisper + Qwen','qwen':'Qwen','subtitles':'Legendas',
-                'srt':'SRT','narration':'Pocket TTS'}
+                'srt':'SRT','narration':'Qwen3-TTS Base'}
         self.plan_label.setText('Fila automática: ' + ' → '.join(labels[name] for name in plan.phases) +
             ('\nSilero reduz o áudio analisado pelo Whisper, mas os cortes aguardam sua aprovação.'
              if plan.use_vad_for_asr else ''))

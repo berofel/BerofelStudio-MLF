@@ -1,3 +1,12 @@
+## Atualização do fluxo de voz — diretriz Qwen Base único
+
+- Rota canônica de narração migrada para `services/narration_service.py`; qualquer backend legado diferente do Qwen3-TTS Base é rejeitado. Pocket TTS deixa de ter worker, dependências e atalhos de instalação na árvore executável. Modelos, perfis, projetos e áudios já presentes no PC não foram removidos.
+- O painel separa o uso rápido de perfis preparados da clonagem detalhada, valida localmente duração, nível, clipping e silêncio da referência e mantém a exigência de transcrição/autorização. A gravação original é somente lida; o perfil recebe uma cópia privada.
+- A voz usa `create_voice_clone_prompt` e `generate_voice_clone`; o cache NPZ versionado, sem pickle, é reutilizável entre inicializações e invalidado pelo fingerprint da amostra, texto e modelo. Worker CPU persiste aquecido durante a sessão.
+- A configuração padrão é 4 threads CPU + 1 thread inter-op, baseada na medição anterior do Ryzen 7 5700G (uma execução: 62,53 s/RTF 6,06 com 4 threads contra 66,78 s/RTF 6,47 com 8). INT8/INT4, backend nativo e streaming incremental seguem desativados por falta de validação compatível com clonagem e qualidade.
+- Adicionada verificação técnica de referência e cobertura de cache persistente/seleção única do modelo nos testes.
+- Histórico de performance continua em `docs/BENCHMARK_QWEN3_TTS_20261118.md`; validação completa no Qt deve ser repetida após esta mudança antes de considerar a atualização pronta.
+
 ## 0.10.0-alpha.1 — restauração do Qwen3-TTS (18/11/2026)
 
 - Diretriz de motor único: somente Qwen3-TTS Base 0.6B no fluxo padrão. Worker persistente carrega uma vez por sessão e reutiliza prompt de clonagem versionado. Benchmark Ryzen 7 5700G/16 GB: RTF 6,47 (curto) e 5,76 (longo), pico RSS 6,41 GiB; não é tempo real. INT8/INT4, streaming e backend nativo permanecem não qualificados. Ver `docs/BENCHMARK_QWEN3_TTS_20261118.md`.

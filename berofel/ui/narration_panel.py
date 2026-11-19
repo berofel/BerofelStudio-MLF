@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QTextEdit,
 from .wheel_controls import (WheelGuardComboBox as QComboBox,
     WheelGuardDoubleSpinBox as QDoubleSpinBox, WheelGuardSlider as QSlider)
 
-from berofel.services.pocket_tts_service import LANGUAGES, NarrationRequest
+from berofel.services.narration_service import LANGUAGES, NarrationRequest
 from berofel.services.voice_dsp import VOICE_EQ_PRESETS, clip_voice_eq
 from berofel.services.voice_presets import VoicePresetManager
 from berofel.services.voice_profiles import VoiceProfileManager
@@ -64,6 +64,10 @@ class NarrationPanel(QScrollArea):
             self.language.addItem(name, code)
         layout.addWidget(self.language)
 
+        fast_title=QLabel('NARRAÇÃO RÁPIDA · PERFIS PREPARADOS')
+        fast_title.setStyleSheet('color:#9cc7ff;font-weight:800;font-size:12px;')
+        layout.addWidget(fast_title)
+        layout.addWidget(QLabel('Selecione um perfil salvo para reutilizar a referência e o condicionamento vocal.'))
         layout.addWidget(QLabel('Perfil de voz Qwen3 (clonagem local autorizada)'))
         self.voice = QComboBox()
         self.voice_profiles=VoiceProfileManager()
@@ -82,6 +86,12 @@ class NarrationPanel(QScrollArea):
         choose.clicked.connect(self._choose_sample)
         layout.addWidget(choose)
         self.choose_sample = choose
+        self.validate_sample=QPushButton('✓ Verificar qualidade da gravação')
+        self.validate_sample.clicked.connect(self._validate_voice_sample)
+        layout.addWidget(self.validate_sample)
+        self.clone_detail_title=QLabel('CLONAGEM DETALHADA · NOVA REFERÊNCIA')
+        self.clone_detail_title.setStyleSheet('color:#ffb45f;font-weight:800;font-size:12px;')
+        layout.addWidget(self.clone_detail_title)
         profile_actions=QHBoxLayout()
         self.save_voice_profile=QPushButton('Salvar perfil')
         self.rename_voice_profile=QPushButton('Renomear perfil')
@@ -95,8 +105,7 @@ class NarrationPanel(QScrollArea):
         self._voice_profile_action_rows=[profile_actions]
         self.authorized = QCheckBox('Confirmo autorização expressa para clonar esta voz.')
         layout.addWidget(self.authorized)
-        # Pocket TTS is no longer an active narration engine. Keep the request
-        # field for project/API compatibility, but expose Qwen Base only.
+        # Compatibility field: only Qwen3-TTS Base can be selected or run.
         self.activate_cloning = QPushButton('')
         self.activate_cloning.hide()
         self.clone_engine = QComboBox()
@@ -105,7 +114,7 @@ class NarrationPanel(QScrollArea):
         self.clone_engine.currentIndexChanged.connect(self._update_custom)
         layout.addWidget(self.clone_engine)
         self.reference_text = QLineEdit()
-        self.reference_text.setPlaceholderText('Texto falado na amostra (melhora a clonagem Qwen)')
+        self.reference_text.setPlaceholderText('Transcrição exata do que é falado na gravação (recomendado)')
         layout.addWidget(self.reference_text)
         self.install_qwen = QPushButton('⬇ Preparar Qwen3 local (download explícito)')
         self.install_qwen.clicked.connect(self._install_qwen)
@@ -279,13 +288,14 @@ class NarrationPanel(QScrollArea):
         layout.addWidget(self.listen)
         self._responsive_buttons.extend([
             (choose,'📁 Escolher amostra de voz','📁 Amostra'),
+            (self.validate_sample,'✓ Verificar qualidade da gravação','✓ Validar voz'),
             (self.activate_cloning,'🔐 Preparar clonagem local…','🔐 Clonagem local'),
             (self.install_qwen,'⬇ Preparar Qwen3 local','⬇ Preparar Qwen3'),
             (self.insert,'▶ Gerar e adicionar na timeline','▶ Gerar na timeline'),
             (self.generate_file,'♬ Gerar somente o WAV','♬ Gerar WAV'),
             (self.listen,'♫ Ouvir a última narração','♫ Ouvir narração'),
         ])
-        self.status = QLabel('O modelo é carregado apenas durante a geração (Batata Quente).')
+        self.status = QLabel('O Qwen3 Base é carregado uma vez e mantido aquecido durante a sessão do editor.')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         if self._voice_profile_error:
@@ -648,12 +658,14 @@ class NarrationPanel(QScrollArea):
                 language_index=self.language.findData(profile.get('language','portuguese'))
                 if language_index>=0:self.language.setCurrentIndex(language_index)
                 if Path(profile['sample_path']).suffix.lower()=='.safetensors':
-                    self._voice_profile_error='Este perfil antigo do Pocket TTS não contém uma gravação de referência compatível com Qwen3. Importe um WAV, MP3, FLAC, OGG ou M4A.'
+                    self._voice_profile_error='Este perfil legado não contém a gravação de referência. Importe o áudio original para preparar um perfil Qwen3 Base.'
             except (OSError,ValueError,KeyError) as exc:
                 self.sample_path.clear()
                 self._voice_profile_error=str(exc)
         self.sample_path.setVisible(custom)
         self.choose_sample.setVisible(selected=='__custom__')
+        self.validate_sample.setVisible(custom)
+        self.clone_detail_title.setVisible(selected=='__custom__')
         self.authorized.setVisible(custom)
         self.save_voice_profile.setVisible(selected=='__custom__')
         self.rename_voice_profile.setVisible(bool(profile_id))
@@ -664,7 +676,7 @@ class NarrationPanel(QScrollArea):
         self.reference_text.setVisible(qwen)
         self.install_qwen.setVisible(qwen)
         self.qwen_status.setVisible(qwen and bool(self.qwen_status.text()))
-        self.quantize.setVisible(not qwen)
+        self.quantize.hide()  # INT8/INT4 have not passed cloning and quality validation.
         if custom:
             if qwen:
                 self.license_note.setText('Qwen3-TTS Base 0.6B: pesos públicos Apache-2.0; preparação baixa o modelo (~2,5 GB) e cria ambiente isolado. Depois, referência e síntese rodam localmente, sem enviar sua gravação. Forneça o texto exato da amostra para melhor resultado; sem ele, o modo só pelo vetor de voz pode reduzir a qualidade. Use somente voz autorizada.')
@@ -682,6 +694,29 @@ class NarrationPanel(QScrollArea):
                 index=self.voice.findData('__custom__')
                 if index>=0:self.voice.setCurrentIndex(index)
             self.sample_path.setText(path)
+
+    def _validate_voice_sample(self):
+        source=self.sample_path.text().strip()
+        if not source:
+            QMessageBox.information(self,'Verificar gravação','Escolha primeiro uma gravação de referência.')
+            return
+        try:
+            from berofel.services.audio_reference import inspect_voice_reference
+            report=inspect_voice_reference(source)
+        except Exception as exc:
+            QMessageBox.warning(self,'Gravação de referência',str(exc))
+            return
+        lines=[f'Duração analisada: {report["duration"]:.2f} s',
+               f'Taxa: {report["sample_rate"]} Hz mono',
+               f'Nível RMS: {report["rms_dbfs"]:.1f} dBFS',
+               f'Pico: {report["peak_dbfs"]:.1f} dBFS',
+               f'Trecho quase silencioso: {report["silence_fraction"]:.0%}',
+               f'Amostras saturadas: {report["clipped_fraction"]:.2%}']
+        if report['warnings']:
+            lines.extend(['','Recomendações:',*('• '+item for item in report['warnings'])])
+        else:
+            lines.extend(['','Amostra tecnicamente adequada para preparar o perfil.'])
+        QMessageBox.information(self,'Verificação local da gravação','\n'.join(lines))
 
     @staticmethod
     def _voice_profile_id(value):

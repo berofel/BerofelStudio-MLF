@@ -1,5 +1,7 @@
 # Clonagem de voz local no BerofelStudio
 
+> **Documento histórico, supersedido pela diretriz Qwen3-TTS Base único.** Pocket TTS não é mais instalado ou executado pelo editor. Modelos, caches, projetos e áudios que já estavam no computador foram preservados.
+
 ## Estado confirmado em 18/11/2026
 
 O ambiente `C:\Users\Berofel\AppData\Local\BFS\venv` tem `pocket-tts 4.0.1` e `torch 2.15.0`. A voz de catálogo carrega em CPU. Neste computador, o modelo reportou `has_voice_cloning=False`; o comando `hf auth whoami` retornou “Not logged in” e o acesso ao checkpoint português foi bloqueado com `WinError 10013`. Portanto, a clonagem pessoal ainda não está habilitada nem validada aqui. O botão/fluxo de ativação não pode substituir esse requisito de acesso.

@@ -147,7 +147,7 @@ try {
     Step '6/8 - Autoteste do motor FFmpeg (dois videos + audio)'
     Run-Python @((Join-Path $root 'scripts\diagnostico_motor.py'))
 
-    Step '7/8 - Qwen3-TTS Base (opcional, ambiente isolado)'
+    Step '7/8 - Qwen3-TTS Base 0.6B (motor único de voz, ambiente isolado)'
     $installQwen3 = Read-Host 'Preparar Qwen3-TTS Base local agora? Sao baixados aprox. 2,5 GB [s/N]'
     if ($installQwen3 -match '^(s|sim|y|yes)$') {
         $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -166,7 +166,7 @@ try {
         throw 'Instalacao terminou, mas nao foi possivel ler a versao do codigo local.'
     }
     Write-Host "`n[OK] Instalacao do BerofelStudio $($appVersion.Trim()) concluida." -ForegroundColor Green
-    Write-Host 'Motor de narração: Qwen3-TTS Base; Pocket TTS não é mais instalado nem selecionado.'
+    Write-Host 'Motor único de narração e clonagem: Qwen3-TTS Base 0.6B.'
     Write-Host 'Whisper/Silero: INSTALAR_TODAS_AS_IAS.bat.'
     Write-Host "Abra: $root\ABRIR_BEROFELSTUDIO.bat" -ForegroundColor Green
     Write-Host "Log de instalacao: $logFile"

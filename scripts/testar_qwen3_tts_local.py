@@ -70,7 +70,7 @@ def main(argv=None) -> int:
 
     os.environ.update({'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1',
                        'HF_HUB_DISABLE_TELEMETRY':'1'})
-    from berofel.services.pocket_tts_service import NarrationRequest
+    from berofel.services.narration_service import NarrationRequest
     from berofel.services.qwen3_tts_local import generate_local_clone
     reference_text=args.reference_text.strip()
     if args.saved_reference:

@@ -29,7 +29,7 @@ sys.path.insert(0,str(ROOT))
 from berofel.core.project import Clip, Project
 from berofel.services.export_multitrack import export_audio_wav, export_project
 from berofel.services.ffmpeg import ffmpeg_path, media_info
-from berofel.services.pocket_tts_service import NarrationRequest
+from berofel.services.narration_service import NarrationRequest
 from berofel.ui.window import MainWindow
 
 
@@ -38,14 +38,16 @@ def main() -> int:
                        'Berofel','BerofelStudio')
     sample=Path(str(settings.value('narration/sample_path','') or '')).expanduser()
     reference_text=str(settings.value('narration/reference_text','') or '').strip()
-    prior_preferences={key:settings.value(key) for key in settings.allKeys()
-                       if key.startswith('narration/')}
     if not sample.is_file() or not reference_text:
         raise RuntimeError('Configure uma referência autorizada e sua transcrição exata no painel Narração.')
 
     app=QApplication.instance() or QApplication([])
     with tempfile.TemporaryDirectory(prefix='bfs_qwen_editor_flow_') as folder:
         root=Path(folder)
+        # Keep test UI preferences isolated from the user's normal profile.
+        settings_dir=root/'settings';settings_dir.mkdir()
+        QSettings.setPath(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
+                          str(settings_dir))
         os.environ['BEROFEL_AI_CACHE']=str(root/'app_cache'/'ai')
         project=Project(width=320,height=180,fps=12)
         project_file=root/'qwen_flow.bfs';project.path=str(project_file)
@@ -128,10 +130,6 @@ def main() -> int:
         panel._player.stop();panel._player.setSource(QUrl())
         app.processEvents();time.sleep(.2);app.processEvents()
         window.close();app.processEvents()
-        for key in settings.allKeys():
-            if key.startswith('narration/'):settings.remove(key)
-        for key,value in prior_preferences.items():settings.setValue(key,value)
-        settings.sync()
     return 0
 
 

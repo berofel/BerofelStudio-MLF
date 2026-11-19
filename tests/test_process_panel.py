@@ -82,13 +82,12 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(body,message)
         self.assertEqual(help_text,'')
 
-    def test_voice_clone_gate_gets_actionable_instructions(self):
+    def test_missing_qwen_tts_model_gets_install_instructions(self):
         title,body,help_text=explain_processing_error(
-            'Pocket TTS: clonagem de áudio está desativada; pesos somente de catálogo')
-        self.assertEqual(title,'Clonagem de voz ainda não ativada')
-        self.assertIn('Sua amostra não foi processada',body)
-        self.assertIn('huggingface.co/kyutai/pocket-tts',help_text)
-        self.assertIn('AUTORIZAR_POCKET_TTS.bat',help_text)
+            'O modelo Qwen3-TTS Base não está instalado.')
+        self.assertIn('Qwen3-TTS Base',title)
+        self.assertIn('não está pronto',body)
+        self.assertIn('Preparar Qwen3 local',help_text)
 
     def test_qwen_timeout_gets_retry_and_cache_guidance(self):
         title,body,help_text=explain_processing_error(

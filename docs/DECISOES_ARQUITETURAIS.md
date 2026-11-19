@@ -29,10 +29,11 @@ Registros de decisões confirmadas pelo código atual. Uma decisão não substit
 - **Evidência:** `services/ai_pipeline.py::qwen_removal_interval`, `services/ai_worker.py::_qwen_prompt`, `docs/FLUXO_QWEN_TEXTO_E_TIMESTAMPS.md`.
 - **Limite:** resultado sintético demonstra transporte/JSON e não prova precisão semântica em vídeos reais.
 
-## ADR-004 — Pocket TTS local, preparação explícita e migração condicionada
+## ADR-004 — Motor único Qwen3-TTS Base local
 
-- **Estado:** Aceita para a linha 0.10.0-alpha.1; migração ainda incompleta.
-- **Decisão:** novas configurações de clonagem usam Pocket TTS. O worker de inferência opera apenas com cache local e falha claramente quando o checkpoint de clonagem não existe. Download e validação ficam no autorizador explícito, que respeita a autorização/termos do Hugging Face. Preferências Qwen preexistentes e os arquivos dos usuários não são apagados durante esta etapa.
-- **Motivo:** o modelo e o processamento são locais; a rede serve apenas para obter o checkpoint gated na primeira configuração. Uma chamada escondida durante a geração contradiz o requisito offline e pode travar o editor em rede bloqueada.
-- **Evidência:** `services/pocket_tts_worker.py::require_local_voice_cloning_weights`, `_offline_model_access`, `scripts/preparar_modelo_pocket.py`, `AUTORIZAR_POCKET_TTS.bat`; síntese de catálogo offline passou, mas o teste de clonagem pessoal não concluiu porque o checkpoint não está no cache e não há sessão HF autenticada.
-- **Limite:** não remover Qwen3-TTS nem declarar a migração concluída até validar clonagem Pocket local com pesos completos, WAV/MP4 e projeto/timeline no Windows. O binário Rust standalone oficial ainda não foi executado ou comparado com o backend Python instalado.
+- **Estado:** Aceita para a diretriz 0.10.0-alpha.1.
+- **Decisão:** somente `Qwen/Qwen3-TTS-12Hz-0.6B-Base` gera e clona voz. A implementação oficial Python roda em CPU em um worker persistente por sessão. Perfis rápidos salvam a gravação privada e a transcrição; o condicionamento `create_voice_clone_prompt` usa cache versionado NPZ sem pickle, validado por fingerprint do modelo, áudio e transcrição. Pocket TTS e outros tamanhos/modelos não fazem parte da instalação nem da rota de geração.
+- **Motivo:** um único contrato de modelo atende perfis preparados e clonagem detalhada, elimina seleção de backends incompatíveis e permite funcionamento local offline após a preparação.
+- **Consequências:** o modelo carrega na primeira preparação/geração e permanece no worker enquanto o editor está aberto; a chamada seguinte reutiliza o prompt persistido. Perfis e áudios originais continuam no computador do usuário e nunca são enviados.
+- **Evidência:** `services/narration_service.py`, `services/qwen3_tts_local.py`, `services/qwen3_tts_worker.py`, `services/voice_profiles.py`; benchmarks Windows em `docs/BENCHMARK_QWEN3_TTS_20261118.md` e fluxo Qt em `scripts/validar_fluxo_qwen3_editor.py`.
+- **Limites:** INT8/INT4, backend nativo e geração incremental real não foram qualificados. A API oficial documenta que `non_streaming_mode=False` não representa streaming de áudio efetivo. A validação atual mede CPU/RAM e fluxo offline com modelo já instalado; não prova reprodução pelos alto-falantes nem firewall de rede bloqueada.

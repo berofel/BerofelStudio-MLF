@@ -8,15 +8,15 @@ O `ABRIR_BEROFELSTUDIO.bat` dentro desta pasta inicializa o código local, exibe
 
 # BerofelStudio 0.10.0-alpha.1 — editor multitrilha com IA local
 
-> **Versão de testes local para Windows.** A interface foi reorganizada a partir das referências do editor antigo e conectada ao motor multitrilha atual. A timeline inclui ferramentas verticais ao lado da Biblioteca, rolagem horizontal pela roda/trackpad sobre as faixas e botões de página; barras visíveis ficam restritas à timeline. O Qwen recebe a transcrição em texto/IDs, mantém o modelo carregado entre lotes via `llama-server` local (com fallback para `llama-cli`), devolve IDs a remover e o editor calcula intervalos pelos tempos do Whisper; lotes concluídos são retomados pelo cache. Os cortes aguardam aprovação e são reversíveis. Slip, Roll e Slide também são não destrutivos. A prévia e timeline não mudam de lugar durante o progresso. O EQ ao vivo envia comandos fora do thread Qt e coalesce alterações sucessivas dos controles; integração com FFmpeg ativo confirmou atualização sem bloquear nem reiniciar o processo. O pitch usa Rubber Band com preservação de formantes quando disponível. O painel de voz copia e cola seus parâmetros entre clipes com Undo. Referências longas de voz são limitadas a 30 s durante a extração do estado vocal, sem alterar o arquivo original. O fluxo local Pocket TTS→DSP→WAV/MP4 passou offline com perfil de catálogo; a prévia e o WAV coincidiram amostra a amostra no ensaio sintético. A ativação de clonagem pré-valida os pesos completos para não confundir fallback de catálogo com clone; distingue problema de rede de acesso gated e apresenta o diagnóstico no painel. Os presets Voice-Zero usam IDs precomputados; o worker verifica pesos completos antes de carregar o modelo ao pedir uma voz pessoal. A suíte local tem 300 testes aprovados. Silero/Faster-Whisper, Qwen e Pocket TTS têm execuções offline registradas em `docs/VALIDACAO_IA.md`. Os testes usam mídia sintética e não certificam qualidade editorial em gravações reais; a sessão completa com o projeto original de 80 minutos ainda não foi validada.
+> **Versão de testes local para Windows.** A interface foi reorganizada a partir das referências do editor antigo e conectada ao motor multitrilha atual. A linha de voz usa exclusivamente Qwen3-TTS Base 0.6B, em um worker CPU persistente; referências autorizadas são copiadas para perfis privados e o `voice_clone_prompt` é mantido em cache versionado para reutilização. Narração rápida e clonagem detalhada usam a mesma API e o mesmo checkpoint. Pocket TTS foi retirado dos instaladores/atalhos ativos, sem apagar caches e áudios preexistentes do usuário. EQ/pitch/velocidade, timeline e exportação permanecem independentes da inferência TTS. Veja o benchmark e os limites da validação real em `docs/BENCHMARK_QWEN3_TTS_20261118.md`.
 
 ## Novidades
 
 - **Clipador Inteligente:** sugere trechos para clipes usando a transcrição salva e medidas reais de RMS/pico/clipping extraídas em PCM por streaming. Mostra evidências e alertas, permite pré-visualizar, ajustar os limites em palavras, marcar eventos acústicos e adicionar os trechos selecionados à timeline sem alterar a fonte. Não inicia Whisper/Qwen, não promete viralização e exige revisão/seleção manual. Veja [como usar e os limites](docs/CLIPADOR_INTELIGENTE.md).
-- **Roda sem alterações acidentais:** idioma, voz, propriedades, sliders e spins só mudam pela roda quando estão focados; ao percorrer painéis, a roda continua rolando a área. A clonagem Pocket TTS guarda o estado da amostra no cache local para reutilização; consulte [preparação e execução local](docs/CLONAGEM_LOCAL_POCKET_TTS.md), incluindo a exigência de aceite inicial do checkpoint oficial.
+- **Roda sem alterações acidentais:** idioma, voz, propriedades, sliders e spins só mudam pela roda quando estão focados; ao percorrer painéis, a roda continua rolando a área. Perfis Qwen preparados guardam cache local de condicionamento para reutilização.
 - **Aprovação em massa em um clique:** `✂ Aprovar e aplicar TODOS` inclui também sugestões ocultas pelo filtro; alternativa individual, contador, `Aplicar apenas os marcados`, `Pular cortes`, `Cancelar` e Undo continuam disponíveis.
 - **Uma única tela com caixas de seleção** na aba `⚙ Ações IA`: Silero, transcrição, vícios, contexto, legendas, SRT e narração. Selecione uma ou várias ações, use o preset `Edição completa` e clique `▶ APLICAR EDIÇÃO`.
-- **Fila priorizada Batata Quente:** Silero → Whisper → Qwen → aplicar cortes aprovados → legendas → SRT → Pocket TTS. Cada IA trabalha isoladamente, reaproveita o cache e libera o modelo ao terminar. Qwen recebe **a transcrição pronta** e não recarrega Whisper.
+- **Fila priorizada Batata Quente:** Silero → Whisper → Qwen para revisão → aplicar cortes aprovados → legendas → SRT. A narração Qwen3-TTS Base é uma ação de voz local separada; o modelo de voz fica aquecido na sessão e não recarrega por frase.
 - **Otimização opcional VAD/Whisper:** se Silero também estiver selecionado, é possível enviar apenas intervalos com fala para Whisper, sem cortar fisicamente a mídia antes da revisão. Pode reduzir minutos de transcrição em gravações com pausas, mas **não há garantia de velocidade ou precisão**; por isso o usuário pode desmarcar essa otimização.
 - **Liberdade durante o trabalho:** timeline e preparo da prévia continuam utilizáveis enquanto a IA analisa. A fila serializa trabalhos pesados; o usuário não precisa ficar parado. Se editar um bloco-alvo antes de a análise terminar, o aplicativo não aplica decisões com timestamps obsoletos.
 - **Legendas após os cortes:** cria blocos editáveis a partir dos intervalos sobreviventes, respeitando velocidade e tempos absolutos de fonte; não apaga legendas manuais.
@@ -54,10 +54,10 @@ Cada botão executa apenas o necessário:
 | Vícios de linguagem | Faster-Whisper + Qwen (ou Qwen se já transcrito) | Identifica candidatos para revisão individual; não corta automaticamente |
 | Análise contextual | Faster-Whisper + Qwen (ou só Qwen se transcrito) | **Somente consulta**, relatório sem botão de aplicar corte |
 | Exportar SRT do alcance | Sem IA, usando texto existente | Respeita faixa/intervalo e inclui legendas manuais/editadas |
-| Usar transcrição na narração | Sem IA, copia texto já transcrito | Abre Pocket TTS; texto livre continua independente |
+| Usar transcrição na narração | Sem IA, copia texto já transcrito | Abre Narração Qwen3-TTS Base; texto livre continua independente |
 | Legendas manuais | Sem IA | Escreva texto e adicione ao alcance; pode arrastar, aparar ou editar depois |
 
-**Batata Quente 2.0:** VAD, Whisper, Qwen e Pocket TTS são tarefas independentes e sequenciais, com processos separados, cache persistente, progresso/tempo, pausa, retomada e cancelamento. Dados concluídos sobrevivem ao cancelamento. Nenhuma regra fixa limita a RAM de PCs mais fortes.
+**Batata Quente 2.0:** VAD, Whisper e Qwen de análise são tarefas independentes e sequenciais; Qwen3-TTS Base roda em worker local isolado com cache persistente e modelo aquecido na sessão. Nenhuma regra fixa limita a RAM de PCs mais fortes.
 
 **Reutilização de transcrição após divisões:** o projeto salva `ai_coverage` (fonte, tamanho, mtime, modelo, idioma e limites absolutos). Se você transcreveu um bloco e depois dividiu, rearranjou, alterou a velocidade ou selecionou apenas uma parte, o sistema reaproveita as palavras salvas **sem rodar Whisper novamente**, quando há cobertura válida. Áudio e vídeo separados que referenciam a mesma fonte/intervalo compartilham a etapa de processamento. Se o arquivo original for modificado ou o modelo/idioma mudar, a cobertura não é reutilizada.
 
@@ -66,8 +66,8 @@ Cada botão executa apenas o necessário:
 ## Instalação em Windows 10/11 x64
 
 1. Extraia em `C:\BerofelStudio` (ou pasta curta equivalente).
-2. Execute **`instalar_dependencias.bat`**. O instalador prepara o editor e oferece instalar o Pocket TTS local (PyTorch/CPU, download potencialmente grande); a opção recomendada é `S`. A clonagem pessoal só baixa pesos gated após outra confirmação, e somente se você já aceitou os termos oficiais.
-3. Execute **`ABRIR_BEROFELSTUDIO.bat`**. Para Whisper/Silero e Qwen de compatibilidade, execute **`INSTALAR_TODAS_AS_IAS.bat`**; Pocket TTS também pode ser instalado separadamente por `INSTALAR_POCKET_TTS.bat`.
+2. Execute **`instalar_dependencias.bat`** para preparar o ambiente do editor.
+3. Execute **`INSTALAR_QWEN3_TTS_LOCAL.bat`** para preparar o único modelo de narração/clonagem e, quando desejar, **`INSTALAR_TODAS_AS_IAS.bat`** para Whisper/Silero e Qwen de análise.
 4. Execute **`TESTAR_EDITOR_08.bat`** e **`TESTAR_INTERFACE_ACOES_08.bat`**. Veja **`docs/TESTE_EDITOR_08.md`** para roteiro completo.
 
 Modelos não vêm embutidos no arquivo ZIP; arquivos e transcrições podem continuar no cache `%LOCALAPPDATA%\BFS\cache\ai` caso já use uma versão anterior com o mesmo ambiente. A instalação dos modelos não é obrigatória para abrir o editor ou criar legendas manuais.
@@ -76,7 +76,7 @@ Modelos não vêm embutidos no arquivo ZIP; arquivos e transcrições podem cont
 
 # BerofelStudio Studio 0.7 — Edição de precisão, motion, IA e Batata Quente (Windows)
 
-> **Status:** Alpha de desenvolvimento. A integração do motor FFmpeg e a persistência do projeto foram validadas com testes automatizados em Linux. A **GUI PySide6, codecs/áudio reais e os instaladores completos no Windows** ainda exigem teste no computador do usuário. Os modelos Whisper, Silero, Qwen e Pocket TTS são downloads opcionais; não estão embutidos no ZIP.
+> **Registro histórico da versão 0.7; os instaladores e decisões descritos nesta seção foram substituídos.** Consulte as instruções atuais no início deste README. A GUI PySide6, codecs/áudio reais e os instaladores completos no Windows exigiam teste no computador do usuário naquela versão.
 
 ## Novidade 0.7 — editar mais rápido sem sacrificar a fonte original
 
@@ -101,7 +101,7 @@ Modelos não vêm embutidos no arquivo ZIP; arquivos e transcrições podem cont
 1. Extraia a pasta `BerofelStudio` do ZIP, por exemplo em `C:\BerofelStudio`.
 2. Execute **`instalar_dependencias.bat`**. O instalador principal instala Python, ambiente, PySide6 e FFmpeg quando necessário.
 3. Execute **`ABRIR_BEROFELSTUDIO.bat`** para abrir o editor.
-4. Opcionalmente use **`INSTALAR_TODAS_AS_IAS.bat`** para modelos/infraestrutura de Whisper, Silero, Qwen e Pocket TTS. A instalação pode exigir internet, downloads grandes, e aceitação dos termos do Pocket TTS na Hugging Face.
+4. Opcionalmente use **`INSTALAR_TODAS_AS_IAS.bat`** para Whisper/Silero e Qwen de análise. Qwen3-TTS Base usa instalador isolado próprio e não exige login no Hugging Face.
 5. Execute **`TESTAR_EDITOR_07.bat`**, **`VERIFICAR_MOTOR.bat`** e **`TESTAR_PREVIEW_WINDOWS.bat`** para obter diagnósticos objetivos, inclusive teste de prévia Qt no Windows.
 
 **Atenção:** ainda faltam recursos de uma suíte completa: máscaras complexas/chroma key, correção por curvas/LUT, estabilização, presets avançados de legendas, mapa de remapeamento de velocidade variável dentro de um clipe, edição gráfica de curvas e validação extensa de 4K/VFR/GPU. As melhorias 0.7 não garantem que todo projeto seja reproduzido em tempo real; use proxies e 640px na prévia para máquinas modestas.
@@ -109,6 +109,8 @@ Modelos não vêm embutidos no arquivo ZIP; arquivos e transcrições podem cont
 ---
 
 # Histórico: BerofelStudio 0.6 — Multitrilha, IA, Pocket TTS e Monitor Batata Quente (Windows)
+
+> Esta seção e as versões antigas abaixo registram comportamento histórico. Não execute seus instaladores/fluxos de narração; a implementação atual usa somente Qwen3-TTS Base 0.6B.
 
 > **Status:** Alpha para testes no Windows. Reprodução/exportação multitrilha receberam testes de integração em Linux. O pipeline de IA e o cache têm testes automatizados com modelos simulados, mas a inferência real do Whisper/Silero/Qwen e os instaladores Windows ainda precisam ser testados no próprio PC. Não é uma versão estável de produção.
 
@@ -295,63 +297,43 @@ A prévia tem três escolhas: **640×360/24 fps** (default para projetos 16:9 de
 
 ---
 
-## Studio 0.5 — Ferramenta fixa de narração Pocket TTS
+## Narração e clonagem local — Qwen3-TTS Base 0.6B
 
-A área **🎙 Narração** fica sempre disponível na aba da direita (ao lado de
-Propriedades) e pelo botão fixo no cabeçalho. O editor nunca carrega Pocket TTS
-na inicialização. A interface pode ser usada para digitar qualquer texto, mesmo
-sem importar ou transcrever vídeos. Também é possível selecionar blocos de vídeo
-já transcritos e clicar em **Trazer transcrição dos blocos selecionados**.
+O motor único é `Qwen/Qwen3-TTS-12Hz-0.6B-Base`, em CPU local. Não é necessário
+Whisper para digitar texto livre. Depois de baixar dependências e pesos pelo
+instalador explícito, a síntese e a clonagem usam arquivos locais, sem API.
 
-### Instalação no Windows 10/11 x64
+### Fluxo rápido
 
-1. `instalar_dependencias.bat` — estrutura do editor, FFmpeg e oferta para instalar Pocket TTS local; os downloads grandes são informados e confirmados antes de começar.
-2. `INSTALAR_TODAS_AS_IAS.bat` — Faster-Whisper, Silero e Qwen de compatibilidade,
-   **ou** `INSTALAR_POCKET_TTS.bat` — reparar/instalar somente Pocket TTS.
-3. Se você já aceitou os termos e quer clonar a voz durante a instalação, confirme o download dos pesos. Caso contrário, abra
-   https://huggingface.co/kyutai/pocket-tts, entre na conta e aceite os termos;
-   depois use Narração → **Preparar clonagem local** para autenticar e concluir o cache sem abrir CMD; `AUTORIZAR_POCKET_TTS.bat` segue disponível como alternativa manual.
-   **Este passo pessoal não pode ser executado pelo instalador em seu nome.**
-4. `TESTAR_POCKET_TTS.bat` — testa geração WAV pela voz pronta. Depois de autorizar os pesos completos, use `TESTAR_POCKET_TTS.bat --clone` para testar clonagem com uma referência sintética, sem selecionar uma gravação pessoal.
-5. `ABRIR_BEROFELSTUDIO.bat` — use a aba Narração à direita.
+1. Abra **Narração** e escolha um perfil local já preparado.
+2. Digite ou cole o texto e gere o WAV ou insira-o na timeline.
+3. O perfil usa o `voice_clone_prompt` persistido; não reprocessa a gravação a
+   cada frase. O modelo permanece aquecido no processo isolado enquanto o editor
+   está aberto.
 
-O download dos pacotes e pesos depende de internet na primeira instalação.
-Depois de baixar o modelo, é possível gerar offline. Os modelos não estão
-embutidos no ZIP. `requirements-pocket-tts.txt` fixa Pocket TTS 4.0.1,
-que instala as bibliotecas transitivas, incluindo PyTorch. Instalação no Windows
-não foi testada fisicamente neste ambiente; verifique os arquivos de `logs/`.
+### Preparar uma voz
 
-### Modos de uso
+1. Selecione **Minha voz / amostra com autorização**, importe WAV/MP3/FLAC/OGG/M4A
+   e use **Verificar qualidade da gravação**.
+2. Confira a transcrição exata e confirme que tem autorização para usar essa voz.
+3. Salve o perfil. O editor copia a amostra para uma pasta privada, preserva o
+   arquivo original e prepara/cacheia o condicionamento para gerações seguintes.
+4. Selecione o perfil salvo para narrar. O mesmo fluxo gera WAV independente ou
+   adiciona um bloco reversível à timeline; DSP, player e exportação continuam
+   usando o áudio original da narração como base.
 
-- **Texto livre:** digite um roteiro inteiro ou trecho curto. Não requer Whisper.
-- **Voz pronta:** Rafael é o preset oficial português (os termos de uso dependem
-  do modelo); Bill, Caro, Peter e Stuart usam IDs de vozes precomputadas do
-  Pocket TTS, associados às amostras CC0 da coleção
-  `kyutai/tts-voices/voice-zero`. O instalador pré-carrega os estados
-  precomputados em português quando a rede permite, sem baixar WAVs de
-  referência; outros idiomas podem buscar o estado no primeiro uso.
-- **Voz clonada:** aceite primeiro os termos de acesso ao modelo em `huggingface.co/kyutai/pocket-tts` e use Narração → **Preparar clonagem local**; o token é solicitado em campo mascarado e o app confirma se os pesos foram liberados. `AUTORIZAR_POCKET_TTS.bat` segue como alternativa manual. Depois selecione um WAV/MP3/FLAC/OGG/M4A autorizado, confirme a permissão expressa e gere. Formatos comprimidos são convertidos com FFmpeg numa cópia temporária; seu áudio original não é alterado. A qualidade depende da amostra. Não use voz de terceiros
-  sem permissão, nem apresente síntese como gravação verdadeira de outra pessoa.
-- **Gerar e adicionar:** cria um WAV separado e uma camada `Narração` na timeline,
-  na posição do cursor, sem alterar ou substituir o áudio original.
-- **Gerar só WAV:** grava uma mídia de áudio reutilizável, sem tocar a timeline.
-- **Ouvir:** reproduz o último WAV diretamente no painel.
+`INSTALAR_QWEN3_TTS_LOCAL.bat` prepara o ambiente isolado e o modelo (~2,5 GB),
+com internet necessária apenas nessa etapa. O instalador principal oferece o
+mesmo passo com confirmação. Perfis e projetos antigos não são apagados em
+atualizações. Modelos Pocket TTS não fazem parte da distribuição padrão.
 
-Os arquivos gerados são armazenados em `<pasta_do_projeto>/<nome>_arquivos/narracoes`
-para projetos já salvos; para projetos novos ainda sem caminho, são armazenados
-em `Documentos/BerofelStudio/Narracoes`. Não são excluídos pela limpeza do cache.
-
-**Batata Quente:** a operação de narração ocorre em subprocesso independente.
-O modelo não permanece na RAM do editor, que continua responsivo. O áudio em
-cache é indexado por texto, idioma, voz e opções, com invalidação automática se
-uma amostra de voz local for alterada. Não existe teto artificial de RAM/CPU.
-
-**Limitações atuais:** nenhuma substituição automática com sincronização labial,
-controle fonético, time-stretch ou legenda palavra a palavra do WAV gerado.
-A narração é uma faixa de áudio independente, com início e duração editáveis.
-
-Fontes e licenças: https://github.com/kyutai-labs/pocket-tts e
-https://huggingface.co/kyutai/tts-voices (ver `assets/voices/LICENSES.md`).
+Desempenho medido no Ryzen 7 5700G, Windows, CPU, 16 GB: frases de 10,32 s e
+51,68 s geraram em 66,8 s e 297,6 s, respectivamente. A configuração não é
+tempo real. Um prompt preparado foi reutilizado no mesmo worker, que carregou o
+modelo uma vez. INT8/INT4, backend nativo e streaming incremental real continuam
+desativados por falta de validação de qualidade/compatibilidade. Consulte
+`docs/BENCHMARK_QWEN3_TTS_20261118.md` e os scripts de validação para limites e
+resultados completos.
 
 
 

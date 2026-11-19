@@ -7,25 +7,42 @@ import unittest
 import wave
 from unittest.mock import patch
 
-from berofel.services.pocket_tts_service import NarrationRequest, generate_narration
+from berofel.services.narration_service import NarrationRequest, generate_narration
 from berofel.services import qwen3_tts_local as qwen
 
 
 class QwenLocalCloneTests(unittest.TestCase):
+    def test_standard_installation_has_no_pocket_tts_backend_or_installer(self):
+        root=Path(__file__).resolve().parents[1]
+        for name in ('requirements.txt','requirements-core.txt','requirements-ai.txt'):
+            self.assertNotIn('pocket-tts',(root/name).read_text(encoding='utf-8').casefold())
+        for relative in ('INSTALAR_POCKET_TTS.bat','AUTORIZAR_POCKET_TTS.bat',
+                         'scripts/instalar_pocket.ps1',
+                         'berofel/services/pocket_tts_worker.py'):
+            self.assertFalse((root/relative).exists(),relative)
+
     def test_qwen_installer_provisions_ffmpeg_module_for_isolated_worker(self):
         script=Path(__file__).resolve().parents[1]/'scripts'/'instalar_qwen3_tts_local.ps1'
         source=script.read_text(encoding='utf-8')
         self.assertIn('imageio-ffmpeg',source)
         self.assertIn('imageio_ffmpeg',source)
 
-    def test_narration_service_routes_only_selected_qwen_requests(self):
-        request=NarrationRequest(text='teste',voice='voice.wav',consent=True)
-        expected={'path':'local.wav','duration':1.,'cache_hit':False}
-        with patch('berofel.services.qwen3_tts_local.generate_local_clone',
-                   return_value=expected) as backend:
-            self.assertEqual(generate_narration(request),expected)
-        backend.assert_called_once_with(request,progress=None,runner=None,
-                                        control=None,stage=None)
+    def test_narration_service_routes_qwen_and_rejects_other_engines(self):
+        with tempfile.TemporaryDirectory() as folder:
+            sample=Path(folder)/'voice.wav'
+            with wave.open(str(sample),'wb') as output:
+                output.setnchannels(1);output.setsampwidth(2);output.setframerate(24000)
+                output.writeframes(b'\x01\x00'*2400)
+            request=NarrationRequest(text='teste',voice=str(sample),consent=True)
+            expected={'path':'local.wav','duration':1.,'cache_hit':False}
+            with patch('berofel.services.qwen3_tts_local.generate_local_clone',
+                       return_value=expected) as backend:
+                self.assertEqual(generate_narration(request),expected)
+            backend.assert_called_once_with(request,progress=None,runner=None,
+                                            control=None,stage=None)
+            with self.assertRaisesRegex(ValueError,'exclusivamente Qwen3-TTS Base'):
+                generate_narration(NarrationRequest(text='teste',voice=str(sample),
+                    consent=True,engine='pocket-tts'))
 
     def test_ready_requires_isolated_runtime_and_complete_local_checkpoint(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -90,6 +107,8 @@ class QwenLocalCloneTests(unittest.TestCase):
                 float32='float32'
                 @staticmethod
                 def set_num_threads(count):requests.append(('threads',count))
+                @staticmethod
+                def set_num_interop_threads(count):requests.append(('interop_threads',count))
             class FakeModel:
                 @classmethod
                 def from_pretrained(cls,*args,**kwargs):
@@ -151,6 +170,59 @@ class QwenLocalCloneTests(unittest.TestCase):
             self.assertTrue(responses[3]['shutdown'])
             self.assertTrue((root/'out0.wav').is_file())
             self.assertTrue((root/'out1.wav').is_file())
+
+    def test_voice_prompt_cache_persists_safely_across_worker_restarts(self):
+        import sys
+        import types
+        import numpy as np
+        from berofel.services import qwen3_tts_worker as worker
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);sample=root/'reference.wav';sample.write_bytes(b'authorized local reference')
+            request={'reference':str(sample),'reference_text':'texto conferido',
+                     'model_fingerprint':'model-fingerprint',
+                     'prompt_cache_path':str(root/'cache'/'voice.npz')}
+            class Tensor:
+                def __init__(self,array):self.array=np.asarray(array)
+                def detach(self):return self
+                def cpu(self):return self
+                def numpy(self):return self.array
+            class Item:
+                def __init__(self,**kwargs):self.__dict__.update(kwargs)
+            fake_torch=types.SimpleNamespace(from_numpy=lambda value:np.asarray(value))
+            fake_qwen=types.SimpleNamespace(VoiceClonePromptItem=Item)
+            with patch.dict(os.environ,{'BEROFEL_QWEN3_PROMPT_CACHE':str(root/'cache')}), \
+                 patch.dict(sys.modules,{'torch':fake_torch,'qwen_tts':fake_qwen}):
+                key=worker._prompt_key(request)
+                original=[Item(ref_code=Tensor(np.asarray([3,4],dtype=np.int64)),
+                    ref_spk_embedding=Tensor(np.asarray([.1,.2],dtype=np.float32)),
+                    x_vector_only_mode=False,icl_mode=True,ref_text='texto conferido')]
+                worker._save_cached_prompt(original,request,key)
+                loaded=worker._load_cached_prompt(object(),request,key)
+            self.assertEqual(len(loaded),1)
+            self.assertEqual(loaded[0].ref_text,'texto conferido')
+            self.assertEqual(loaded[0].ref_code.tolist(),[3,4])
+            self.assertTrue(np.allclose(loaded[0].ref_spk_embedding,[.1,.2]))
+            cached=next((root/'cache').glob('*.npz'))
+            with np.load(cached,allow_pickle=False) as data:
+                self.assertIn('metadata',data.files)
+                self.assertEqual(str(data['metadata'].item()).find('model-fingerprint')>=0,True)
+
+    def test_reference_quality_report_measures_pcm_without_changing_source(self):
+        import numpy as np
+        from scipy.io import wavfile
+        from berofel.services import audio_reference
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'source.wav';normalized=Path(folder)/'normalized.wav'
+            wavfile.write(str(normalized),24000,
+                (np.sin(np.arange(72000)*2*np.pi*220/24000)*12000).astype(np.int16))
+            source.write_bytes(b'authorized source bytes')
+            original=source.read_bytes()
+            with patch.object(audio_reference,'prepare_audio_prompt',
+                return_value=(str(normalized),None)):
+                report=audio_reference.inspect_voice_reference(source)
+            self.assertAlmostEqual(report['duration'],3.0,places=2)
+            self.assertGreater(report['rms_dbfs'],-15)
+            self.assertEqual(source.read_bytes(),original)
 
 
 if __name__=='__main__':unittest.main()

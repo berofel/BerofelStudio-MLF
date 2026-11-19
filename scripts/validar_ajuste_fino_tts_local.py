@@ -1,8 +1,8 @@
-"""Offline end-to-end smoke test: Pocket TTS -> DSP -> WAV/MP4 export.
+"""Offline end-to-end smoke test: Qwen3-TTS Base -> DSP -> WAV/MP4 export.
 
 Uses a short synthetic script and black video in a temporary project directory.
-It reads the locally installed Pocket TTS model but forces offline mode and
-does not alter user recordings, projects, or the model cache.
+It uses the authorized reference already configured in Narração, forces
+offline mode and does not alter user recordings, projects or model cache.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import sys
 import tempfile
 
 import numpy as np
+from PySide6.QtCore import QSettings
 
 ROOT=Path(__file__).resolve().parent.parent
 sys.path.insert(0,str(ROOT))
@@ -22,13 +23,19 @@ sys.path.insert(0,str(ROOT))
 from berofel.core.project import Clip,Project
 from berofel.services.export_multitrack import export_audio_wav,export_project
 from berofel.services.ffmpeg import ffmpeg_path,ffprobe_path,supports_filter
-from berofel.services.pocket_tts_service import NarrationRequest,generate_narration
+from berofel.services.narration_service import NarrationRequest,generate_narration
 from berofel.services.preview_pipeline import prepare_commands
 from berofel.services.voice_dsp import (voice_pitch_filters,
     combined_rubberband_filter)
 
 
 def main():
+    settings=QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
+                       'Berofel','BerofelStudio')
+    reference=Path(str(settings.value('narration/sample_path','') or '')).expanduser()
+    reference_text=str(settings.value('narration/reference_text','') or '').strip()
+    if not reference.is_file() or not reference_text:
+        raise RuntimeError('Configure uma referência autorizada e sua transcrição exata na aba Narração.')
     old_cache=os.environ.get('BEROFEL_AI_CACHE')
     old_hf=os.environ.get('HF_HUB_OFFLINE')
     old_transformers=os.environ.get('TRANSFORMERS_OFFLINE')
@@ -42,7 +49,8 @@ def main():
             project_file.write_text('{}',encoding='utf-8')
             narration=generate_narration(NarrationRequest(
                 text='Esta é uma validação local da narração com ajuste fino de voz.',
-                voice='rafael',language='portuguese',project_path=str(project_file),
+                voice=str(reference),language='portuguese',consent=True,
+                reference_text=reference_text,project_path=str(project_file),
                 title='TesteDSP'))
             duration=float(narration['duration'])
             frame_count=max(1,math.ceil(duration*24))
@@ -57,7 +65,7 @@ def main():
             project.add_clip(Clip(str(video),0,duration,kind='video',
                 track_id=project.tracks[0].id,include_audio=False,title='Vídeo sintético'))
             voice=project.add_clip(Clip(str(narration['path']),0,duration,kind='audio',
-                track_id=project.tracks[-1].id,title='Narração Pocket TTS',
+                track_id=project.tracks[-1].id,title='Narração Qwen3 Base',
                 voice_eq_bass_db=1.5,voice_eq_mids_db=.5,
                 voice_eq_treble_db=-1.,voice_pitch_semitones=-1.,
                 voice_dsp_preset='Teste local',speed=1.15,preserve_pitch=True))

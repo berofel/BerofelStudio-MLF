@@ -14,17 +14,18 @@ def explain_processing_error(message: str) -> tuple[str, str, str]:
     """Traduz erros comuns para uma ação clara, preservando o detalhe original."""
     detail = str(message)
     normalized = detail.casefold()
-    if ('voice cloning is disabled' in normalized or
-            'clonagem de áudio está desativada' in normalized or
-            'somente de catálogo' in normalized):
+    if 'qwen3-tts' in normalized and ('not installed' in normalized or
+            'não está instalado' in normalized or 'não foi instalado' in normalized):
         return (
-            'Clonagem de voz ainda não ativada',
-            'O Pocket TTS está usando pesos que permitem apenas as vozes do catálogo. '
-            'Sua amostra não foi processada.',
-            'Aceite os termos em https://huggingface.co/kyutai/pocket-tts, execute '
-            'Narração > Preparar clonagem local e tente novamente (ou use AUTORIZAR_POCKET_TTS.bat). '
-            'O arquivo original da amostra permanece intacto.',
+            'Qwen3-TTS Base ainda não instalado',
+            'O modelo local necessário para gerar ou clonar a voz não está pronto.',
+            'Use Narração > Preparar Qwen3 local. A instalação baixa o modelo uma vez; '
+            'a geração posterior funciona offline e mantém a gravação de referência no computador.',
         )
+    if 'qwen3-tts' in normalized and ('out of memory' in normalized or 'memória insuficiente' in normalized):
+        return ('Memória insuficiente para o Qwen3-TTS',
+                'A geração local foi interrompida sem substituir a gravação original.',
+                'Feche aplicativos pesados e tente um trecho menor. Os projetos e áudios existentes foram preservados.')
     if 'winerror 206' in normalized and 'qwen' in normalized:
         return (
             'Não foi possível iniciar o Qwen',

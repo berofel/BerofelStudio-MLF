@@ -51,7 +51,7 @@ from berofel.ui.caption_panel import CaptionPanel
 from berofel.ui.studio_header import StudioHeader
 from berofel.ui.library_panel import LibraryDock
 from berofel.ui.preview_transport import PreviewTransport
-from berofel.services.pocket_tts_service import NarrationRequest, generate_narration, validate_request
+from berofel.services.narration_service import NarrationRequest, generate_narration, validate_request
 from berofel.services.project_recovery import (newer_autosave_project, load_project,
     write_autosave_snapshot)
 
@@ -736,7 +736,7 @@ class MainWindow(QMainWindow):
                  ('Quadro final',self.render_current_frame),
                  ('Prévia MP4 (reserva)',self.preview_mp4_fallback),
                  ('🎨 Cor e recorte',self.open_color_controls),
-                 ('🎙 Pocket TTS',self.open_narration)]
+                 ('🎙 Narração Qwen3 Base',self.open_narration)]
         self.tools=InfiniteTools(actions)
         outer.addWidget(self.tools)
         self.tools.setVisible(False)
@@ -1337,7 +1337,7 @@ class MainWindow(QMainWindow):
         """Extrai apenas palavras dos clipes selecionados, conforme tempo atual."""
         selected=set(self.selected_ids)
         # O escopo da aba Ações IA pode ser faixa ou projeto, sem seleção.
-        # O texto livre do Pocket TTS continua independente de qualquer escopo.
+        # O texto livre de narração continua independente de qualquer escopo.
         try:
             _, targets = self.actions_panel.selection()
             words_for_scope=scoped_cues(self.project,targets)
@@ -1372,7 +1372,7 @@ class MainWindow(QMainWindow):
         position=self.timeline.view.cursor_time
         self._ai_busy=True
         self.narration_panel.busy(True)
-        engine_label='Qwen3-TTS local' if request.engine=='qwen3-tts-local' else 'Pocket TTS'
+        engine_label='Qwen3-TTS Base local'
         self.statusBar().showMessage(f'Batata Quente: {engine_label} gerando em processo isolado...')
         def ready(result):
             path=result['path']
@@ -3394,12 +3394,12 @@ class MainWindow(QMainWindow):
                     if not self.narration_panel.text.toPlainText().strip():
                         cues=scoped_cues(self.project,new_targets)
                         self.narration_panel.set_text(' '.join(c[2] for c in cues))
-                    # Invoca a etapa Pocket TTS somente após liberar a vaga
+                    # Invoca a narração Qwen somente após liberar a vaga
                     # do gerenciador. A timeline não é bloqueada para edição.
                     if self.narration_panel.text.toPlainText().strip():
                         QTimer.singleShot(100,lambda:self.narration_panel._generate(True))
                     else:
-                        QMessageBox.information(self,'Pocket TTS',
+                        QMessageBox.information(self,'Narração Qwen3-TTS',
                             'Não há texto para narrar. Escreva um roteiro na aba Narração.')
                         self.open_narration()
                 removed=len(approved)

@@ -13,7 +13,7 @@ import threading
 import time
 
 from .ai_cache import cache_root, source_identity, digest, write_json
-from .pocket_tts_service import NarrationRequest, persistent_folder, _process_flags
+from .narration_service import NarrationRequest, persistent_folder, _process_flags
 
 MODEL_ID='Qwen/Qwen3-TTS-12Hz-0.6B-Base'
 MODEL_REVISION='main'

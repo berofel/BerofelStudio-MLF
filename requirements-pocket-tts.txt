@@ -1,5 +1,0 @@
-# Pocket TTS oficial versão 4.0.1 (publicada em 21/10/2026).
-# PyTorch >=2.5 e dependências transitivas instalados automaticamente pelo pip.
-pocket-tts==4.0.1
-numpy>=1.26,<3
-scipy>=1.11,<2
