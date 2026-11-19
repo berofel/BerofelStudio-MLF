@@ -359,3 +359,9 @@
   validação num computador Windows com o programa instalado.
 - O diagnóstico de ativação do Pocket TTS agora separa checkpoint ausente no cache sem acesso ao Hub, conexão bloqueada, token inválido, aceite gated pendente, arquivo/revisão incorreta e transferência interrompida.
 - A ativação iniciada pelo painel de Narração não abre mais CMD: pede confirmação dos termos e token mascarado no editor, envia o token ao worker local por stdin e não o coloca em argumentos ou logs.
+
+## Operação Qwen Turbo (branch experimental)
+
+- Adicionada rota opcional Qwen3-TTS.cpp Base 0.6B Q4_0 misto para narração rápida, com perfil vocal x-vector preparado pelo próprio encoder nativo e cache local versionado. O backend oficial Python permanece como padrão/fallback; Turbo não é selecionado automaticamente.
+- Adicionados benchmark dos estágios oficiais, instalador runtime com verificação e backup antes de substituir, conversor Q4 experimental separado, testes de áudio e seleção do painel. O servidor nativo fica carregado na sessão, mas retorna o WAV completo: streaming até o player não foi validado.
+- Validação local no Ryzen 7 5700G/16 GB: Q4 mediana RTF 1,047 (3 repetições; pico RSS mediano 1,947 GiB) versus oficial RTF 5,184 (uma medição). É uma comparação experimental com áudio gerado estocástico; WER ASR não substitui escuta/avaliação de qualidade. Detalhes, hashes, procedimento de backup e limites em `docs/QWEN3_TURBO_EXPERIMENT_20261119.md`.
