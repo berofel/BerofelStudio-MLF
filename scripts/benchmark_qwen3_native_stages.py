@@ -43,11 +43,15 @@ def main()->int:
     parser.add_argument('--lengths',nargs='+',choices=tuple(TEXTS),default=tuple(TEXTS))
     parser.add_argument('--threads',type=int,default=6)
     parser.add_argument('--repeats',type=int,default=1)
+    parser.add_argument('--temperature',type=float,default=.9)
+    parser.add_argument('--top-k',type=int,default=50)
     args=parser.parse_args()
     if not args.confirm_own_or_authorized_voice:
         parser.error('confirme autorização com --confirm-own-or-authorized-voice')
     if not 1<=args.threads<=8:parser.error('--threads deve estar entre 1 e 8')
     if not 1<=args.repeats<=2:parser.error('--repeats deve estar entre 1 e 2')
+    if not 0<=args.temperature<=2:parser.error('--temperature deve estar entre 0 e 2')
+    if not 1<=args.top_k<=1000:parser.error('--top-k deve estar entre 1 e 1000')
     profiles=VoiceProfileManager().list_profiles()
     profile=(next((p for p in profiles if p['id']==args.voice_profile_id and
                    p.get('authorized') and p.get('reference_text')),None)
@@ -74,7 +78,8 @@ def main()->int:
             output=out_root/f'{length}_repeat{repeat+1}.wav'
             command=[str(exe),'-m',str(model),'--tokenizer',str(tokenizer),
                 '-t',text,'-o',str(output),'--embedding-in',str(embedding),
-                '-l','portuguese','-j',str(args.threads),'--max-tokens',str(max_tokens)]
+                '-l','portuguese','-j',str(args.threads),'--max-tokens',str(max_tokens),
+                '--temperature',str(args.temperature),'--top-k',str(args.top_k)]
             started=time.perf_counter();child=subprocess.Popen(command,cwd=str(exe.parent),
                 stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8',
                 errors='replace',creationflags=_process_flags(),
@@ -122,7 +127,8 @@ def main()->int:
                 raise RuntimeError('CLI nativo gerou áudio silencioso ou abaixo do limiar de RMS.')
             duration=frames/rate
             record={'length':length,'characters':len(text),'repeat':repeat+1,
-                'threads':args.threads,'max_tokens':max_tokens,
+                'threads':args.threads,'temperature':args.temperature,
+                'top_k':args.top_k,'max_tokens':max_tokens,
                 'wall_seconds':round(elapsed,3),'audio_seconds':round(duration,3),
                 'rtf_wall':round(elapsed/duration,3),'sample_file':output.name,
                 'sample_rate':rate,'channels':channels,'sample_width_bytes':sample_width,
@@ -137,6 +143,7 @@ def main()->int:
         'offline':os.environ.get('HF_HUB_OFFLINE')=='1' and os.environ.get('TRANSFORMERS_OFFLINE')=='1',
         'profile_embedding_cache_hit':bool(embedding_hit),
         'profile_prepare_seconds':round(profile_prepare,3),'threads':args.threads,
+        'temperature':args.temperature,'top_k':args.top_k,
         'repeats':args.repeats,'records':records}
     (out_root/'results.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     has_stage_times=any(record['stages'] for record in records)
