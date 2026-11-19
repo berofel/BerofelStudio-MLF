@@ -117,18 +117,20 @@ mesmo speaker encoder FP32 para pontuar as saídas:
 
 | Variante | Duração WAV | Inferência | RTF | Cosine speaker ↔ referência | Pico RSS do processo |
 |---|---:|---:|---:|---:|---:|
-| Float32 | 10,16 s | 54,478 s | 5,362 | 0,977502 | 5,006 GiB |
-| Dynamic INT8 | 10,16 s | 47,448 s | 4,670 | 0,944985 | 4,095 GiB |
+| Float32 | 10,16 s | 53,591 s | 5,275 | 0,977502 | 5,488 GiB |
+| Dynamic INT8 | 10,16 s | 47,916 s | 4,716 | 0,944985 | 5,892 GiB |
 
-A conversão INT8 levou 15,805 s; logo, o ganho de 12,9% é do tempo de inferência
-com o modelo já convertido, não do caminho frio de primeira geração. O score
-cosine caiu 0,032517. Esse score é um indicador automatizado de semelhança do
-speaker, não uma avaliação perceptiva/MOS, e cada variante teve uma única
-amostra; o resultado sugere um trade-off mensurável, não prova uma degradação
-audível nem equivalência de qualidade. Não foram medidos textos longos ou
-repetições estatísticas. A tentativa anterior isolada registrou 1,06 s para
-preparar a referência e 48,09 s de inferência INT8; ela não é combinada com esta
-comparação pareada.
+A comparação reproduzível levou 6,111 s para carregar o modelo, 0,657 s para
+preparar o prompt e 15,791 s para converter INT8. O ganho de 10,6% é do tempo
+de inferência com o modelo já convertido, não do caminho frio de primeira
+geração; o pico de RSS amostrado foi 7,4% maior em INT8. O score cosine caiu
+0,032517. Esse score é um indicador automatizado de semelhança do
+speaker, não uma avaliação perceptiva/MOS. Foram feitas duas execuções pareadas
+curtas, sem repetição estatística; o resultado sugere um trade-off mensurável,
+mas não prova uma degradação audível nem equivalência de qualidade. Não foram
+medidos textos longos. Uma investigação exploratória anterior leu RSS apenas
+ao final de cada geração e indicou menos memória para INT8; esse valor não era
+pico. A tabela acima substitui essa leitura pela amostragem contínua do script.
 
 O PyTorch emitiu avisos de depreciação para a API dinâmica usada. Por prioridade
 de fidelidade e por não haver validação perceptiva/texto longo, INT8 permanece
@@ -136,3 +138,20 @@ experimental e não foi ligado à distribuição. A versão do editor segue em
 float32. INT4, backend nativo e streaming incremental continuam sem
 implementação/teste apropriado para o prompt de clonagem. Nenhuma quantização
 persistente foi feita nem qualquer perfil/cache do usuário foi alterado.
+
+Para repetir a comparação pareada, execute no venv isolado do Qwen, com uma
+referência autorizada e transcrição configuradas no painel Narração:
+
+```powershell
+& "$env:LOCALAPPDATA\BFS\qwen3_tts\venv\Scripts\python.exe" `
+  scripts/benchmark_qwen3_precision.py --confirm-own-or-authorized-voice --threads 4
+```
+
+O script opera offline, usa o mesmo prompt e semente nos dois caminhos, amostra
+RSS durante cada inferência, mantém os WAVs apenas em memória e imprime métricas
+sem revelar referência ou texto. Na execução reproduzida em 19/11/2026, ambos
+os WAVs tinham 10,16 s e sinal finito/não silencioso; score e duração coincidiram
+com a comparação pareada anterior, enquanto os tempos variaram conforme
+esperado em uma máquina de uso geral.
+O cosine é uma proxy automatizada de semelhança de speaker, não uma pontuação
+perceptiva de qualidade.
