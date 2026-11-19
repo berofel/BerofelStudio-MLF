@@ -108,6 +108,20 @@ Para investigar o atraso inicial, medi o mesmo texto curto com chunks de 1, 2, 3
 
 São medianas de apenas duas gerações; a saída do modelo é estocástica e o carregamento frio aparece em uma das medições. Os JSONs de cada configuração ficam fora do Git em `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119\native_lengths_chunk_<frames>_results.json`. Para reproduzir: `scripts/benchmark_qwen3_native_lengths.py --confirm-own-or-authorized-voice --repeats 2 --lengths curta --chunk-frames <1|2|3|6>`.
 
+### Sampling rápido por solicitação
+
+O protocolo JSON do servidor Qwen nativo aceita `temperature` e `top_k` por pedido ([implementação do servidor](https://github.com/CHE3MZ/qwen3-tts.cpp/blob/main/src/main.cpp); parâmetros documentados em [`tts_params`](https://github.com/CHE3MZ/qwen3-tts.cpp/blob/main/src/qwen3_tts.h)). Medi a configuração padrão (0,9/50), uma opção greedy (0/1) e uma intermediária (0,7/20), sempre Base Q4, CPU/6 threads, x-vector em cache, modo offline e duas gerações inéditas por célula. O benchmark limitou o pedido curto a 256 tokens e o médio a 512; nenhuma geração normal chegou perto do limite. O ASR é Faster-Whisper Base/int8 local, com WAV convertido a PCM16/16 kHz; WER é apenas proxy de inteligibilidade, não qualidade vocal.
+
+| Texto | Sampling | Síntese mediana | RTF mediano | WER Whisper mediano |
+|---|---|---:|---:|---:|
+| Curto (73 caracteres) | Padrão 0,9/50 | 5,345 s | 0,961 | 0,091 |
+| Curto (73 caracteres) | Greedy 0/1 | 5,249 s | 0,938 | 0,364 |
+| Curto (73 caracteres) | Intermediário 0,7/20 | 5,902 s | 0,958 | 0,137 |
+| Médio (231 caracteres) | Padrão 0,9/50 | 17,712 s | 0,954 | 0,038 |
+| Médio (231 caracteres) | Intermediário 0,7/20 | 18,279 s | 0,952 | 0,025 |
+
+Greedy ficou somente 1,8% mais rápido no texto curto e aumentou WER de 0,091 para 0,364; por isso não foi ligado ao Turbo. A opção intermediária não acelerou de forma consistente e foi mais lenta no curto e no médio. Uma tentativa greedy de texto médio chegou a aproximadamente 9 GiB no processo nativo e foi interrompida antes do limite de geração para evitar esgotar a RAM; ela não conta como áudio validado. Nenhum ajuste de sampling foi integrado como modo novo; o editor permanece nos parâmetros padrão. Script reproduzível: `scripts/benchmark_qwen3_native_sampling.py --confirm-own-or-authorized-voice --repeats 2 --length curta|media --asr-wer`. Amostras e `results.json` privados, fora do repositório, nas pastas `native_sampling_curta_20261119_125849` e `native_sampling_media_20261119_125941` dentro do diretório externo de benchmark.
+
 ### Alternativa em C puro investigada
 
 O repositório [gabriele-mastrapasqua/qwen3-tts](https://github.com/gabriele-mastrapasqua/qwen3-tts) declara suporte ao Base 0.6B, clonagem por referência, perfis x-vector/`.qvoice`, streaming PCM, INT8/INT4, MIT e SIMD AVX2. A documentação atual chama a rota Windows de beta via WSL2; a evidência de x86 publicada mede um Ryzen 7 6800H sob WSL2, não este Ryzen 7 5700G. As observações desse projeto (incluindo RTF/Q4/threads) não são comparáveis diretamente com as do runtime CHE3MZ, por serem builds, caminhos de inferência e metodologias diferentes.
