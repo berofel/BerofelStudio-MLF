@@ -116,6 +116,28 @@ cache temporário vazio e depois testa as três durações com o modelo e a voz
 preparados. Esses campos instrumentam execuções futuras; não são resultados
 medidos até a próxima rodada real com referência autorizada.
 
+### Benchmark de desempenho seguro — referência sintética — 19/11/2026
+
+Executado no Ryzen 7 5700G, 16 GB, Windows, Qwen3-TTS Base 0.6B CPU, 4
+threads, offline. O sinal de referência foi sintético e usou x-vector-only;
+os números medem infraestrutura/latência, não fidelidade, qualidade ou
+semelhança com uma pessoa.
+
+| Etapa/caso | Áudio | Latência | RTF | Carregamento do modelo nesta solicitação | Preparação/reuso do prompt |
+|---|---:|---:|---:|---:|---:|
+| Preparar perfil explícito, worker frio | — | 8,425 s total | — | 7,435 s | 0,576 s; miss |
+| Curta, worker e perfil aquecidos | 6,32 s | 30,808 s | 4,875 | 0 s | 0,0006 s; hit |
+| Média, worker e perfil aquecidos | 30,00 s | 150,100 s | 5,003 | 0 s | 0,0006 s; hit |
+| Longa, worker e perfil aquecidos | 43,36 s | 221,437 s | 5,107 | 0 s | 0,0006 s; hit |
+
+Cada WAV tinha amostras finitas e RMS positivo; nenhum foi servido do cache de
+áudio. O mesmo PID carregou o modelo uma vez. Pico RSS agregado amostrado de
+6,16 GiB; CPU média/pico de 24,7%/26,5%, normalizada pelos processadores
+lógicos. A rodada curta anterior com o mesmo prompt de teste variou para 4,16 s
+de áudio e 20,48 s de geração, ilustrando a variabilidade de duração da saída.
+Essas medições não afirmam que a narração de uma voz humana terá exatamente o
+mesmo RTF; é necessária a rodada equivalente com perfil próprio/autorizado.
+
 Os smoke tests de aplicação aceitam `--synthetic-reference` para validar a
 inferência real, Qt, timeline, player, DSP e exportação sem usar amostras de
 pessoas. Esses testes explicitamente não comprovam clonagem ou identidade:

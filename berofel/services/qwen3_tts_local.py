@@ -200,11 +200,10 @@ def _runtime_request(request_data: dict,model: Path,control=None) -> dict:
 
 def prepare_local_voice_prompt(reference: str,reference_text: str,*,
         progress=None,control=None,stage=None) -> dict:
-    """Prepare/cache a profile prompt without synthesizing sample audio."""
+    """Prepare/cache a profile; blank text uses Qwen's x-vector-only mode."""
     path=Path(reference)
     if not path.is_file():raise FileNotFoundError('A gravação de referência não foi encontrada.')
     text=str(reference_text or '').strip()
-    if not text:raise ValueError('Informe a transcrição exata da gravação de referência.')
     if not is_ready():raise RuntimeError('O modelo Qwen3-TTS Base não está instalado. Use INSTALAR_QWEN3_TTS_LOCAL.bat.')
     model=model_path();prompt_file=_prompt_cache_file(path,text,model)
     data={'operation':'prepare','consent':True,'reference':str(path.resolve()),

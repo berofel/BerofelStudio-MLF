@@ -47,20 +47,35 @@ LONG_TEXT=('Hoje estamos medindo a narração local do Berofel Studio em portugu
     'Este teste funciona sem conexão externa quando o modelo já está instalado.')
 
 
+def synthetic_reference(path: Path) -> Path:
+    rate=24000;duration=3.2
+    t=np.arange(round(rate*duration),dtype=np.float64)/rate
+    fundamental=np.where(t<1.05,132.,np.where(t<2.1,165.,147.))
+    phase=2*np.pi*np.cumsum(fundamental)/rate
+    envelope=np.minimum(1.,np.minimum(t/.12,(duration-t)/.12))
+    signal=envelope*(.22*np.sin(phase)+.11*np.sin(2*phase)+.055*np.sin(3*phase))
+    wavfile.write(str(path),rate,np.clip(signal*32767,-32768,32767).astype('<i2'))
+    return path
+
+
 def peak_resources(stop: threading.Event,stats: dict):
     root=psutil.Process()
+    tracked={root.pid:root}
     while not stop.is_set():
-        total=0;cpu=0.0
+        total=0;cpu=0.0;current={}
         try:
             for proc in [root,*root.children(recursive=True)]:
+                monitor=tracked.setdefault(proc.pid,proc)
+                current[proc.pid]=monitor
                 try:
-                    total+=proc.memory_info().rss
-                    cpu+=max(0.0,proc.cpu_percent(None))
+                    total+=monitor.memory_info().rss
+                    cpu+=max(0.0,monitor.cpu_percent(None))
                 except (psutil.NoSuchProcess,psutil.AccessDenied):pass
             normalized=cpu/max(1,os.cpu_count() or 1)
             stats['peak_rss_bytes']=max(stats['peak_rss_bytes'],total)
             stats['peak_cpu_percent']=max(stats['peak_cpu_percent'],normalized)
             stats['cpu_samples'].append(normalized)
+            tracked=current
         except (psutil.NoSuchProcess,psutil.AccessDenied):pass
         stop.wait(.2)
 
@@ -75,29 +90,38 @@ def main() -> int:
         help='Mede preparação explícita do perfil e depois gera textos curto, médio e longo com modelo/perfil aquecidos.')
     parser.add_argument('--voice-profile-id',default='',
         help='ID de um perfil salvo e explicitamente autorizado; vazio usa o primeiro perfil autorizado.')
+    parser.add_argument('--synthetic-reference',action='store_true',
+        help='mede latência/recursos com sinal sintético; não mede qualidade ou identidade vocal.')
     args=parser.parse_args()
     if args.compare_lifecycle and args.prepare_profile_first:
         parser.error('--compare-lifecycle e --prepare-profile-first são modos separados.')
     if not 1<=args.threads<=32:
         raise ValueError('--threads deve ficar entre 1 e 32.')
     os.environ['BEROFEL_QWEN3_CPU_THREADS']=str(args.threads)
-    profiles=VoiceProfileManager().list_profiles()
-    profile=(next((item for item in profiles
-                   if item['id']==args.voice_profile_id and item.get('authorized')),
-                  None) if args.voice_profile_id else
-             next((item for item in profiles if item.get('authorized') and
-                   item.get('reference_text')),None))
-    if profile is None:
-        raise RuntimeError('Salve/autorize um perfil de voz Qwen no painel Narração antes do benchmark.')
-    reference=Path(profile['sample_path']).expanduser()
-    reference_text=str(profile.get('reference_text','')).strip()
-    if not reference.is_file() or not reference_text:
-        raise RuntimeError('O perfil autorizado não possui gravação e transcrição válidas.')
+    if args.synthetic_reference:
+        if args.voice_profile_id:
+            raise ValueError('--voice-profile-id não pode ser combinado com --synthetic-reference.')
+        reference=None;reference_text=''
+    else:
+        profiles=VoiceProfileManager().list_profiles()
+        profile=(next((item for item in profiles
+                       if item['id']==args.voice_profile_id and item.get('authorized')),
+                      None) if args.voice_profile_id else
+                 next((item for item in profiles if item.get('authorized') and
+                       item.get('reference_text')),None))
+        if profile is None:
+            raise RuntimeError('Salve/autorize um perfil Qwen no painel Narração antes do benchmark.')
+        reference=Path(profile['sample_path']).expanduser()
+        reference_text=str(profile.get('reference_text','')).strip()
+        if not reference.is_file() or not reference_text:
+            raise RuntimeError('O perfil autorizado não possui gravação e transcrição válidas.')
     old={key:os.environ.get(key) for key in
          ('BEROFEL_AI_CACHE','BEROFEL_QWEN3_PROMPT_CACHE')}
     try:
         with tempfile.TemporaryDirectory(prefix='bfs_qwen_benchmark_') as folder:
             root=Path(folder)
+            if args.synthetic_reference:
+                reference=synthetic_reference(root/'synthetic_reference.wav')
             os.environ['BEROFEL_QWEN3_PROMPT_CACHE']=str(root/'voice-prompts')
             project=root/'benchmark.bfs'
             stop=threading.Event();stats={'peak_rss_bytes':0,'peak_cpu_percent':0.0,'cpu_samples':[]}
@@ -111,6 +135,7 @@ def main() -> int:
                 if prepared['prompt_cache_hit']:
                     raise RuntimeError('A preparação explícita deveria partir de um cache isolado vazio.')
                 print(json.dumps({'phase':'preparacao_explicita_do_perfil',
+                    'reference_type':'synthetic' if args.synthetic_reference else 'authorized_profile',
                     'elapsed_seconds':round(prepare_elapsed,3),
                     'model_load_seconds':prepared['model_load_seconds'],
                     'profile_prepare_seconds':prepared['profile_prepare_seconds'],
@@ -155,22 +180,24 @@ def main() -> int:
                 if result['cache_hit'] or not record['wav_signal']:
                     raise RuntimeError('Benchmark não produziu inferência nova com sinal válido.')
                 records.append(record)
+                print(json.dumps(record,ensure_ascii=False,sort_keys=True),flush=True)
             stop.set();watcher.join(timeout=2)
             expected_pid_count=2 if args.compare_lifecycle else 1
             if len({r['worker_pid'] for r in records})!=expected_pid_count:
                 raise RuntimeError('O padrão de worker não corresponde ao modo de comparação escolhido.')
             if any(r['model_load_count']!=1 for r in records):
                 raise RuntimeError('Métrica do worker indica carregamento repetido do modelo.')
-            expected_prompt_hits=([False,True,True] if args.compare_lifecycle else
-                ([False,True] if not args.short_only else None))
+            expected_prompt_hits=(
+                [False,True,True] if args.compare_lifecycle else
+                [True]*len(records) if args.prepare_profile_first else
+                [False]+[True]*(len(records)-1) if not args.short_only else None)
             if expected_prompt_hits and [r['prompt_cache_hit'] for r in records]!=expected_prompt_hits:
                 raise RuntimeError('Prompt da voz não foi reutilizado após a preparação inicial.')
             if args.compare_lifecycle and any(r['cache_hit'] for r in records):
                 raise RuntimeError('A comparação não deve reaproveitar WAVs gerados.')
             print('[PASSOU] Benchmark real Base 0.6B em CPU, modo offline.')
-            for item in records:
-                print(json.dumps(item,ensure_ascii=False,sort_keys=True))
             print(json.dumps({'cpu_threads':args.threads,
+                'reference_type':'synthetic' if args.synthetic_reference else 'authorized_profile',
                 'peak_aggregate_rss_gib':round(stats['peak_rss_bytes']/(1024**3),2),
                 'peak_cpu_percent_of_logical_machine':round(stats['peak_cpu_percent'],1),
                 'mean_cpu_percent_of_logical_machine':round(

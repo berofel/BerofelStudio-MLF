@@ -230,5 +230,20 @@ class QwenLocalCloneTests(unittest.TestCase):
             self.assertGreater(report['rms_dbfs'],-15)
             self.assertEqual(source.read_bytes(),original)
 
+    def test_prepare_voice_prompt_supports_official_xvector_only_mode(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);sample=root/'reference.wav';sample.write_bytes(b'RIFF'+b'x'*200)
+            model=root/'model';model.mkdir()
+            with patch.dict(os.environ,{'BEROFEL_QWEN3_TTS_MODEL':str(model),
+                    'BEROFEL_QWEN3_PROMPT_CACHE':str(root/'prompts')}), \
+                 patch.object(qwen,'is_ready',return_value=True), \
+                 patch.object(qwen,'_runtime_request',return_value={
+                     'ok':True,'prompt_cache_hit':False,'worker_pid':123,
+                     'model_load_count':1,'model_load_seconds':1.0,
+                     'profile_prepare_seconds':.2,'operation_seconds':.2}) as runtime:
+                result=qwen.prepare_local_voice_prompt(str(sample),'')
+            self.assertFalse(result['prompt_cache_hit'])
+            self.assertEqual(runtime.call_args.args[0]['reference_text'],'')
+
 
 if __name__=='__main__':unittest.main()
