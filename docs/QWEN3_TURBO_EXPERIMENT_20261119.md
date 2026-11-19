@@ -313,6 +313,12 @@ não-streaming: curto 1,155 vs 1,165; médio 1,031 vs 1,061. A opção não trou
 ganho de throughput e ficou desativada. WAVs passaram formato/sinal/clipping;
 não foi necessária uma rodada ASR porque nenhum modo venceu em RTF.
 
+Por fim, compilei o mesmo `main` com `GGML_CPU_REPACK=OFF` para comparar o
+repacking Q4 padrão ligado/desligado. Com repack desligado, RTF mediano foi
+1,191 (curto) e 1,037 (médio), contra 1,112 e 1,031 no build normal ligado;
+não houve ganho. Os quatro WAVs continuaram válidos e sem clipping, mas a
+variante não foi avaliada por ASR por já perder em desempenho e não foi integrada.
+
 Os comandos de benchmark e binários experimentais ficam apenas na pasta externa
 `C:\\Users\\Berofel\\Desktop\\BerofelStudio_QwenTurbo_Benchmark_20261119\\portable_build`.
 As únicas alterações na árvore Git desta rodada são os registros técnicos; o
