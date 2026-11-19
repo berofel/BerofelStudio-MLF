@@ -50,11 +50,14 @@ The local licenses folder is for this experimental installation, not a
 redistribution bundle.
 
 An isolated attempt to compile with the available LLVM-MinGW 23.1.6 toolchain
-avoiding MSYS imports stopped at concrete POSIX porting gaps: `posix_memalign`
-is undeclared, `sys/mman.h` is absent, and `setenv` is undeclared. The server
-and model loader also use `mmap`, POSIX descriptors and pthread APIs. No
-replacement binary was promoted; the loopback-hardened MSYS2 build remains the
-only tested executable, strictly local and experimental.
+avoiding MSYS imports first exposed POSIX gaps (`posix_memalign`, `sys/mman.h`,
+and `setenv`). Temporary compatibility shims in an external experiment copy
+resolved enough of those issues to compile several additional translation
+units. The build then stopped because the server uses POSIX socket headers and
+APIs (`sys/socket.h`), which this toolchain does not provide. Those shims were
+not copied into the application repository. No replacement binary was
+promoted; the loopback-hardened MSYS2 build remains the only tested executable,
+strictly local and experimental.
 
 No global PATH or Windows firewall rule was changed. The editor's offline
 integration tests used local model/profile paths and
