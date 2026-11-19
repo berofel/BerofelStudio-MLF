@@ -48,6 +48,9 @@ def main() -> int:
         help='confirma autorização para processar a referência local configurada.')
     parser.add_argument('--persist-profile',action='store_true',
         help='salva o perfil localmente para uso posterior; requer --configured-fast-profile.')
+    parser.add_argument('--native-engine',choices=('qwen3-tts-native-q4',
+        'qwen3-tts-native-q4-balanced'),
+        help='valida pela UI um perfil nativo experimental e os chunks enviados à prévia.')
     args=parser.parse_args()
     settings=QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
                        'Berofel','BerofelStudio')
@@ -56,6 +59,8 @@ def main() -> int:
         parser.error('confirme autorização com --confirm-own-or-authorized-voice')
     if args.persist_profile and not args.configured_fast_profile:
         parser.error('--persist-profile requer --configured-fast-profile')
+    if args.native_engine and not (args.configured_fast_profile or args.saved_fast_profile):
+        parser.error('--native-engine requer um perfil rápido configurado ou salvo')
     sample=(Path(str(settings.value('narration/sample_path','') or '')).expanduser()
             if not synthetic else None)
     reference_text=(str(settings.value('narration/reference_text','') or '').strip()
@@ -157,6 +162,17 @@ def main() -> int:
             panel.authorized.setChecked(True)
         panel.set_text('Esta é uma validação real da narração Qwen dentro do editor.')
         panel.name.setText('Qwen local validation')
+        streamed_chunks=[]
+        if args.native_engine:
+            engine_index=panel.clone_engine.findData(args.native_engine)
+            if engine_index<0:
+                raise RuntimeError('O seletor da interface não oferece o runtime nativo solicitado.')
+            panel.clone_engine.setCurrentIndex(engine_index)
+            if panel.clone_engine.currentData()!=args.native_engine:
+                raise RuntimeError('A interface não manteve o perfil nativo selecionado.')
+            # Keep the smoke test silent while exercising the real Task signal
+            # path from native inference into the preview's PCM callback.
+            window.narration_stream.push=lambda data:streamed_chunks.append(bytes(data))
         # Exercise the same panel action used by the user, including request
         # validation and dispatch into the application's narration controller.
         started=time.perf_counter()
@@ -175,15 +191,22 @@ def main() -> int:
             raise RuntimeError('A validação da interface esperava uma inferência Qwen nova, não um cache hit.')
         if args.synthetic_fast_profile or args.configured_fast_profile:
             from berofel.services.ai_cache import cache_root
-            qwen_cache=cache_root().parent/'qwen3_tts'
+            cache_name='qwen3_native_tts' if args.native_engine else 'qwen3_tts'
+            qwen_cache=cache_root().parent/cache_name
             metadata=list(qwen_cache.rglob('result.json'))
             entries=[__import__('json').loads(path.read_text(encoding='utf-8'))
                      for path in metadata]
             output_key_prefix=Path(narration.source).stem.rsplit('_',1)[-1]
             output_metadata=[item for item in entries
                              if str(item.get('key','')).startswith(output_key_prefix)]
-            if not any(item.get('prompt_cache_hit') is True and
-                       item.get('model_load_count') == 1 for item in output_metadata):
+            if args.native_engine:
+                valid_reuse=any(item.get('engine')==args.native_engine and
+                    item.get('profile_embedding_cache_hit') is True
+                    for item in output_metadata)
+            else:
+                valid_reuse=any(item.get('prompt_cache_hit') is True and
+                    item.get('model_load_count') == 1 for item in output_metadata)
+            if not valid_reuse:
                 raise RuntimeError('A narração rápida não reutilizou o prompt vocal preparado.')
             if args.configured_fast_profile or args.saved_fast_profile:
                 current=sample.stat()
@@ -194,6 +217,12 @@ def main() -> int:
         if signal.ndim>1:signal=signal.mean(axis=1)
         if not signal.size or float(np.sqrt(np.mean(signal*signal)))<=0:
             raise RuntimeError('O WAV inserido pela interface não contém sinal de áudio.')
+        if args.native_engine:
+            expected_stream_bytes=np.asarray(pcm).shape[0]*4
+            actual_stream_bytes=sum(map(len,streamed_chunks))
+            if not streamed_chunks or actual_stream_bytes!=expected_stream_bytes:
+                raise RuntimeError('A prévia da interface não recebeu o stream PCM nativo completo: '
+                    f'{actual_stream_bytes}/{expected_stream_bytes} bytes.')
 
         panel._audio.setVolume(0.0)
         panel._player.setSource(QUrl.fromLocalFile(narration.source))
@@ -231,6 +260,10 @@ def main() -> int:
         if restored is None or restored.source!=narration.source:
             raise RuntimeError('Salvar/reabrir projeto não preservou o bloco de narração.')
 
+        if args.native_engine:
+            label='Turbo Q4' if args.native_engine=='qwen3-tts-native-q4' else 'Equilibrado Q4'
+            print(f'[PASSOU] UI {label}: {len(streamed_chunks)} chunks, '
+                  f'{sum(map(len,streamed_chunks))} bytes no callback da prévia.')
         if args.saved_fast_profile:
             print('[PASSOU] Processo novo reutilizou o perfil rápido persistido e o prompt em cache offline.')
         elif args.configured_fast_profile:
