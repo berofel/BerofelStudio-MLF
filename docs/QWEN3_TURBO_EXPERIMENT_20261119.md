@@ -132,7 +132,18 @@ Esta rodada também mostrou que o WER não é um critério suficiente de qualida
 
 O repositório [gabriele-mastrapasqua/qwen3-tts](https://github.com/gabriele-mastrapasqua/qwen3-tts) declara suporte ao Base 0.6B, clonagem por referência, perfis x-vector/`.qvoice`, streaming PCM, INT8/INT4, MIT e SIMD AVX2. A documentação atual chama a rota Windows de beta via WSL2; a evidência de x86 publicada mede um Ryzen 7 6800H sob WSL2, não este Ryzen 7 5700G. As observações desse projeto (incluindo RTF/Q4/threads) não são comparáveis diretamente com as do runtime CHE3MZ, por serem builds, caminhos de inferência e metodologias diferentes.
 
-Verificação local sem instalar componentes: `wsl.exe` existe apenas como launcher de instalação; `wsl --status` e `wsl -l -q` exibiram a ajuda do instalador, e nenhuma distribuição WSL aparece. GCC, Clang, Make, CMake e Ninja também não estão disponíveis no PATH. Assim, não há toolchain/distribuição Linux já pronta para compilar e validar esse backend aqui. Não instalei WSL2 nem outra distribuição. Como alternativa Windows já funcional, o backend CHE3MZ Q4 integrado gerou no fluxo canônico local a RTF 0,944–0,985 nos casos medidos; mantenho-o opt-in e não substituo o Original. A alternativa C puro fica como investigação não executada até existir build suportado nativamente para Windows ou uma decisão explícita de disponibilizar ambiente WSL2 de desenvolvimento.
+Verificação local sem instalar componentes: `wsl.exe` existe apenas como launcher de instalação; `wsl --status` e `wsl -l -q` exibiram a ajuda do instalador, e nenhuma distribuição WSL aparece. GCC, Clang, Make, CMake e Ninja também não estão disponíveis no PATH. Assim, não há toolchain/distribuição Linux já pronta para compilar e validar esse backend aqui. Não instalei WSL2 nem outra distribuição. Como alternativa Windows já funcional, o backend CHE3MZ Q4 integrado gerou no fluxo canônico local RTF 0,944–0,985; mantenho-o opt-in e não substituo o Original.
+
+Uma verificação posterior encontrou o asset [CPU Windows x64 do CHE3MZ release-1.0](https://github.com/CHE3MZ/qwen3-tts.cpp/releases/tag/release-1.0). Baixei-o somente para a pasta externa `native_release_1_0_20261119`; o SHA-256 coincidiu com o digest da API de Releases (`ce90df…9d3170cd`). A assinatura Authenticode está ausente. O build carregou o mesmo GGUF Q4_0 por caminho direto, aceitou o embedding de 4100 bytes e o servidor JSON produziu WAV válido. Comparação offline, mesmo perfil/embedding/texto, 6 threads e três pedidos inéditos quentes por binário:
+
+| Binário CPU | RTF mediano | Tempo de parede mediano | Áudio mediano |
+|---|---:|---:|---:|
+| Instalado atual | 0,955 | 5,885 s | 6,16 s |
+| CHE3MZ release-1.0 | 0,991 | 5,435 s | 5,36 s |
+
+O tempo bruto menor do release acompanha uma duração de fala também menor; normalizado por áudio, ele foi ~3,8% mais lento. Não é uma atualização comprovadamente mais rápida e não foi conectado ao editor. Modelos, embeddings e WAVs dessa prova ficaram em pasta externa, fora do Git. A execução CLI atual continua preferível até surgir um candidato com ganho repetível.
+
+O release mais recente [gabriele-mastrapasqua/qwen3-tts v0.23.0](https://github.com/gabriele-mastrapasqua/qwen3-tts/releases/tag/v0.23.0) publica executáveis Linux ARM64/x86_64 e macOS ARM64, mas nenhum Windows. O README documenta Windows via WSL2; como não há WSL instalado e a missão não o torna dependência obrigatória, não há binário C puro para testar nativamente nesta estação.
 
 ### Perfil dos estágios internos do CLI Q4
 
