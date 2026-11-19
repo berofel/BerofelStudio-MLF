@@ -11,6 +11,7 @@ class TaskSignals(QObject):
     error = Signal(str)
     progress = Signal(float, int)
     stage = Signal(str)
+    audio_chunk = Signal(bytes)
     cancelled = Signal()
     finished = Signal()
 
@@ -33,6 +34,8 @@ class Task(QRunnable):
                 options['control'] = self.control
             if 'stage' in params:
                 options['stage'] = lambda message: self.signals.stage.emit(str(message))
+            if 'audio_chunk' in params:
+                options['audio_chunk'] = lambda data: self.signals.audio_chunk.emit(bytes(data))
             self.control.checkpoint()
             result = self.fn(*self.args, **options)
             try:

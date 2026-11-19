@@ -43,6 +43,7 @@ from berofel.ui.clipper_dialog import ClipperDialog
 from berofel.services.export_multitrack import export_project, render_frame
 from berofel.services.preview_pipeline import prepare_commands
 from berofel.ui.live_preview import LivePreview
+from berofel.ui.narration_stream import NarrationStreamPlayer
 from berofel.services.tasks import Task
 from berofel.ui.timeline import TimelineWidget
 from berofel.ui.process_panel import ProcessPanel, make_processing_error_dialog
@@ -815,6 +816,8 @@ class MainWindow(QMainWindow):
         self.time_label=self.transport.time_label
         self.player=QMediaPlayer(self)
         self.audio=QAudioOutput(self)
+        self.narration_stream=NarrationStreamPlayer(self,
+            lambda message:self.statusBar().showMessage(message,5000))
         self.audio.setVolume(.85)
         self.player.setAudioOutput(self.audio)
         self.player.setVideoOutput(self.video)
@@ -1372,6 +1375,8 @@ class MainWindow(QMainWindow):
         position=self.timeline.view.cursor_time
         self._ai_busy=True
         self.narration_panel.busy(True)
+        streaming=request.engine=='qwen3-tts-native-q4'
+        if streaming:self.narration_stream.begin()
         engine_label=('Qwen Turbo Q4 experimental' if request.engine=='qwen3-tts-native-q4'
                       else 'Qwen3-TTS Base local')
         self.statusBar().showMessage(f'Batata Quente: {engine_label} gerando em processo isolado...')
@@ -1396,10 +1401,14 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f'Narração adicionada à timeline ({duration:.1f}s).')
             else:
                 self.statusBar().showMessage('Narração WAV salva. Clique em Ouvir para conferir.')
-        task=self._task(generate_narration,ready,request,label=f'{engine_label} · narração')
+        task=self._task(generate_narration,ready,request,label=f'{engine_label} · narração',
+            on_audio_chunk=self.narration_stream.push if streaming else None,
+            on_audio_success=self.narration_stream.finish if streaming else None,
+            on_audio_stop=self.narration_stream.stop if streaming else None)
         if task is None:
             self._ai_busy=False
             self.narration_panel.busy(False)
+            if streaming:self.narration_stream.stop()
             return
         def finish():
             self._ai_busy=False
@@ -3000,7 +3009,8 @@ class MainWindow(QMainWindow):
         QThreadPool.globalInstance().start(task)
         return task
 
-    def _task(self,fn,on_success,*args,label='Processamento'):
+    def _task(self,fn,on_success,*args,label='Processamento',on_audio_chunk=None,
+              on_audio_success=None,on_audio_stop=None):
         # Todas as tarefas demoradas compartilham UMA vaga. Não inicia uma
         # segunda IA/exportação antes de finalizar a atual (Batata Quente).
         if self.active_task is not None:
@@ -3010,6 +3020,7 @@ class MainWindow(QMainWindow):
         task=Task(fn,*args)
         self.active_task=task
         self.workers.add(task)
+        if on_audio_chunk is not None:task.signals.audio_chunk.connect(on_audio_chunk)
         # A fila restringe apenas trabalhos pesados; a timeline e os controles
         # visuais continuam utilizáveis e suas miniaturas seguem sob demanda.
         self.process_panel.begin(label,task.control)
@@ -3054,6 +3065,10 @@ class MainWindow(QMainWindow):
         task.signals.error.connect(error)
         task.signals.cancelled.connect(cancelled)
         task.signals.finished.connect(finished)
+        if on_audio_success is not None:task.signals.success.connect(lambda _result:on_audio_success())
+        if on_audio_stop is not None:
+            task.signals.error.connect(lambda _message:on_audio_stop())
+            task.signals.cancelled.connect(on_audio_stop)
         QThreadPool.globalInstance().start(task)
         return task
 
@@ -3920,6 +3935,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self,event):
         self._save_ui_state()
         self.narration_panel.save_preferences()
+        self.narration_stream.stop()
         self._closing=True
         self.autosave.stop()
         self._frame_debounce.stop()

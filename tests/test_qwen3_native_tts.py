@@ -7,6 +7,7 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+import uuid
 import wave
 from unittest.mock import patch
 
@@ -43,6 +44,21 @@ class NativeQwenAdapterTests(unittest.TestCase):
                 output.writeframes(np.zeros(2400,dtype='<i2').tobytes())
             with self.assertRaisesRegex(ValueError,'silencioso'):
                 native._wav_info(silent)
+
+    def test_stream_reader_emits_complete_float_samples_and_drains_final_bytes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'stream.f32';received=[];stats={}
+            samples=np.array([-.5,.0,.5],dtype='<f4')
+            third=samples[2:].tobytes()
+            source.write_bytes(samples[:2].tobytes()+third[:2])
+            offset=native._emit_stream_delta(source,0,received.append,stats,0.0)
+            with source.open('ab') as output:output.write(third[2:])
+            offset=native._emit_stream_delta(source,offset,received.append,stats,0.0)
+            combined=b''.join(received)
+            self.assertEqual(combined,samples.tobytes())
+            self.assertEqual(offset,samples.nbytes)
+            self.assertEqual(stats['bytes'],samples.nbytes)
+            self.assertEqual(stats['chunks'],2)
 
     def test_native_encoder_prepares_and_reuses_its_own_versioned_embedding(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -81,9 +97,11 @@ class NativeQwenAdapterTests(unittest.TestCase):
             turbo=NarrationRequest(text='teste',voice=str(voice),consent=True,
                                    engine=native.ENGINE_ID)
             self.assertEqual(original.engine,'qwen3-tts-local')
+            chunks=[]
             with patch.object(native,'generate_native_clone',return_value={'engine':native.ENGINE_ID}) as route:
-                result=generate_narration(turbo)
+                result=generate_narration(turbo,audio_chunk=chunks.append)
             self.assertEqual(result['engine'],native.ENGINE_ID)
+            self.assertIs(route.call_args.kwargs['audio_chunk'].__self__,chunks)
             route.assert_called_once()
 
 
@@ -94,16 +112,26 @@ class NativeQwenRealIntegrationTests(unittest.TestCase):
         from berofel.services.voice_profiles import VoiceProfileManager
         profiles=VoiceProfileManager().list_profiles()
         profile=next(item for item in profiles if item.get('authorized') and item.get('reference_text'))
+        chunks=[]
         result=generate_narration(NarrationRequest(
-            text='O Berofel Studio está testando a narração rápida do Qwen em português brasileiro.',
+            text='O Berofel Studio está testando a narração rápida do Qwen em português brasileiro. Código '+uuid.uuid4().hex[:8],
             voice=profile['sample_path'],reference_text=profile['reference_text'],
             language='portuguese',consent=True,engine=native.ENGINE_ID,
-            project_path=os.environ.get('BEROFEL_QWEN_TURBO_TEST_PROJECT','')))
+            project_path=os.environ.get('BEROFEL_QWEN_TURBO_TEST_PROJECT','')),
+            audio_chunk=chunks.append)
         path=Path(result['path'])
         self.assertTrue(path.is_file())
         duration,rate,frames=native._wav_info(path)
         self.assertGreater(duration,1.0);self.assertEqual(rate,24000);self.assertGreater(frames,24000)
         self.assertEqual(result['engine'],native.ENGINE_ID)
+        self.assertTrue(chunks,'O servidor nativo não entregou chunks durante a geração.')
+        self.assertEqual(sum(len(chunk) for chunk in chunks),frames*4)
+        self.assertIsNotNone(result['first_audio_chunk_seconds'])
+        self.assertIsNotNone(result['first_audio_request_seconds'])
+        self.assertGreaterEqual(result['first_audio_request_seconds'],
+                                result['first_audio_chunk_seconds'])
+        self.assertGreater(result['streamed_pcm_bytes'],0)
+        self.assertGreater(result['streamed_chunk_count'],0)
 
 
 if __name__=='__main__':

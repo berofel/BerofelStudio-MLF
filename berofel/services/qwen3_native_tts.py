@@ -19,6 +19,7 @@ import threading
 import tempfile
 import time
 import wave
+import uuid
 
 import numpy as np
 
@@ -140,25 +141,35 @@ def _start_server(exe: Path,model: Path,tokenizer: Path,control=None):
     raise TimeoutError('O modelo Qwen3 Turbo não ficou pronto em 15 minutos.')
 
 
-def _read_reply(process,timeout: float,control=None):
+def _read_reply(process,timeout: float,control=None,stream_file=None,
+                audio_chunk=None,stream_stats=None,stream_started=None):
     replies=queue.Queue(maxsize=1)
     def read_line():
         try:replies.put((True,process.stdout.readline()))
         except Exception as exc:replies.put((False,exc))
     threading.Thread(target=read_line,name='QwenNativeReply',daemon=True).start()
     deadline=time.monotonic()+timeout
+    stream_offset=0
     while time.monotonic()<deadline:
+        if stream_file is not None and audio_chunk is not None:
+            stream_offset=_emit_stream_delta(stream_file,stream_offset,audio_chunk,
+                stream_stats,stream_started)
         if control and control.cancelled:
             _stop_locked()
             control.checkpoint()
         if process.poll() is not None:
             _stop_locked();raise RuntimeError('Servidor Qwen3 Turbo encerrou durante a narração.')
-        try:ok,value=replies.get(timeout=min(.2,max(.01,deadline-time.monotonic())))
+        try:ok,value=replies.get(timeout=min(.05,max(.01,deadline-time.monotonic())))
         except queue.Empty:continue
         if not ok:raise RuntimeError(f'Falha lendo resposta do Qwen3 Turbo: {value}')
         if not value:
             _stop_locked();raise RuntimeError('Servidor Qwen3 Turbo fechou o canal de resposta.')
-        try:return json.loads(value)
+        try:
+            response=json.loads(value)
+            if stream_file is not None and audio_chunk is not None:
+                _emit_stream_delta(stream_file,stream_offset,audio_chunk,
+                    stream_stats,stream_started)
+            return response
         except ValueError as exc:
             _stop_locked();raise RuntimeError('Servidor Qwen3 Turbo retornou JSON inválido.') from exc
     _stop_locked()
@@ -237,8 +248,32 @@ def _wav_info(path: Path) -> tuple[float,int,int]:
     return frames/rate,rate,frames
 
 
+def _emit_stream_delta(path:Path,offset:int,callback,stats=None,started=None)->int:
+    """Forward complete float32 PCM appended by the native decoder."""
+    try:
+        ready=path.stat().st_size
+        ready-=ready%4
+        if ready<=offset:return offset
+        with path.open('rb') as stream:
+            stream.seek(offset);data=stream.read(ready-offset)
+        data=data[:len(data)-(len(data)%4)]
+        if not data:return offset
+        if stats is not None:
+            stats['bytes']=stats.get('bytes',0)+len(data)
+            stats['chunks']=stats.get('chunks',0)+1
+            if stats.get('first_chunk_seconds') is None and started is not None:
+                stats['first_chunk_seconds']=time.perf_counter()-started
+        try:callback(data)
+        except Exception:
+            # Preview output is best effort; it must not fail synthesis.
+            if stats is not None:stats['callback_failed']=True
+        return offset+len(data)
+    except (OSError,ValueError):
+        return offset
+
+
 def generate_native_clone(request: NarrationRequest,progress=None,runner=None,
-        control=None,stage=None) -> dict:
+        control=None,stage=None,audio_chunk=None) -> dict:
     """Generate via cached Base x-vector + persistent CPU Q4_0 native server."""
     validate_request(request.text,request.voice,request.language,request.consent)
     if not is_ready():
@@ -265,20 +300,30 @@ def generate_native_clone(request: NarrationRequest,progress=None,runner=None,
             cache_hit=info.get('key')==key and _wav_info(output)[0]>0
         except (OSError,ValueError,wave.Error):cache_hit=False
     result={}
+    stream_stats={'bytes':0,'chunks':0,'first_chunk_seconds':None}
     if not cache_hit:
         if control:control.checkpoint()
         temporary=directory/'audio.pending.wav';temporary.unlink(missing_ok=True)
+        stream_file=directory/f'audio_{uuid.uuid4().hex}.stream.f32' if audio_chunk else None
         with _LOCK:
             process,model_load_seconds=_start_server(exe,model,tokenizer,control)
             payload={'text':request.text.strip(),'output':str(temporary),
                 'language':_LANGUAGES[request.language],'max_tokens':2048,
                 'embedding_in':str(embedding)}
+            if stream_file is not None:
+                stream_file.unlink(missing_ok=True)
+                payload.update({'stream_file':str(stream_file),'chunk_frames':6})
             started=time.perf_counter()
-            process.stdin.write(json.dumps(payload,ensure_ascii=False)+'\n')
-            process.stdin.flush()
-            result=_read_reply(process,timeout=float(os.environ.get(
-                'BEROFEL_QWEN3_NATIVE_TIMEOUT','1800')),control=control)
-            generation_seconds=time.perf_counter()-started
+            try:
+                process.stdin.write(json.dumps(payload,ensure_ascii=False)+'\n')
+                process.stdin.flush()
+                result=_read_reply(process,timeout=float(os.environ.get(
+                    'BEROFEL_QWEN3_NATIVE_TIMEOUT','1800')),control=control,
+                    stream_file=stream_file,audio_chunk=audio_chunk,
+                    stream_stats=stream_stats,stream_started=started)
+                generation_seconds=time.perf_counter()-started
+            finally:
+                if stream_file is not None:stream_file.unlink(missing_ok=True)
         if not result.get('success') or not temporary.is_file():
             temporary.unlink(missing_ok=True)
             raise RuntimeError('Qwen3 Turbo não concluiu a geração do áudio.')
@@ -311,5 +356,13 @@ def generate_native_clone(request: NarrationRequest,progress=None,runner=None,
         'profile_prepare_seconds':float(result.get('profile_embedding_prepare_seconds',embedding_seconds)),
         'model_load_seconds':float(result.get('model_load_seconds',0.0)),
         'generation_seconds':float(result.get('generation_seconds',0.0)),
+        'first_audio_chunk_seconds':stream_stats['first_chunk_seconds'] if not cache_hit else None,
+        'first_audio_request_seconds':(
+            float(result.get('profile_embedding_prepare_seconds',embedding_seconds))+
+            float(result.get('model_load_seconds',0.0))+
+            float(stream_stats['first_chunk_seconds'] or 0.0)
+            if not cache_hit and stream_stats['first_chunk_seconds'] is not None else None),
+        'streamed_pcm_bytes':stream_stats['bytes'] if not cache_hit else 0,
+        'streamed_chunk_count':stream_stats['chunks'] if not cache_hit else 0,
         'voice':request.voice,'language':request.language,'title':request.title,
         'engine':ENGINE_ID,'precision':'Q4_0 mixed; sensitive tensors retained in F16'}
