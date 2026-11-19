@@ -1133,16 +1133,22 @@ embora `--int8` tenha geração bruta mediana mais rápida no curto porque o áu
 resultante também foi menor. São apenas três saídas estocásticas por caso; as
 métricas não substituem audição humana.
 
-**Ressalva de precisão observada nos logs locais:** para `--quant-mixed-cpu`, o
-mesmo processo imprime `QWEN_CP_PREC=int4` e `Quantizing CP weights to Q4_0`,
-mas depois a seção `MODEL SOURCES` diz `CP linear: ... BF16 -> INT8 at load` e a
-linha de camadas também mostra `[INT8]`. O modo `--int8` registra INT8 de forma
-consistente. Portanto a tabela identifica o mixed como *flag solicitado* e não
-trata o formato final do CP como comprovado; o descompasso precisa ser explicado
-pelo runtime antes de afirmar sua precisão efetiva. O benchmark captura essas
-linhas por WAV em `precision_log_lines` no JSON, preservando evidência para uma
-investigação posterior. Nenhuma configuração foi alterada ou promovida com base
-em uma interpretação incerta do log.
+**Auditoria da precisão nos logs locais:** para `--quant-mixed-cpu`, o processo
+imprime `QWEN_CP_PREC=int4` e `Quantizing CP weights to Q4_0`, mas depois a seção
+`MODEL SOURCES` diz `CP linear: ... BF16 -> INT8 at load` e a linha de camadas
+também mostra `[INT8]`. Consultei a fonte oficial upstream no commit
+`e391ec5467b0218eeb175f4888ad65b259d1e7c7`: `qwen_tts_code_predictor.c` usa
+`QWEN_CP_PREC` para selecionar e executar `qwen_cp_quantize_q4`; depois restaura
+os flags globais do Talker. Os resumos posteriores em `qwen_tts_gguf.c` e na
+linha “layers loaded” usam esses flags globais, não o override do CP. Isso
+explica as linhas contraditórias como diagnóstico desatualizado, enquanto os
+logs explícitos de `QWEN_CP_PREC=int4`/quantização Q4 confirmam o caminho pedido.
+O modo `--int8` registra INT8 sem essa divergência. A tag fonte auditada é
+[gabriele-mastrapasqua/qwen3-tts v0.23.0](https://github.com/gabriele-mastrapasqua/qwen3-tts/blob/e391ec5467b0218eeb175f4888ad65b259d1e7c7/qwen_tts_code_predictor.c#L436);
+o executável instalado não informa seu hash/revisão de fonte (`source_fp=unknown`),
+portanto a atribuição exata do binário permanece limitada, embora as mensagens
+e o comportamento observado correspondam à lógica dessa versão. O benchmark
+preserva as linhas por WAV em `precision_log_lines` para auditoria.
 
 A primeira execução de prova direta (curta) reportou 1,143 s Talker, 2,744 s
 Code Predictor, 2,630 s decoder com 0,254 s de drain, 0,386 s prefill, RTF
