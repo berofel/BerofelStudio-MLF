@@ -37,20 +37,23 @@ def main() -> int:
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--synthetic-reference',action='store_true',
         help='usa um sinal sintético local para validar UI/linha do tempo/exportação; não valida clonagem nem semelhança.')
+    parser.add_argument('--synthetic-fast-profile',action='store_true',
+        help='prepara um perfil descartável com referência sintética e valida a rota de narração rápida da UI.')
     args=parser.parse_args()
     settings=QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
                        'Berofel','BerofelStudio')
     sample=(Path(str(settings.value('narration/sample_path','') or '')).expanduser()
-            if not args.synthetic_reference else None)
+            if not (args.synthetic_reference or args.synthetic_fast_profile) else None)
     reference_text=(str(settings.value('narration/reference_text','') or '').strip()
-                    if not args.synthetic_reference else '')
-    if not args.synthetic_reference and (not sample.is_file() or not reference_text):
+                    if not (args.synthetic_reference or args.synthetic_fast_profile)
+                    else ('referência sintética de validação' if args.synthetic_fast_profile else ''))
+    if not (args.synthetic_reference or args.synthetic_fast_profile) and (not sample.is_file() or not reference_text):
         raise RuntimeError('Configure uma referência autorizada e sua transcrição exata no painel Narração.')
 
     app=QApplication.instance() or QApplication([])
     with tempfile.TemporaryDirectory(prefix='bfs_qwen_editor_flow_') as folder:
         root=Path(folder)
-        if args.synthetic_reference:
+        if args.synthetic_reference or args.synthetic_fast_profile:
             sample=root/'synthetic_reference.wav'
             rate=24000;duration=3.2
             t=np.arange(round(rate*duration),dtype=np.float64)/rate
@@ -64,6 +67,11 @@ def main() -> int:
         QSettings.setPath(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
                           str(settings_dir))
         os.environ['BEROFEL_AI_CACHE']=str(root/'app_cache'/'ai')
+        if args.synthetic_fast_profile:
+            os.environ['BEROFEL_VOICE_PROFILE_DIR']=str(root/'voice_profiles')
+            from berofel.services.voice_profiles import VoiceProfileManager
+            profile=VoiceProfileManager().create('Perfil sintético rápido',sample,
+                'portuguese',reference_text,authorized=True)
         project=Project(width=320,height=180,fps=12)
         project_file=root/'qwen_flow.bfs';project.path=str(project_file)
         still=root/'timeline.png';Image.new('RGB',(320,180),(28,38,54)).save(still)
@@ -71,10 +79,21 @@ def main() -> int:
                               kind='image',title='validation background'))
         window=MainWindow();window.project=project;window.refresh([])
         panel=window.narration_panel
-        panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
-        panel.sample_path.setText(str(sample.resolve()))
-        panel.reference_text.setText(reference_text)
-        panel.authorized.setChecked(True)
+        if args.synthetic_fast_profile:
+            profile_data=f'voice-profile:{profile["id"]}'
+            panel.voice.setCurrentIndex(panel.voice.findData(profile_data))
+            window.prepare_narration_voice(profile['sample_path'],reference_text,profile['name'])
+            prepare_deadline=time.monotonic()+600
+            while time.monotonic()<prepare_deadline and window.active_task is not None:
+                app.processEvents();time.sleep(.05)
+            app.processEvents()
+            if window.active_task is not None:
+                raise TimeoutError('A preparação do perfil rápido excedeu 600 segundos.')
+        else:
+            panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+            panel.sample_path.setText(str(sample.resolve()))
+            panel.reference_text.setText(reference_text)
+            panel.authorized.setChecked(True)
         panel.set_text('Esta é uma validação real da narração Qwen dentro do editor.')
         panel.name.setText('Qwen local validation')
         # Exercise the same panel action used by the user, including request
@@ -93,6 +112,10 @@ def main() -> int:
             raise RuntimeError('A interface não inseriu a narração Qwen na timeline.')
         if 'Reaproveitado do cache' in window.narration_panel.status.text():
             raise RuntimeError('A validação da interface esperava uma inferência Qwen nova, não um cache hit.')
+        if args.synthetic_fast_profile:
+            metadata=list((root/'app_cache'/'qwen3_tts').rglob('result.json'))
+            if not metadata or not any(__import__('json').loads(path.read_text(encoding='utf-8')).get('prompt_cache_hit') is True for path in metadata):
+                raise RuntimeError('A narração rápida não reutilizou o prompt vocal preparado.')
         rate,pcm=wavfile.read(narration.source)
         signal=np.asarray(pcm,dtype=np.float64)
         if signal.ndim>1:signal=signal.mean(axis=1)
@@ -135,7 +158,9 @@ def main() -> int:
         if restored is None or restored.source!=narration.source:
             raise RuntimeError('Salvar/reabrir projeto não preservou o bloco de narração.')
 
-        if args.synthetic_reference:
+        if args.synthetic_fast_profile:
+            print('[PASSOU] Narração rápida pela UI com perfil sintético preparado e prompt reutilizado (não valida identidade vocal).')
+        elif args.synthetic_reference:
             print('[PASSOU] Inferência Qwen real com referência sintética pela rota da interface offline (não valida identidade vocal).')
         else:
             print('[PASSOU] Geração Qwen real acionada pela interface offline com referência configurada.')
