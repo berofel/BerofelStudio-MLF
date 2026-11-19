@@ -128,6 +128,19 @@ O repositório [gabriele-mastrapasqua/qwen3-tts](https://github.com/gabriele-mas
 
 Verificação local sem instalar componentes: `wsl.exe` existe apenas como launcher de instalação; `wsl --status` e `wsl -l -q` exibiram a ajuda do instalador, e nenhuma distribuição WSL aparece. GCC, Clang, Make, CMake e Ninja também não estão disponíveis no PATH. Assim, não há toolchain/distribuição Linux já pronta para compilar e validar esse backend aqui. Não instalei WSL2 nem outra distribuição. Como alternativa Windows já funcional, o backend CHE3MZ Q4 integrado gerou no fluxo canônico local a RTF 0,944–0,985 nos casos medidos; mantenho-o opt-in e não substituo o Original. A alternativa C puro fica como investigação não executada até existir build suportado nativamente para Windows ou uma decisão explícita de disponibilizar ambiente WSL2 de desenvolvimento.
 
+### Perfil dos estágios internos do CLI Q4
+
+Para medir a divisão de custo dentro do motor, usei o CLI Windows Q4 instalado diretamente, com um x-vector autorizado já em cache, execução offline e 6 threads. Cada medição é um processo CLI novo (logo inclui inicialização/carregamento no tempo de parede); os tempos internos `Generate` e `Decode` vêm do próprio binário. Foram feitas duas gerações inéditas por tamanho, sem cache de frase. O script salva WAVs e stdout/stderr locais fora do repositório em `Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119\native_stages_<timestamp>`.
+
+| Texto | Mediana parede | Mediana WAV | RTF mediano | `Generate` | `Decode` | RAM pico mediano |
+|---|---:|---:|---:|---:|---:|---:|
+| Curto (72 caracteres) | 6,552 s | 5,72 s | 1,149 | 2,096 s (37,7%) | 3,464 s (62,3%) | 1,966 GiB |
+| Médio (231 caracteres) | 18,567 s | 18,24 s | 1,019 | 6,602 s (37,7%) | 10,914 s (62,3%) | 2,673 GiB |
+
+Percentuais são a fração do `Total` interno do CLI (medianas de duas amostras); `Generate` agrupa a geração autoregressiva, incluindo Talker/Code Predictor, e `Decode` é o decodificador acústico. O executável não expõe subtempos separados para prefill do Talker e Code Predictor. Tokenização e `Encode` apareceram como 0–1 ms, arredondados pelo próprio CLI. Assim, o maior estágio medido é o decoder acústico (~62%); otimizar apenas o Code Predictor não atacaria o maior custo observado. Tempo até o primeiro PCM não é exposto pelo modo CLI de WAV; para streaming do editor, mantenho as medições anteriores (~2,7–3,5 s para texto curto, conforme configuração/chunk). CPU de pico amostrada foi ~37,6–37,8% da capacidade lógica total; o processo fez uso concentrado de parte dos 16 processadores lógicos, não representa o percentual de um núcleo.
+
+Os resultados incluem saída WAV mono PCM16/24 kHz com RMS verificado acima de silêncio; não medem naturalidade ou semelhança vocal. Reprodutibilidade: `scripts\benchmark_qwen3_native_stages.py --confirm-own-or-authorized-voice --lengths curta media --repeats 2 --threads 6`. Dependências do script (`numpy`, `psutil`) já existem no venv do editor. A versão do script também registra os logs brutos do CLI e interrompe com erro se não houver WAV válido ou se o sinal estiver silencioso.
+
 Não foram obtidas métricas separadas de prefill/talker/code predictor para o runtime nativo. No oficial, o profiler mediu carga 6,008 s, prompt 0,655 s, prefill 0,413 s, 131 chamadas autoregressivas 47,645 s, das quais code predictor aninhado somou ~35,166 s; geração API 54,333 s, primeiro code frame ~0,7 s (não era áudio tocável). Isso aponta o code predictor como parcela dominante no backend oficial, mas não prova a mesma divisão interna no nativo. O script `scripts/benchmark_qwen3_stages.py` registra estágios oficiais.
 
 ## Testes / evidência da integração
