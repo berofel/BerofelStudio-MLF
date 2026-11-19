@@ -545,6 +545,17 @@ presente em ambos e vídeo presente no MP4. O teste não realizou avaliação
 auditiva. A checagem automatizada completa e a revisão de licença do runtime
 redistribuível ainda são necessárias antes de qualquer release.
 
+Também acrescentei uma checagem de bind ao teste de integração real do serviço:
+ele inspeciona as conexões do processo servidor e falha se o listener não for
+exatamente `127.0.0.1`. Ela passou tanto para Turbo mixed quanto para INT8, com
+`HF_HUB_OFFLINE=1` e `TRANSFORMERS_OFFLINE=1`. Em execuções separadas do serviço,
+mixed gerou 4,08 s de áudio em 3,377 s, com primeiro PCM em 0,513 s; INT8 gerou
+4,24 s em 3,732 s, com primeiro PCM em 0,533 s. Esses tempos de geração não
+incluem os ~1,95 s de preparo do x-vector nem os ~2,6–2,7 s de carga do modelo.
+Isso confirma que o servidor HTTP não é acessível pela interface de rede, mas
+não equivale a bloquear toda a rede do Windows; o teste de rede bloqueada no
+sistema operacional continua pendente.
+
 O Pure C declara MIT; OpenBLAS usa BSD-3-Clause ([documentação oficial](https://www.openmathlib.org/OpenBLAS/docs/)); o pacote `msys2-runtime` declara GPL-3.0-or-later ([manifesto upstream](https://github.com/msys2/MSYS2-packages/blob/master/msys2-runtime/PKGBUILD)); e as bibliotecas GCC só recebem a exceção de runtime onde o arquivo aplicável traz o aviso correspondente ([GCC Runtime Library Exception](https://www.gnu.org/licenses/gcc-exception-3.1.html)). O executável e DLLs foram copiados para o diretório local de runtime do usuário apenas para validação. A distribuição pública continua bloqueada até auditar avisos e obrigações de cada DLL exata.
 
 A auditoria por DLL, versão de pacote, SPDX e SHA-256 está em

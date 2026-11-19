@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
+import psutil
 
 from berofel.services import qwen3_purec_tts as purec
 from berofel.services.narration_service import NarrationRequest, generate_narration
@@ -74,6 +75,7 @@ class PureCRealIntegrationTests(unittest.TestCase):
         from berofel.services.voice_profiles import VoiceProfileManager
         profile = next(item for item in VoiceProfileManager().list_profiles()
                        if item.get('authorized') and item.get('reference_text'))
+        test_engine = os.environ.get('BEROFEL_PUREC_TEST_ENGINE', purec.ENGINE_ID)
         with tempfile.TemporaryDirectory(prefix='bfs_purec_real_test_') as work:
             with patch.dict(os.environ, {'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work}, clear=False):
                 source = Path(work) / 'authorized_reference.wav'
@@ -90,7 +92,7 @@ class PureCRealIntegrationTests(unittest.TestCase):
                 request = NarrationRequest(
                     text='O Berofel Studio está testando a narração local com Qwen Base.',
                     voice=str(source), reference_text=profile['reference_text'],
-                    language='portuguese', consent=True, engine=purec.ENGINE_ID,
+                    language='portuguese', consent=True, engine=test_engine,
                     title='Pure C integração',
                     project_path=str(Path(work) / 'project.bfsproj'))
                 result = generate_narration(request, audio_chunk=chunks.append)
@@ -108,7 +110,15 @@ class PureCRealIntegrationTests(unittest.TestCase):
                 self.assertFalse(result['profile_cache_hit'])
                 self.assertGreater(result['profile_prepare_seconds'], 0)
                 self.assertGreater(result['model_load_seconds'], 0)
-                self.assertEqual(result['engine'], purec.ENGINE_ID)
+                self.assertEqual(result['engine'], test_engine)
+                self.assertIsNotNone(purec._PROCESS)
+                server_process = psutil.Process(purec._PROCESS.pid)
+                listeners = [connection.laddr.ip for connection in
+                             server_process.net_connections(kind='inet')
+                             if connection.status == psutil.CONN_LISTEN]
+                self.assertTrue(listeners, 'Pure C HTTP server did not expose a listener')
+                self.assertEqual(set(listeners), {'127.0.0.1'},
+                                 'Pure C server must bind only loopback')
                 print('PUREC_REAL_RESULT ' + json.dumps({
                     key: result.get(key) for key in ('engine', 'duration', 'threads',
                         'profile_cache_hit', 'profile_prepare_seconds', 'model_load_seconds',
