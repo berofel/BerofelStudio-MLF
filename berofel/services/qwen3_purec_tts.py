@@ -214,7 +214,8 @@ def _start_server(profile: Path, control=None,
     key = digest({'model': _model_key(exe, model), 'profile': hashlib.sha256(profile.read_bytes()).hexdigest(),
                   'threads': threads_for_engine(), 'precision': engine})
     if _PROCESS is not None and _PROCESS.poll() is None and _PROCESS_KEY == key:
-        return _PORT, _MODEL_LOAD_SECONDS
+        # This value is per request: a resident server incurs no new model load.
+        return _PORT, 0.0
     _stop_server_locked()
     port = _free_port()
     command = [str(exe), '-d', str(model), '--load-voice', str(profile),
@@ -271,6 +272,11 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
     with _LOCK:
         port, model_load = _start_server(Path(profile['path']), control,
                                          request.engine)
+        # A cache miss starts the resident model while preparing its profile;
+        # preserve that measured cost in this request's telemetry. Cache hits
+        # on an already running server correctly report zero incremental load.
+        if model_load <= 0:
+            model_load = float(profile.get('model_load_seconds', 0.0))
         start = time.perf_counter()
         conn = http.client.HTTPConnection('127.0.0.1', port, timeout=1800)
         payload = json.dumps({'text': request.text.strip(), 'language': _LANGUAGES[request.language],

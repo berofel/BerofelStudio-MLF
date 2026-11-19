@@ -119,9 +119,42 @@ class PureCRealIntegrationTests(unittest.TestCase):
                 self.assertTrue(listeners, 'Pure C HTTP server did not expose a listener')
                 self.assertEqual(set(listeners), {'127.0.0.1'},
                                  'Pure C server must bind only loopback')
+                first_server_pid = purec._PROCESS.pid
                 print('PUREC_REAL_RESULT ' + json.dumps({
                     key: result.get(key) for key in ('engine', 'duration', 'threads',
                         'profile_cache_hit', 'profile_prepare_seconds', 'model_load_seconds',
+                        'generation_seconds', 'first_audio_chunk_seconds',
+                        'streamed_pcm_bytes', 'streamed_chunk_count')}, ensure_ascii=False))
+
+                # A new text must reuse both the prepared voice vector and the
+                # loaded model/server; only text synthesis should run again.
+                from dataclasses import replace
+                second_chunks = []
+                second_request = replace(
+                    request,
+                    text='Esta é uma segunda frase inédita para validar o reuso local da voz.',
+                    title='Pure C integração reuso')
+                second_result = generate_narration(second_request,
+                                                   audio_chunk=second_chunks.append)
+                second_path = Path(second_result['path'])
+                self.assertTrue(second_path.is_file())
+                with __import__('wave').open(str(second_path), 'rb') as wav:
+                    self.assertEqual(wav.getframerate(), 24000)
+                    self.assertGreater(wav.getnframes(), 24000)
+                    second_samples = np.frombuffer(
+                        wav.readframes(wav.getnframes()), dtype='<i2')
+                self.assertGreater(float(np.sqrt(np.mean(
+                    second_samples.astype(np.float32) ** 2))), 100)
+                self.assertTrue(second_chunks)
+                self.assertTrue(second_result['profile_cache_hit'])
+                self.assertEqual(second_result['profile_prepare_seconds'], 0.0)
+                self.assertEqual(second_result['model_load_seconds'], 0.0)
+                self.assertEqual(purec._PROCESS.pid, first_server_pid)
+                self.assertNotEqual(path, second_path)
+                print('PUREC_REUSE_RESULT ' + json.dumps({
+                    key: second_result.get(key) for key in (
+                        'engine', 'duration', 'threads', 'profile_cache_hit',
+                        'profile_prepare_seconds', 'model_load_seconds',
                         'generation_seconds', 'first_audio_chunk_seconds',
                         'streamed_pcm_bytes', 'streamed_chunk_count')}, ensure_ascii=False))
 

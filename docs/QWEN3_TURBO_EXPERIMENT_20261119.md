@@ -594,3 +594,23 @@ Comandos usados: definir `BEROFEL_RUN_PUREC_TURBO_INTEGRATION=1`, selecionar
 perfil). O cache do perfil foi intencionalmente isolado e iniciou como miss;
 esta repetição mede a preparação, não o caso de reutilização. Permanecem
 válidas as medições anteriores de cache hit e exportação Qt descritas acima.
+
+Também ampliei o teste para duas frases inéditas sequenciais no mesmo processo,
+com o mesmo perfil autorizado e o cache isolado. Na primeira solicitação o
+x-vector foi preparado e o servidor carregou o modelo; na segunda, o teste
+exigiu `profile_cache_hit=true`, `profile_prepare_seconds=0`,
+`model_load_seconds=0` e o mesmo PID do servidor. Resultados observados:
+
+| Perfil | Solicitação | Síntese | Duração | Primeiro PCM | Preparação | Carga do modelo |
+|---|---:|---:|---:|---:|---:|---:|
+| Turbo mixed · 6 threads | 1ª, cache frio | 3,229 s | 3,92 s | 0,523 s | 1,953 s | 3,643 s |
+| Turbo mixed · 6 threads | 2ª, texto novo | 3,723 s | 4,72 s | 0,505 s | 0 s | 0 s |
+| Equilibrado INT8 · 6 threads | 1ª, cache frio | 4,474 s | 5,20 s | 0,532 s | 1,954 s | 2,428 s |
+| Equilibrado INT8 · 6 threads | 2ª, texto novo | 4,128 s | 4,80 s | 0,523 s | 0 s | 0 s |
+
+Esta execução revelou e corrigiu a telemetria de servidor residente: o
+adaptador antes repetia o tempo da carga inicial nas chamadas seguintes. Agora
+o campo representa a carga incremental desta solicitação; a carga ocorrida
+durante a primeira preparação continua associada à primeira geração. São duas
+amostras por modo, úteis para confirmar cache/modelo persistente, não para
+declarar latência típica nem qualidade acústica geral.
