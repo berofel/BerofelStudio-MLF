@@ -720,6 +720,21 @@ class NarrationPanel(QScrollArea):
                 index=self.voice.findData('__custom__')
                 if index>=0:self.voice.setCurrentIndex(index)
             self.sample_path.setText(path)
+            self._warn_sample_quality_if_needed(path)
+
+    def _warn_sample_quality_if_needed(self,source):
+        try:
+            from berofel.services.audio_reference import inspect_voice_reference
+            report=inspect_voice_reference(source)
+        except Exception as exc:
+            QMessageBox.warning(self,'Verificação da gravação',str(exc))
+            return
+        if report['warnings']:
+            details='\n'.join('• '+warning for warning in report['warnings'])
+            QMessageBox.warning(self,'Amostra pode prejudicar a clonagem',
+                f'Trecho quase silencioso: {report["silence_fraction"]:.0%}.\n'
+                f'As condições detectadas podem reduzir a clareza ou a semelhança vocal.\n\n'
+                f'{details}\n\nA gravação original será preservada; você pode escolher outra amostra.')
 
     def _validate_voice_sample(self):
         source=self.sample_path.text().strip()

@@ -95,5 +95,25 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             finally:
                 panel.close()
 
+    def test_choosing_low_quality_reference_warns_without_editing_the_source(self):
+        from PySide6.QtWidgets import QFileDialog,QMessageBox
+        report={'warnings':['Mais de 50% do trecho está quase silencioso; escolha uma fala mais contínua.'],
+                'silence_fraction':.553}
+        with tempfile.TemporaryDirectory(prefix='bfs_voice_warning_ui_') as folder:
+            source=Path(folder)/'reference.mp3';source.write_bytes(b'original audio bytes')
+            original=source.read_bytes();panel=NarrationPanel()
+            try:
+                with (patch.object(QFileDialog,'getOpenFileName',return_value=(str(source),'Audio')),
+                      patch('berofel.services.audio_reference.inspect_voice_reference',
+                            return_value=report),
+                      patch.object(QMessageBox,'warning') as warning):
+                    panel._choose_sample()
+                self.assertEqual(panel.sample_path.text(),str(source))
+                self.assertEqual(warning.call_count,1)
+                self.assertIn('55%',warning.call_args.args[2])
+                self.assertEqual(source.read_bytes(),original)
+            finally:
+                panel.close()
+
 
 if __name__=='__main__':unittest.main()
