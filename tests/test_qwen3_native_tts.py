@@ -30,6 +30,18 @@ class NativeQwenAdapterTests(unittest.TestCase):
             (root/'models'/'qwen3-tts-tokenizer-f16-f32.gguf').unlink()
             self.assertFalse(native.is_ready())
 
+    def test_speed_profiles_use_measured_thread_defaults_and_allow_overrides(self):
+        with patch.dict(os.environ,{},clear=False):
+            for name in ('BEROFEL_QWEN3_NATIVE_THREADS','BEROFEL_QWEN3_NATIVE_TURBO_THREADS',
+                         'BEROFEL_QWEN3_NATIVE_BALANCED_THREADS'):
+                os.environ.pop(name,None)
+            self.assertEqual(native.threads_for_engine(native.ENGINE_ID),6)
+            self.assertEqual(native.threads_for_engine(native.BALANCED_ENGINE_ID),8)
+            os.environ['BEROFEL_QWEN3_NATIVE_TURBO_THREADS']='4'
+            os.environ['BEROFEL_QWEN3_NATIVE_BALANCED_THREADS']='99'
+            self.assertEqual(native.threads_for_engine(native.ENGINE_ID),4)
+            self.assertEqual(native.threads_for_engine(native.BALANCED_ENGINE_ID),8)
+
     def test_wav_validation_accepts_audio_and_rejects_silence(self):
         with tempfile.TemporaryDirectory() as folder:
             audible=Path(folder)/'audible.wav'
@@ -96,13 +108,19 @@ class NativeQwenAdapterTests(unittest.TestCase):
             original=NarrationRequest(text='teste',voice=str(voice),consent=True)
             turbo=NarrationRequest(text='teste',voice=str(voice),consent=True,
                                    engine=native.ENGINE_ID)
+            balanced=NarrationRequest(text='teste equilibrado',voice=str(voice),consent=True,
+                                      engine=native.BALANCED_ENGINE_ID)
             self.assertEqual(original.engine,'qwen3-tts-local')
             chunks=[]
-            with patch.object(native,'generate_native_clone',return_value={'engine':native.ENGINE_ID}) as route:
+            with patch.object(native,'generate_native_clone',
+                               side_effect=lambda request,**kwargs:{'engine':request.engine}) as route:
                 result=generate_narration(turbo,audio_chunk=chunks.append)
+                balanced_result=generate_narration(balanced)
             self.assertEqual(result['engine'],native.ENGINE_ID)
-            self.assertIs(route.call_args.kwargs['audio_chunk'].__self__,chunks)
-            route.assert_called_once()
+            self.assertEqual(balanced_result['engine'],native.BALANCED_ENGINE_ID)
+            self.assertIs(route.call_args_list[0].kwargs['audio_chunk'].__self__,chunks)
+            self.assertEqual(route.call_count,2)
+            self.assertEqual(route.call_args_list[1].args[0].engine,native.BALANCED_ENGINE_ID)
 
 
 @unittest.skipUnless(os.environ.get('BEROFEL_RUN_QWEN_TURBO_INTEGRATION')=='1',
@@ -112,26 +130,30 @@ class NativeQwenRealIntegrationTests(unittest.TestCase):
         from berofel.services.voice_profiles import VoiceProfileManager
         profiles=VoiceProfileManager().list_profiles()
         profile=next(item for item in profiles if item.get('authorized') and item.get('reference_text'))
-        chunks=[]
-        result=generate_narration(NarrationRequest(
-            text='O Berofel Studio está testando a narração rápida do Qwen em português brasileiro. Código '+uuid.uuid4().hex[:8],
-            voice=profile['sample_path'],reference_text=profile['reference_text'],
-            language='portuguese',consent=True,engine=native.ENGINE_ID,
-            project_path=os.environ.get('BEROFEL_QWEN_TURBO_TEST_PROJECT','')),
-            audio_chunk=chunks.append)
-        path=Path(result['path'])
-        self.assertTrue(path.is_file())
-        duration,rate,frames=native._wav_info(path)
-        self.assertGreater(duration,1.0);self.assertEqual(rate,24000);self.assertGreater(frames,24000)
-        self.assertEqual(result['engine'],native.ENGINE_ID)
-        self.assertTrue(chunks,'O servidor nativo não entregou chunks durante a geração.')
-        self.assertEqual(sum(len(chunk) for chunk in chunks),frames*4)
-        self.assertIsNotNone(result['first_audio_chunk_seconds'])
-        self.assertIsNotNone(result['first_audio_request_seconds'])
-        self.assertGreaterEqual(result['first_audio_request_seconds'],
-                                result['first_audio_chunk_seconds'])
-        self.assertGreater(result['streamed_pcm_bytes'],0)
-        self.assertGreater(result['streamed_chunk_count'],0)
+        for engine in native.ENGINE_IDS:
+            with self.subTest(engine=engine):
+                chunks=[]
+                result=generate_narration(NarrationRequest(
+                    text='O Berofel Studio está testando a narração rápida do Qwen em português brasileiro. Código '+uuid.uuid4().hex[:8],
+                    voice=profile['sample_path'],reference_text=profile['reference_text'],
+                    language='portuguese',consent=True,engine=engine,
+                    project_path=os.environ.get('BEROFEL_QWEN_TURBO_TEST_PROJECT','')),
+                    audio_chunk=chunks.append if engine==native.ENGINE_ID else None)
+                path=Path(result['path'])
+                self.assertTrue(path.is_file())
+                duration,rate,frames=native._wav_info(path)
+                self.assertGreater(duration,1.0);self.assertEqual(rate,24000);self.assertGreater(frames,24000)
+                self.assertEqual(result['engine'],engine)
+                self.assertEqual(result['threads'],native.threads_for_engine(engine))
+                if engine==native.ENGINE_ID:
+                    self.assertTrue(chunks,'O servidor nativo não entregou chunks durante a geração.')
+                    self.assertEqual(sum(len(chunk) for chunk in chunks),frames*4)
+                    self.assertIsNotNone(result['first_audio_chunk_seconds'])
+                    self.assertIsNotNone(result['first_audio_request_seconds'])
+                    self.assertGreaterEqual(result['first_audio_request_seconds'],
+                                            result['first_audio_chunk_seconds'])
+                    self.assertGreater(result['streamed_pcm_bytes'],0)
+                    self.assertGreater(result['streamed_chunk_count'],0)
 
 
 if __name__=='__main__':

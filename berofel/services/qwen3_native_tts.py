@@ -28,16 +28,23 @@ from .narration_service import (LANGUAGES, NarrationRequest, persistent_folder,
                                 _process_flags, validate_request)
 
 ENGINE_ID='qwen3-tts-native-q4'
+BALANCED_ENGINE_ID='qwen3-tts-native-q4-balanced'
+ENGINE_IDS=(ENGINE_ID,BALANCED_ENGINE_ID)
 _LANGUAGES={'portuguese':'portuguese','english':'english','spanish':'spanish',
             'french':'french','italian':'italian','german':'german'}
-def _thread_count() -> int:
+def _thread_count(variable:str,default:int,legacy:str='') -> int:
     try:
-        return max(1, min(8, int(os.environ.get('BEROFEL_QWEN3_NATIVE_THREADS', '4') or 4)))
+        value=os.environ.get(variable)
+        if value is None and legacy:value=os.environ.get('BEROFEL_QWEN3_NATIVE_THREADS')
+        return max(1,min(8,int(value if value is not None else default)))
     except (TypeError, ValueError):
-        return 4
+        return default
 
 
-THREADS=_thread_count()
+def threads_for_engine(engine:str)->int:
+    if engine==BALANCED_ENGINE_ID:
+        return _thread_count('BEROFEL_QWEN3_NATIVE_BALANCED_THREADS',8)
+    return _thread_count('BEROFEL_QWEN3_NATIVE_TURBO_THREADS',6,'legacy')
 _LOCK=threading.RLock()
 _PROCESS=None
 _PROCESS_KEY=''
@@ -71,8 +78,8 @@ def _fingerprint(exe: Path,model: Path,tokenizer: Path) -> str:
     def identity(path: Path):
         stat=path.stat()
         return {'name':path.name,'size':stat.st_size,'mtime_ns':stat.st_mtime_ns}
-    return digest({'engine':ENGINE_ID,'exe':identity(exe),'model':identity(model),
-                   'tokenizer':identity(tokenizer),'threads':THREADS})
+    return digest({'engine':'qwen3-tts-native-q4','exe':identity(exe),
+                   'model':identity(model),'tokenizer':identity(tokenizer)})
 
 
 def _stop_locked():
@@ -87,11 +94,23 @@ def _stop_locked():
                 process.stdin.flush()
             except (OSError,ValueError,AttributeError):pass
             try:process.wait(timeout=5)
-            except subprocess.TimeoutExpired:process.terminate()
-        process.wait(timeout=5)
-    except (OSError,subprocess.TimeoutExpired):
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                try:process.wait(timeout=2)
+                except subprocess.TimeoutExpired:process.kill()
+        try:process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:process.wait(timeout=2)
+            except subprocess.TimeoutExpired:pass
+    except OSError:
         try:process.kill()
         except OSError:pass
+    finally:
+        for stream in (process.stdin,process.stdout,process.stderr):
+            if stream is not None:
+                try:stream.close()
+                except OSError:pass
 
 
 def stop_native_worker():
@@ -101,17 +120,17 @@ def stop_native_worker():
 atexit.register(stop_native_worker)
 
 
-def _start_server(exe: Path,model: Path,tokenizer: Path,control=None):
+def _start_server(exe: Path,model: Path,tokenizer: Path,control=None,threads:int=6):
     global _PROCESS,_PROCESS_KEY,_MODEL_LOAD_SECONDS
-    key=_fingerprint(exe,model,tokenizer)
+    key=digest({'model':_fingerprint(exe,model,tokenizer),'threads':threads})
     if _PROCESS is not None and _PROCESS.poll() is None and _PROCESS_KEY==key:
         return _PROCESS,0.0
     _stop_locked()
     env=os.environ.copy()
     env['PATH']=str(exe.parent)+os.pathsep+env.get('PATH','')
-    env['OMP_NUM_THREADS']=str(THREADS)
+    env['OMP_NUM_THREADS']=str(threads)
     command=[str(exe),'-m',str(model),'--tokenizer',str(tokenizer),
-             '-j',str(THREADS),'--server']
+             '-j',str(threads),'--server']
     started=time.perf_counter()
     process=subprocess.Popen(command,cwd=str(exe.parent),env=env,stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8',
@@ -176,7 +195,8 @@ def _read_reply(process,timeout: float,control=None,stream_file=None,
     raise TimeoutError(f'Qwen3 Turbo excedeu o limite local de {timeout:.0f}s.')
 
 
-def _native_embedding(reference: Path,reference_text: str,model: Path,control=None,stage=None):
+def _native_embedding(reference: Path,reference_text: str,model: Path,control=None,
+                      stage=None,threads:int=6):
     """Prepare one native x-vector per authorized recording and model build.
 
     Native and Python prompt embeddings are not interchangeable for every
@@ -219,7 +239,7 @@ def _native_embedding(reference: Path,reference_text: str,model: Path,control=No
             prepare_audio_prompt(str(reference),normalized)
             if control:control.checkpoint()
             result=subprocess.run([str(exe),'-m',str(model),'--tokenizer',str(tokenizer),
-                '-r',str(normalized),'--embedding-out',str(pending),'-j',str(THREADS)],
+                '-r',str(normalized),'--embedding-out',str(pending),'-j',str(threads)],
                 cwd=str(exe.parent),env=env,capture_output=True,text=True,
                 encoding='utf-8',errors='replace',timeout=timeout,
                 creationflags=_process_flags())
@@ -274,8 +294,11 @@ def _emit_stream_delta(path:Path,offset:int,callback,stats=None,started=None)->i
 
 def generate_native_clone(request: NarrationRequest,progress=None,runner=None,
         control=None,stage=None,audio_chunk=None) -> dict:
-    """Generate via cached Base x-vector + persistent CPU Q4_0 native server."""
+    """Generate with the selected cached Base x-vector/Q4 native execution profile."""
     validate_request(request.text,request.voice,request.language,request.consent)
+    if request.engine not in ENGINE_IDS:
+        raise ValueError('Perfil de execução Qwen Turbo desconhecido.')
+    threads=threads_for_engine(request.engine)
     if not is_ready():
         raise RuntimeError('O runtime experimental Qwen Turbo não está instalado. O modo original continua disponível.')
     exe,model,tokenizer=_layout();reference=Path(request.voice).expanduser().resolve()
@@ -285,11 +308,12 @@ def generate_native_clone(request: NarrationRequest,progress=None,runner=None,
     # the same model files and concurrent requests must not duplicate work.
     with _LOCK:
         embedding,embedding_hit,embedding_seconds=_native_embedding(reference,
-            request.reference_text.strip(),model,control,stage)
+            request.reference_text.strip(),model,control,stage,threads)
     if stage:stage('Qwen Turbo Q4 • usando modelo nativo já carregado')
     voice_hash=hashlib.sha256(reference.read_bytes()).hexdigest()
-    key=digest({'engine':ENGINE_ID,'voice_sha256':voice_hash,'text':request.text.strip(),
+    key=digest({'engine':request.engine,'voice_sha256':voice_hash,'text':request.text.strip(),
         'language':request.language,'model':_fingerprint(exe,model,tokenizer),
+        'threads':threads,
         'embedding':embedding.name})
     root=cache_root().parent/'qwen3_native_tts';directory=root/key[:2]/key
     directory.mkdir(parents=True,exist_ok=True)
@@ -306,7 +330,7 @@ def generate_native_clone(request: NarrationRequest,progress=None,runner=None,
         temporary=directory/'audio.pending.wav';temporary.unlink(missing_ok=True)
         stream_file=directory/f'audio_{uuid.uuid4().hex}.stream.f32' if audio_chunk else None
         with _LOCK:
-            process,model_load_seconds=_start_server(exe,model,tokenizer,control)
+            process,model_load_seconds=_start_server(exe,model,tokenizer,control,threads)
             payload={'text':request.text.strip(),'output':str(temporary),
                 'language':_LANGUAGES[request.language],'max_tokens':2048,
                 'embedding_in':str(embedding)}
@@ -330,7 +354,8 @@ def generate_native_clone(request: NarrationRequest,progress=None,runner=None,
         duration,rate,frames=_wav_info(temporary)
         os.replace(temporary,output)
         result={'key':key,'duration':duration,'sample_rate':rate,'frames':frames,
-            'engine':ENGINE_ID,'model_load_seconds':model_load_seconds,
+            'engine':request.engine,'threads':threads,
+            'model_load_seconds':model_load_seconds,
             'generation_seconds':generation_seconds,
             'engine_reported_ms':result.get('t_total_ms'),
             'profile_embedding_cache_hit':embedding_hit,
@@ -365,4 +390,6 @@ def generate_native_clone(request: NarrationRequest,progress=None,runner=None,
         'streamed_pcm_bytes':stream_stats['bytes'] if not cache_hit else 0,
         'streamed_chunk_count':stream_stats['chunks'] if not cache_hit else 0,
         'voice':request.voice,'language':request.language,'title':request.title,
-        'engine':ENGINE_ID,'precision':'Q4_0 mixed; sensitive tensors retained in F16'}
+        'engine':request.engine,'threads':threads,
+        'execution_profile':'Turbo' if request.engine==ENGINE_ID else 'Equilibrado',
+        'precision':'Q4_0 mixed; sensitive tensors retained in F16'}
