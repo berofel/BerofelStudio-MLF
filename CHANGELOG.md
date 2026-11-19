@@ -16,7 +16,8 @@
 - A referência configurada foi validada com Qwen real na UI e na rota rápida usando uma cópia de perfil temporária; geração, player, timeline, WAV/MP4 e projeto passaram offline. O original permaneceu sem alteração, e os artefatos temporários foram removidos ao fim.
 - Um benchmark local de cosine do encoder de speaker foi adicionado, sem persistir ou imprimir gravação, texto ou caminho. O resultado é documentado como proxy técnica, nunca como prova perceptiva de identidade.
 - Os testes Qt agora usam diretórios QSettings temporários e restauram a configuração global ao terminar; isso impede gravações acidentais no perfil Windows do usuário.
-- Histórico de performance continua em `docs/BENCHMARK_QWEN3_TTS_20261118.md`; clonagem de voz pessoal ainda aguarda confirmação de que a gravação configurada é autorizada.
+- O fluxo real autorizou a criação local do perfil “Minha voz Qwen3 Base” e cache de prompt persistente; em um processo novo, o perfil foi relido e o condicionamento preparado reutilizado. A cópia é privada em AppData; o arquivo de origem e as preferências existentes foram preservados.
+- Histórico de performance continua em `docs/BENCHMARK_QWEN3_TTS_20261118.md`; a semelhança perceptiva ainda requer avaliação auditiva pelo usuário, pois o cosine do encoder não é prova de identidade.
 
 ## 0.10.0-alpha.1 — restauração do Qwen3-TTS (18/11/2026)
 

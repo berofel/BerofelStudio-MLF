@@ -44,12 +44,16 @@ def main() -> int:
         help='copia a referência autorizada configurada para um perfil temporário e valida a rota rápida real.')
     parser.add_argument('--confirm-own-or-authorized-voice',action='store_true',
         help='confirma autorização para processar a referência local configurada.')
+    parser.add_argument('--persist-profile',action='store_true',
+        help='salva o perfil localmente para uso posterior; requer --configured-fast-profile.')
     args=parser.parse_args()
     settings=QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
                        'Berofel','BerofelStudio')
     synthetic=args.synthetic_reference or args.synthetic_fast_profile
     if not synthetic and not args.confirm_own_or_authorized_voice:
         parser.error('confirme autorização com --confirm-own-or-authorized-voice')
+    if args.persist_profile and not args.configured_fast_profile:
+        parser.error('--persist-profile requer --configured-fast-profile')
     sample=(Path(str(settings.value('narration/sample_path','') or '')).expanduser()
             if not synthetic else None)
     reference_text=(str(settings.value('narration/reference_text','') or '').strip()
@@ -81,7 +85,17 @@ def main() -> int:
             profile=VoiceProfileManager().create('Perfil sintético rápido',sample,
                 'portuguese',reference_text,authorized=True)
         elif args.configured_fast_profile:
-            os.environ['BEROFEL_VOICE_PROFILE_DIR']=str(root/'voice_profiles')
+            if args.persist_profile:
+                os.environ.pop('BEROFEL_VOICE_PROFILE_DIR',None)
+                os.environ.pop('BEROFEL_AI_CACHE',None)
+                from berofel.services.voice_profiles import VoiceProfileManager
+                profile_name='Minha voz Qwen3 Base'
+                if any(item['name'].casefold()==profile_name.casefold()
+                       for item in VoiceProfileManager().list_profiles()):
+                    raise RuntimeError('O perfil “Minha voz Qwen3 Base” já existe; não foi substituído.')
+            else:
+                os.environ['BEROFEL_VOICE_PROFILE_DIR']=str(root/'voice_profiles')
+                profile_name='Perfil local de validação'
             source_stat=sample.stat()
         project=Project(width=320,height=180,fps=12)
         project_file=root/'qwen_flow.bfs';project.path=str(project_file)
@@ -97,7 +111,7 @@ def main() -> int:
             panel.reference_text.setText(reference_text)
             panel.authorized.setChecked(True)
             with patch('berofel.ui.narration_panel.QInputDialog.getText',
-                       return_value=('Perfil local de validação',True)):
+                       return_value=(profile_name,True)):
                 panel._save_voice_profile()
             profiles=panel.voice_profiles.list_profiles()
             if len(profiles)!=1:
@@ -146,11 +160,16 @@ def main() -> int:
         if 'Reaproveitado do cache' in window.narration_panel.status.text():
             raise RuntimeError('A validação da interface esperava uma inferência Qwen nova, não um cache hit.')
         if args.synthetic_fast_profile or args.configured_fast_profile:
-            metadata=list((root/'app_cache'/'qwen3_tts').rglob('result.json'))
+            from berofel.services.ai_cache import cache_root
+            qwen_cache=cache_root().parent/'qwen3_tts'
+            metadata=list(qwen_cache.rglob('result.json'))
             entries=[__import__('json').loads(path.read_text(encoding='utf-8'))
                      for path in metadata]
+            output_key_prefix=Path(narration.source).stem.rsplit('_',1)[-1]
+            output_metadata=[item for item in entries
+                             if str(item.get('key','')).startswith(output_key_prefix)]
             if not any(item.get('prompt_cache_hit') is True and
-                       item.get('model_load_count') == 1 for item in entries):
+                       item.get('model_load_count') == 1 for item in output_metadata):
                 raise RuntimeError('A narração rápida não reutilizou o prompt vocal preparado.')
             if args.configured_fast_profile:
                 current=sample.stat()
@@ -199,7 +218,10 @@ def main() -> int:
             raise RuntimeError('Salvar/reabrir projeto não preservou o bloco de narração.')
 
         if args.configured_fast_profile:
-            print('[PASSOU] Narração rápida pela UI com cópia temporária do perfil pessoal autorizado e prompt reutilizado.')
+            if args.persist_profile:
+                print('[PASSOU] Perfil pessoal salvo pela UI, narração rápida offline após reiniciar o worker e prompt local persistido.')
+            else:
+                print('[PASSOU] Narração rápida pela UI com cópia temporária do perfil pessoal autorizado e prompt reutilizado.')
         elif args.synthetic_fast_profile:
             print('[PASSOU] Narração rápida pela UI com perfil sintético preparado e prompt reutilizado (não valida identidade vocal).')
         elif args.synthetic_reference:

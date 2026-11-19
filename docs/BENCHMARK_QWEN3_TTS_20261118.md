@@ -158,9 +158,22 @@ python scripts/validar_fluxo_qwen3_editor.py --configured-fast-profile `
   --confirm-own-or-authorized-voice
 ```
 
+O modo `--persist-profile` foi executado para validar o armazenamento real do
+usuário. Ele salva a cópia privada e o prompt preparado na biblioteca local; uma
+segunda execução em processo novo confirmou o perfil autorizado e o cache de
+condicionamento persistidos. O teste conserva a referência original. Não use
+`--persist-profile` se não quiser criar um perfil local durável; o script se
+recusa a substituir um perfil com o mesmo nome.
+
 Para obter uma métrica técnica de semelhança do perfil configurado, use
-`scripts/benchmark_qwen3_voice_similarity.py --confirm-own-or-authorized-voice
---threads 4` no ambiente Qwen isolado. O script opera offline, mantém o áudio
+no ambiente Qwen isolado:
+
+```powershell
+python scripts/benchmark_qwen3_voice_similarity.py `
+  --confirm-own-or-authorized-voice --threads 4
+```
+
+O script opera offline, mantém o áudio
 gerado somente em memória e imprime métricas sem nome, caminho ou transcrição.
 O cosine do encoder de speaker é apenas uma proxy, não uma medida perceptiva
 nem garantia biométrica de identidade; a avaliação auditiva continua necessária.
