@@ -1,0 +1,315 @@
+"""Experimental Windows CPU adapter for a locally installed Qwen3-TTS.cpp build.
+
+This backend is opt-in. The official Python/PyTorch Base backend remains the
+default and fallback. It uses the same 0.6B Base speaker x-vector, cached by the
+official worker, then synthesizes with a persistent native Q4_0 server.
+"""
+from __future__ import annotations
+
+import atexit
+import hashlib
+import json
+import os
+from pathlib import Path
+import queue
+import shutil
+import struct
+import subprocess
+import threading
+import tempfile
+import time
+import wave
+
+import numpy as np
+
+from .ai_cache import cache_root, digest, write_json
+from .narration_service import (LANGUAGES, NarrationRequest, persistent_folder,
+                                _process_flags, validate_request)
+
+ENGINE_ID='qwen3-tts-native-q4'
+_LANGUAGES={'portuguese':'portuguese','english':'english','spanish':'spanish',
+            'french':'french','italian':'italian','german':'german'}
+def _thread_count() -> int:
+    try:
+        return max(1, min(8, int(os.environ.get('BEROFEL_QWEN3_NATIVE_THREADS', '4') or 4)))
+    except (TypeError, ValueError):
+        return 4
+
+
+THREADS=_thread_count()
+_LOCK=threading.RLock()
+_PROCESS=None
+_PROCESS_KEY=''
+_MODEL_LOAD_SECONDS=0.0
+
+
+def runtime_root() -> Path:
+    override=os.environ.get('BEROFEL_QWEN3_NATIVE_HOME','').strip()
+    if override:return Path(override).expanduser().resolve()
+    local=os.environ.get('LOCALAPPDATA')
+    base=Path(local) if local else Path.home()/'.local'/'share'
+    return base/'BFS'/'qwen3_tts'/'native_turbo'
+
+
+def _layout() -> tuple[Path,Path,Path]:
+    root=runtime_root()
+    exe=Path(os.environ.get('BEROFEL_QWEN3_NATIVE_EXE','') or root/'bin'/'qwen3-tts-cli.exe')
+    model=Path(os.environ.get('BEROFEL_QWEN3_NATIVE_MODEL','') or root/'models'/'qwen3-tts-0.6b-q4_0.gguf')
+    tokenizer=Path(os.environ.get('BEROFEL_QWEN3_NATIVE_TOKENIZER','') or root/'models'/'qwen3-tts-tokenizer-f16-f32.gguf')
+    if not model.is_file() and not os.environ.get('BEROFEL_QWEN3_NATIVE_MODEL'):
+        model=root/'models'/'qwen3-tts-0.6b-q4_0-exp.gguf'
+    return exe.expanduser().resolve(),model.expanduser().resolve(),tokenizer.expanduser().resolve()
+
+
+def is_ready() -> bool:
+    exe,model,tokenizer=_layout()
+    return exe.is_file() and model.is_file() and tokenizer.is_file()
+
+
+def _fingerprint(exe: Path,model: Path,tokenizer: Path) -> str:
+    def identity(path: Path):
+        stat=path.stat()
+        return {'name':path.name,'size':stat.st_size,'mtime_ns':stat.st_mtime_ns}
+    return digest({'engine':ENGINE_ID,'exe':identity(exe),'model':identity(model),
+                   'tokenizer':identity(tokenizer),'threads':THREADS})
+
+
+def _stop_locked():
+    global _PROCESS,_PROCESS_KEY,_MODEL_LOAD_SECONDS
+    process=_PROCESS
+    _PROCESS=None;_PROCESS_KEY='';_MODEL_LOAD_SECONDS=0.0
+    if process is None:return
+    try:
+        if process.poll() is None:
+            try:
+                process.stdin.write(json.dumps({'operation':'shutdown'})+'\n')
+                process.stdin.flush()
+            except (OSError,ValueError,AttributeError):pass
+            try:process.wait(timeout=5)
+            except subprocess.TimeoutExpired:process.terminate()
+        process.wait(timeout=5)
+    except (OSError,subprocess.TimeoutExpired):
+        try:process.kill()
+        except OSError:pass
+
+
+def stop_native_worker():
+    with _LOCK:_stop_locked()
+
+
+atexit.register(stop_native_worker)
+
+
+def _start_server(exe: Path,model: Path,tokenizer: Path,control=None):
+    global _PROCESS,_PROCESS_KEY,_MODEL_LOAD_SECONDS
+    key=_fingerprint(exe,model,tokenizer)
+    if _PROCESS is not None and _PROCESS.poll() is None and _PROCESS_KEY==key:
+        return _PROCESS,0.0
+    _stop_locked()
+    env=os.environ.copy()
+    env['PATH']=str(exe.parent)+os.pathsep+env.get('PATH','')
+    env['OMP_NUM_THREADS']=str(THREADS)
+    command=[str(exe),'-m',str(model),'--tokenizer',str(tokenizer),
+             '-j',str(THREADS),'--server']
+    started=time.perf_counter()
+    process=subprocess.Popen(command,cwd=str(exe.parent),env=env,stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8',
+        errors='replace',bufsize=1,creationflags=_process_flags())
+    stderr_lines=queue.Queue()
+    def drain_stderr():
+        try:
+            for line in process.stderr:stderr_lines.put(line.rstrip())
+        except (OSError,ValueError):pass
+    threading.Thread(target=drain_stderr,name='QwenNativeStderr',daemon=True).start()
+    deadline=time.monotonic()+900
+    while time.monotonic()<deadline:
+        if control and control.cancelled:
+            process.kill();process.wait(timeout=5)
+            if control:control.checkpoint()
+        if process.poll() is not None:
+            tail=[]
+            while not stderr_lines.empty():tail.append(stderr_lines.get_nowait())
+            raise RuntimeError('Backend nativo Qwen3 não iniciou: '+(' | '.join(tail[-5:]) or 'processo encerrou sem diagnóstico.'))
+        try:line=stderr_lines.get(timeout=.2)
+        except queue.Empty:continue
+        if 'Server mode: ready.' in line:
+            _PROCESS=process;_PROCESS_KEY=key
+            _MODEL_LOAD_SECONDS=time.perf_counter()-started
+            return process,_MODEL_LOAD_SECONDS
+    process.kill();process.wait(timeout=5)
+    raise TimeoutError('O modelo Qwen3 Turbo não ficou pronto em 15 minutos.')
+
+
+def _read_reply(process,timeout: float,control=None):
+    replies=queue.Queue(maxsize=1)
+    def read_line():
+        try:replies.put((True,process.stdout.readline()))
+        except Exception as exc:replies.put((False,exc))
+    threading.Thread(target=read_line,name='QwenNativeReply',daemon=True).start()
+    deadline=time.monotonic()+timeout
+    while time.monotonic()<deadline:
+        if control and control.cancelled:
+            _stop_locked()
+            control.checkpoint()
+        if process.poll() is not None:
+            _stop_locked();raise RuntimeError('Servidor Qwen3 Turbo encerrou durante a narração.')
+        try:ok,value=replies.get(timeout=min(.2,max(.01,deadline-time.monotonic())))
+        except queue.Empty:continue
+        if not ok:raise RuntimeError(f'Falha lendo resposta do Qwen3 Turbo: {value}')
+        if not value:
+            _stop_locked();raise RuntimeError('Servidor Qwen3 Turbo fechou o canal de resposta.')
+        try:return json.loads(value)
+        except ValueError as exc:
+            _stop_locked();raise RuntimeError('Servidor Qwen3 Turbo retornou JSON inválido.') from exc
+    _stop_locked()
+    raise TimeoutError(f'Qwen3 Turbo excedeu o limite local de {timeout:.0f}s.')
+
+
+def _native_embedding(reference: Path,reference_text: str,model: Path,control=None,stage=None):
+    """Prepare one native x-vector per authorized recording and model build.
+
+    Native and Python prompt embeddings are not interchangeable for every
+    tested precision, so this cache is generated by the exact Turbo encoder.
+    """
+    exe,_,tokenizer=_layout()
+    source_hash=hashlib.sha256()
+    with reference.open('rb') as stream:
+        for chunk in iter(lambda:stream.read(1024*1024),b''):
+            source_hash.update(chunk)
+    identity=digest({'voice_sha256':source_hash.hexdigest(),
+        'native_model':_fingerprint(exe,model,tokenizer),
+        'format':'qwen3-tts.cpp-xvector-v1'})
+    embeddings=runtime_root()/'cache'/'speaker_embeddings'
+    destination=embeddings/f'{identity}.bin'
+
+    def valid(path: Path) -> bool:
+        try:
+            if path.stat().st_size!=4100:return False
+            with path.open('rb') as stream:
+                count=struct.unpack('<I',stream.read(4))[0]
+                vector=np.frombuffer(stream.read(),dtype='<f4')
+            return count==1024 and vector.size==1024 and bool(np.isfinite(vector).all())
+        except (OSError,ValueError,struct.error):return False
+
+    if valid(destination):return destination,True,0.0
+    if destination.exists():destination.unlink(missing_ok=True)
+    embeddings.mkdir(parents=True,exist_ok=True)
+    if stage:stage('Qwen Turbo • preparando cache vocal nativo (uma vez por perfil)')
+    started=time.perf_counter()
+    from .audio_reference import prepare_audio_prompt
+    env=os.environ.copy()
+    env['PATH']=str(exe.parent)+os.pathsep+env.get('PATH','')
+    try:timeout=max(30,min(900,float(os.environ.get('BEROFEL_QWEN3_NATIVE_PROFILE_TIMEOUT','300'))))
+    except ValueError:timeout=300.0
+    pending=destination.with_suffix('.bin.part')
+    try:
+        with tempfile.TemporaryDirectory(prefix='bfs_qwen_native_profile_') as folder:
+            normalized=Path(folder)/'reference.wav'
+            prepare_audio_prompt(str(reference),normalized)
+            if control:control.checkpoint()
+            result=subprocess.run([str(exe),'-m',str(model),'--tokenizer',str(tokenizer),
+                '-r',str(normalized),'--embedding-out',str(pending),'-j',str(THREADS)],
+                cwd=str(exe.parent),env=env,capture_output=True,text=True,
+                encoding='utf-8',errors='replace',timeout=timeout,
+                creationflags=_process_flags())
+            if result.returncode or not valid(pending):
+                detail=(result.stderr or result.stdout or '').replace(str(normalized),'[áudio local]')
+                raise RuntimeError('Não foi possível preparar o perfil vocal no Qwen Turbo: '+
+                    (detail[-700:].strip() or 'o vetor nativo retornou inválido.'))
+        if control:control.checkpoint()
+        os.replace(pending,destination)
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(f'A preparação nativa da referência excedeu {timeout:.0f}s.') from exc
+    finally:pending.unlink(missing_ok=True)
+    return destination,False,time.perf_counter()-started
+
+def _wav_info(path: Path) -> tuple[float,int,int]:
+    with wave.open(str(path),'rb') as stream:
+        channels=stream.getnchannels();rate=stream.getframerate();frames=stream.getnframes()
+        width=stream.getsampwidth()
+        if channels not in (1,2) or rate<8000 or frames<=0 or width not in (2,3,4):
+            raise ValueError('O backend Turbo produziu WAV com formato inválido.')
+        raw=stream.readframes(frames)
+    if len(raw)<frames*channels*width:
+        raise ValueError('O WAV do backend Turbo foi gravado incompleto.')
+    sample_peak=max((abs(value) for (value,) in __import__('struct').iter_unpack('<h',raw[:len(raw)//2*2])),default=0) if width==2 else 1
+    if sample_peak==0:raise ValueError('O backend Turbo produziu áudio silencioso.')
+    return frames/rate,rate,frames
+
+
+def generate_native_clone(request: NarrationRequest,progress=None,runner=None,
+        control=None,stage=None) -> dict:
+    """Generate via cached Base x-vector + persistent CPU Q4_0 native server."""
+    validate_request(request.text,request.voice,request.language,request.consent)
+    if not is_ready():
+        raise RuntimeError('O runtime experimental Qwen Turbo não está instalado. O modo original continua disponível.')
+    exe,model,tokenizer=_layout();reference=Path(request.voice).expanduser().resolve()
+    if control:control.checkpoint()
+    if progress:progress(0,3)
+    # Serialize profile cache creation with inference: the CLI encoder loads
+    # the same model files and concurrent requests must not duplicate work.
+    with _LOCK:
+        embedding,embedding_hit,embedding_seconds=_native_embedding(reference,
+            request.reference_text.strip(),model,control,stage)
+    if stage:stage('Qwen Turbo Q4 • usando modelo nativo já carregado')
+    voice_hash=hashlib.sha256(reference.read_bytes()).hexdigest()
+    key=digest({'engine':ENGINE_ID,'voice_sha256':voice_hash,'text':request.text.strip(),
+        'language':request.language,'model':_fingerprint(exe,model,tokenizer),
+        'embedding':embedding.name})
+    root=cache_root().parent/'qwen3_native_tts';directory=root/key[:2]/key
+    directory.mkdir(parents=True,exist_ok=True)
+    output=directory/'audio.wav';metadata=directory/'result.json';cache_hit=False
+    if output.is_file() and metadata.is_file():
+        try:
+            info=json.loads(metadata.read_text(encoding='utf-8'))
+            cache_hit=info.get('key')==key and _wav_info(output)[0]>0
+        except (OSError,ValueError,wave.Error):cache_hit=False
+    result={}
+    if not cache_hit:
+        if control:control.checkpoint()
+        temporary=directory/'audio.pending.wav';temporary.unlink(missing_ok=True)
+        with _LOCK:
+            process,model_load_seconds=_start_server(exe,model,tokenizer,control)
+            payload={'text':request.text.strip(),'output':str(temporary),
+                'language':_LANGUAGES[request.language],'max_tokens':2048,
+                'embedding_in':str(embedding)}
+            started=time.perf_counter()
+            process.stdin.write(json.dumps(payload,ensure_ascii=False)+'\n')
+            process.stdin.flush()
+            result=_read_reply(process,timeout=float(os.environ.get(
+                'BEROFEL_QWEN3_NATIVE_TIMEOUT','1800')),control=control)
+            generation_seconds=time.perf_counter()-started
+        if not result.get('success') or not temporary.is_file():
+            temporary.unlink(missing_ok=True)
+            raise RuntimeError('Qwen3 Turbo não concluiu a geração do áudio.')
+        duration,rate,frames=_wav_info(temporary)
+        os.replace(temporary,output)
+        result={'key':key,'duration':duration,'sample_rate':rate,'frames':frames,
+            'engine':ENGINE_ID,'model_load_seconds':model_load_seconds,
+            'generation_seconds':generation_seconds,
+            'engine_reported_ms':result.get('t_total_ms'),
+            'profile_embedding_cache_hit':embedding_hit,
+            'profile_embedding_prepare_seconds':embedding_seconds}
+        write_json(metadata,result)
+    else:
+        result=info
+        try:os.utime(metadata,None)
+        except OSError:pass
+    if control:control.checkpoint()
+    if progress:progress(2,3)
+    destination=persistent_folder(request.project_path);destination.mkdir(parents=True,exist_ok=True)
+    title=''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in request.title.strip())[:48] or 'Narracao'
+    target=destination/f'{title}_{time.strftime("%Y%m%d_%H%M%S")}_{key[:8]}.wav';suffix=1
+    while target.exists():
+        target=destination/f'{title}_{time.strftime("%Y%m%d_%H%M%S")}_{key[:8]}_{suffix}.wav';suffix+=1
+    shutil.copy2(output,target)
+    if control and control.cancelled:
+        target.unlink(missing_ok=True);control.checkpoint()
+    if progress:progress(3,3)
+    return {'path':str(target),'duration':float(result['duration']),
+        'cache_hit':cache_hit,'prompt_cache_hit':embedding_hit,
+        'profile_prepare_seconds':float(result.get('profile_embedding_prepare_seconds',embedding_seconds)),
+        'model_load_seconds':float(result.get('model_load_seconds',0.0)),
+        'generation_seconds':float(result.get('generation_seconds',0.0)),
+        'voice':request.voice,'language':request.language,'title':request.title,
+        'engine':ENGINE_ID,'precision':'Q4_0 mixed; sensitive tensors retained in F16'}

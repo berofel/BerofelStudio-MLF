@@ -62,6 +62,10 @@ def generate_narration(request: NarrationRequest, progress: Callable | None = No
                        runner: Callable | None = None, control=None,
                        stage=None) -> dict:
     """Generate a non-destructive, local WAV using the sole supported TTS engine."""
+    if request.engine == 'qwen3-tts-native-q4':
+        from .qwen3_native_tts import generate_native_clone
+        return generate_native_clone(request,progress=progress,runner=runner,
+                                     control=control,stage=stage)
     if request.engine != 'qwen3-tts-local':
         raise ValueError('O BerofelStudio usa exclusivamente Qwen3-TTS Base para narração.')
     validate_request(request.text,request.voice,request.language,request.consent)

@@ -230,10 +230,12 @@ class ActionsUITests(unittest.TestCase):
             self.assertEqual(analyze.call_args.args[1],words)
             dialog.close();win.close()
 
-    def test_custom_voice_panel_selects_qwen_local_clone_only(self):
-        panel=NarrationPanel()
+    def test_custom_voice_panel_keeps_original_default_and_offers_ready_turbo(self):
+        with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True):
+            panel=NarrationPanel()
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
         self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
+        self.assertEqual(panel.clone_engine.itemData(1),'qwen3-tts-native-q4')
         self.assertFalse(panel.sample_path.isHidden())
         self.assertFalse(panel.validate_sample.isHidden())
         self.assertFalse(panel.clone_detail_title.isHidden())
@@ -241,6 +243,33 @@ class ActionsUITests(unittest.TestCase):
         self.assertIn('Qwen3-TTS Base',panel.license_note.text())
         self.assertFalse(panel.clone_engine.isVisible())
         panel.close()
+
+    def test_turbo_panel_selection_builds_native_narration_request(self):
+        import tempfile
+        with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True):
+            panel=NarrationPanel()
+        panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+        panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-native-q4'))
+        sample=tempfile.NamedTemporaryFile(suffix='.wav',delete=False)
+        sample.close()
+        panel.sample_path.setText(sample.name)
+        panel.authorized.setChecked(True)
+        panel.text.setPlainText('Olá, esta é uma narração rápida.')
+        panel.reference_text.setText('Esta gravação é a referência autorizada.')
+        requests=[]
+        panel.on_generate=lambda request,insert:requests.append((request,insert))
+        panel._generate(False)
+        Path(sample.name).unlink(missing_ok=True)
+        self.assertEqual(requests[0][0].engine,'qwen3-tts-native-q4')
+        self.assertTrue(requests[0][0].consent)
+        self.assertEqual(requests[0][0].reference_text,'Esta gravação é a referência autorizada.')
+        self.assertIn('experimental',panel.license_note.text())
+        panel.save_preferences()
+        panel.close()
+        with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True):
+            restored=NarrationPanel()
+        self.assertEqual(restored.clone_engine.currentData(),'qwen3-tts-native-q4')
+        restored.close()
 
     def test_new_custom_voice_uses_qwen_and_requires_reference_audio(self):
         with tempfile.TemporaryDirectory(prefix='bfs_qwen_voice_ui_') as folder:

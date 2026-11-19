@@ -110,6 +110,12 @@ class NarrationPanel(QScrollArea):
         self.activate_cloning.hide()
         self.clone_engine = QComboBox()
         self.clone_engine.addItem('Qwen3-TTS Base · local', 'qwen3-tts-local')
+        try:
+            from berofel.services.qwen3_native_tts import is_ready as native_qwen_ready
+            if native_qwen_ready():
+                self.clone_engine.addItem('Qwen Turbo · Q4 experimental', 'qwen3-tts-native-q4')
+        except (OSError,ValueError,ImportError):
+            pass
         self.clone_engine.setVisible(False)
         self.clone_engine.currentIndexChanged.connect(self._update_custom)
         layout.addWidget(self.clone_engine)
@@ -617,8 +623,9 @@ class NarrationPanel(QScrollArea):
         if language_index>=0:self.language.setCurrentIndex(language_index)
         if not self._voice_profile_id(voice):
             self.sample_path.setText(str(settings.value('narration/sample_path','')))
-        engine='qwen3-tts-local'
+        engine=str(settings.value('narration/clone_engine','qwen3-tts-local'))
         index=self.clone_engine.findData(engine)
+        if index<0:index=self.clone_engine.findData('qwen3-tts-local')
         if index>=0:self.clone_engine.setCurrentIndex(index)
         self.reference_text.setText(str(settings.value('narration/reference_text','')))
         self.text.setPlainText(str(settings.value('narration/draft','')))
@@ -677,15 +684,18 @@ class NarrationPanel(QScrollArea):
         self.save_voice_profile.setVisible(selected=='__custom__')
         self.rename_voice_profile.setVisible(bool(profile_id))
         self.delete_voice_profile.setVisible(bool(profile_id))
-        qwen = custom and self.clone_engine.currentData() == 'qwen3-tts-local'
+        engine=self.clone_engine.currentData()
+        qwen = custom and engine in ('qwen3-tts-local','qwen3-tts-native-q4')
         self.activate_cloning.hide()
-        self.clone_engine.hide()
+        self.clone_engine.setVisible(custom and self.clone_engine.count()>1)
         self.reference_text.setVisible(qwen)
-        self.install_qwen.setVisible(qwen)
+        self.install_qwen.setVisible(qwen and engine=='qwen3-tts-local')
         self.qwen_status.setVisible(qwen and bool(self.qwen_status.text()))
         self.quantize.hide()  # INT8/INT4 have not passed cloning and quality validation.
         if custom:
-            if qwen:
+            if engine=='qwen3-tts-native-q4' and qwen:
+                self.license_note.setText('Qwen Turbo experimental: usa o perfil vocal Qwen Base já preparado e o modelo 0.6B nativo Q4_0. Prioriza velocidade; a clonagem detalhada permanece no modo original. O backend ainda está em validação e pode variar em naturalidade. Use apenas voz autorizada.')
+            elif qwen:
                 self.license_note.setText('Qwen3-TTS Base 0.6B: pesos públicos Apache-2.0; preparação baixa o modelo (~2,5 GB) e cria ambiente isolado. Depois, referência e síntese rodam localmente, sem enviar sua gravação. Forneça o texto exato da amostra para melhor resultado; sem ele, o modo só pelo vetor de voz pode reduzir a qualidade. Use somente voz autorizada.')
             else:
                 self.license_note.setText('Importe uma referência de voz autorizada para gerar com Qwen3-TTS Base.')
@@ -904,14 +914,14 @@ class NarrationPanel(QScrollArea):
         if not voice or not Path(voice).is_file():
             QMessageBox.warning(self,'Amostra de voz','Escolha uma gravação de referência válida antes de gerar.')
             return
-        engine='qwen3-tts-local'
+        engine=self.clone_engine.currentData() or 'qwen3-tts-local'
         req = NarrationRequest(text=self.text.toPlainText(), voice=voice,
                                language=self.language.currentData(),
                                consent=custom and self.authorized.isChecked(),
                                quantize=self.quantize.isChecked(),
                                title=self.name.text().strip() or 'Narração',
                                engine=engine,
-                               reference_text=self.reference_text.text().strip() if custom and engine=='qwen3-tts-local' else '')
+                               reference_text=self.reference_text.text().strip() if custom else '')
         if self.on_generate:
             self.on_generate(req, add_to_timeline)
 

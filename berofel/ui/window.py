@@ -1372,7 +1372,8 @@ class MainWindow(QMainWindow):
         position=self.timeline.view.cursor_time
         self._ai_busy=True
         self.narration_panel.busy(True)
-        engine_label='Qwen3-TTS Base local'
+        engine_label=('Qwen Turbo Q4 experimental' if request.engine=='qwen3-tts-native-q4'
+                      else 'Qwen3-TTS Base local')
         self.statusBar().showMessage(f'Batata Quente: {engine_label} gerando em processo isolado...')
         def ready(result):
             path=result['path']
