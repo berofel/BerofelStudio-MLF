@@ -236,6 +236,7 @@ class ActionsUITests(unittest.TestCase):
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
         self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
         self.assertEqual(panel.clone_engine.itemData(1),'qwen3-tts-native-q4')
+        self.assertEqual(panel.clone_engine.itemData(2),'qwen3-tts-native-q4-balanced')
         self.assertFalse(panel.sample_path.isHidden())
         self.assertFalse(panel.validate_sample.isHidden())
         self.assertFalse(panel.clone_detail_title.isHidden())
@@ -270,6 +271,50 @@ class ActionsUITests(unittest.TestCase):
             restored=NarrationPanel()
         self.assertEqual(restored.clone_engine.currentData(),'qwen3-tts-native-q4')
         restored.close()
+
+    def test_balanced_panel_selection_builds_native_narration_request(self):
+        import tempfile
+        with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True):
+            panel=NarrationPanel()
+        panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+        panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-native-q4-balanced'))
+        sample=tempfile.NamedTemporaryFile(suffix='.wav',delete=False);sample.close()
+        panel.sample_path.setText(sample.name);panel.authorized.setChecked(True)
+        panel.text.setPlainText('Perfil equilibrado local do Qwen.')
+        requests=[];panel.on_generate=lambda request,insert:requests.append(request)
+        panel._generate(False);Path(sample.name).unlink(missing_ok=True)
+        self.assertEqual(requests[0].engine,'qwen3-tts-native-q4-balanced')
+        self.assertIn('Equilibrado',panel.license_note.text())
+        panel.close()
+
+    def test_narration_panel_can_alternate_latest_and_previous_mode_samples(self):
+        import tempfile
+        import wave
+        with tempfile.TemporaryDirectory(prefix='bfs_voice_ab_') as folder:
+            samples=[]
+            for name in ('turbo.wav','balanced.wav'):
+                path=Path(folder)/name
+                with wave.open(str(path),'wb') as output:
+                    output.setnchannels(1);output.setsampwidth(2);output.setframerate(24000)
+                    output.writeframes(b'\x01\x00'*2400)
+                samples.append(path)
+            panel=NarrationPanel();panel.set_result(str(samples[0]),.1,False,'qwen3-tts-native-q4')
+            self.assertFalse(panel.listen_previous.isEnabled())
+            panel.set_result(str(samples[1]),.1,False,'qwen3-tts-native-q4-balanced')
+            self.assertTrue(panel.listen_previous.isEnabled())
+            self.assertIn('Turbo',panel.audio_history[0][1])
+            self.assertIn('Equilibrado',panel.audio_history[1][1])
+            class FakePlayer:
+                def setSource(self,url): self._source=url
+                def source(self): return self._source
+                def stop(self): pass
+                def play(self): pass
+            panel._player=FakePlayer()
+            panel._listen_previous()
+            self.assertEqual(Path(panel._player.source().toLocalFile()),samples[0])
+            panel._listen()
+            self.assertEqual(Path(panel._player.source().toLocalFile()),samples[1])
+            panel.close()
 
     def test_new_custom_voice_uses_qwen_and_requires_reference_audio(self):
         with tempfile.TemporaryDirectory(prefix='bfs_qwen_voice_ui_') as folder:

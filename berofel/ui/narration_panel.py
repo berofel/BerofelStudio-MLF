@@ -26,6 +26,7 @@ class NarrationPanel(QScrollArea):
         self.on_use_transcript = None
         self.on_prepare_voice = None
         self.last_audio = ''
+        self.audio_history=[]
         self.setWidgetResizable(True)
         self.setVerticalScrollBarPolicy(self.verticalScrollBarPolicy())
         self.setHorizontalScrollBarPolicy(self.horizontalScrollBarPolicy())
@@ -109,11 +110,12 @@ class NarrationPanel(QScrollArea):
         self.activate_cloning = QPushButton('')
         self.activate_cloning.hide()
         self.clone_engine = QComboBox()
-        self.clone_engine.addItem('Qwen3-TTS Base · local', 'qwen3-tts-local')
+        self.clone_engine.addItem('Original · Qwen3-TTS Base', 'qwen3-tts-local')
         try:
             from berofel.services.qwen3_native_tts import is_ready as native_qwen_ready
             if native_qwen_ready():
-                self.clone_engine.addItem('Qwen Turbo · Q4 experimental', 'qwen3-tts-native-q4')
+                self.clone_engine.addItem('Turbo · Q4 · 6 threads', 'qwen3-tts-native-q4')
+                self.clone_engine.addItem('Equilibrado · Q4 · 8 threads', 'qwen3-tts-native-q4-balanced')
         except (OSError,ValueError,ImportError):
             pass
         self.clone_engine.setVisible(False)
@@ -292,6 +294,10 @@ class NarrationPanel(QScrollArea):
         self.listen.setEnabled(False)
         self.listen.clicked.connect(self._listen)
         layout.addWidget(self.listen)
+        self.listen_previous=QPushButton('♫ Ouvir geração anterior')
+        self.listen_previous.setEnabled(False)
+        self.listen_previous.clicked.connect(self._listen_previous)
+        layout.addWidget(self.listen_previous)
         self._responsive_buttons.extend([
             (choose,'📁 Escolher amostra de voz','📁 Amostra'),
             (self.validate_sample,'✓ Verificar qualidade da gravação','✓ Validar voz'),
@@ -300,6 +306,7 @@ class NarrationPanel(QScrollArea):
             (self.insert,'▶ Gerar e adicionar na timeline','▶ Gerar na timeline'),
             (self.generate_file,'♬ Gerar somente o WAV','♬ Gerar WAV'),
             (self.listen,'♫ Ouvir a última narração','♫ Ouvir narração'),
+            (self.listen_previous,'♫ Ouvir geração anterior','♫ Ouvir anterior'),
         ])
         self.status = QLabel('O Qwen3 Base é carregado uma vez e mantido aquecido durante a sessão do editor.')
         self.status.setWordWrap(True)
@@ -685,7 +692,8 @@ class NarrationPanel(QScrollArea):
         self.rename_voice_profile.setVisible(bool(profile_id))
         self.delete_voice_profile.setVisible(bool(profile_id))
         engine=self.clone_engine.currentData()
-        qwen = custom and engine in ('qwen3-tts-local','qwen3-tts-native-q4')
+        qwen = custom and engine in ('qwen3-tts-local','qwen3-tts-native-q4',
+                                     'qwen3-tts-native-q4-balanced')
         self.activate_cloning.hide()
         self.clone_engine.setVisible(custom and self.clone_engine.count()>1)
         self.reference_text.setVisible(qwen)
@@ -693,8 +701,9 @@ class NarrationPanel(QScrollArea):
         self.qwen_status.setVisible(qwen and bool(self.qwen_status.text()))
         self.quantize.hide()  # INT8/INT4 have not passed cloning and quality validation.
         if custom:
-            if engine=='qwen3-tts-native-q4' and qwen:
-                self.license_note.setText('Qwen Turbo experimental: usa o perfil vocal Qwen Base já preparado e o modelo 0.6B nativo Q4_0. Prioriza velocidade; a clonagem detalhada permanece no modo original. O backend ainda está em validação e pode variar em naturalidade. Use apenas voz autorizada.')
+            if engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced') and qwen:
+                profile_name='Turbo · Q4 · 6 threads' if engine=='qwen3-tts-native-q4' else 'Equilibrado · Q4 · 8 threads'
+                self.license_note.setText(f'{profile_name} experimental: usa o modelo Qwen3-TTS Base 0.6B nativo e o x-vector preparado. Prioriza velocidade; a clonagem detalhada continua disponível em Original. A naturalidade varia entre gerações; compare as amostras antes de escolher. Use apenas voz autorizada.')
             elif qwen:
                 self.license_note.setText('Qwen3-TTS Base 0.6B: pesos públicos Apache-2.0; preparação baixa o modelo (~2,5 GB) e cria ambiente isolado. Depois, referência e síntese rodam localmente, sem enviar sua gravação. Forneça o texto exato da amostra para melhor resultado; sem ele, o modo só pelo vetor de voz pode reduzir a qualidade. Use somente voz autorizada.')
             else:
@@ -931,15 +940,30 @@ class NarrationPanel(QScrollArea):
         if busy:
             self.status.setText('Qwen3-TTS em processo local isolado; o modelo é reutilizado durante esta sessão.')
 
-    def set_result(self, path: str, duration: float, cache_hit: bool):
+    def set_result(self, path: str, duration: float, cache_hit: bool, engine: str=''):
         self.last_audio = path
+        mode={'qwen3-tts-local':'Original','qwen3-tts-native-q4':'Turbo · Q4 · 6 threads',
+              'qwen3-tts-native-q4-balanced':'Equilibrado · Q4 · 8 threads'}.get(engine,engine or 'Qwen3-TTS')
+        if not self.audio_history or Path(self.audio_history[-1][0])!=Path(path):
+            self.audio_history.append((path,mode))
+            self.audio_history=self.audio_history[-8:]
+        self.listen_previous.setEnabled(len(self.audio_history)>1)
         self.listen.setEnabled(True)
-        self.status.setText(f'WAV pronto ({duration:.1f}s). ' +
+        self.status.setText(f'WAV pronto · {mode} ({duration:.1f}s). ' +
                             ('Reaproveitado do cache.' if cache_hit else 'Salvo no cache.') +
                             '\n' + str(Path(path)))
 
     def _listen(self):
         if self.last_audio and Path(self.last_audio).is_file():
+            self._play_audio(self.last_audio)
+
+    def _listen_previous(self):
+        if len(self.audio_history)>1:
+            previous=self.audio_history[-2][0]
+            if Path(previous).is_file():self._play_audio(previous)
+
+    def _play_audio(self,path:str):
+        if Path(path).is_file():
             self._player.stop()
-            self._player.setSource(QUrl.fromLocalFile(self.last_audio))
+            self._player.setSource(QUrl.fromLocalFile(path))
             self._player.play()

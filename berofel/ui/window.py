@@ -1375,15 +1375,17 @@ class MainWindow(QMainWindow):
         position=self.timeline.view.cursor_time
         self._ai_busy=True
         self.narration_panel.busy(True)
-        streaming=request.engine=='qwen3-tts-native-q4'
+        streaming=request.engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced')
         if streaming:self.narration_stream.begin()
-        engine_label=('Qwen Turbo Q4 experimental' if request.engine=='qwen3-tts-native-q4'
-                      else 'Qwen3-TTS Base local')
+        engine_label=({'qwen3-tts-native-q4':'Qwen Turbo Q4 · 6 threads experimental',
+                       'qwen3-tts-native-q4-balanced':'Qwen Equilibrado Q4 · 8 threads experimental'}
+                      .get(request.engine,'Qwen3-TTS Base local'))
         self.statusBar().showMessage(f'Batata Quente: {engine_label} gerando em processo isolado...')
         def ready(result):
             path=result['path']
             duration=result['duration']
-            self.narration_panel.set_result(path,duration,result['cache_hit'])
+            self.narration_panel.set_result(path,duration,result['cache_hit'],
+                result.get('engine',''))
             if add_to_timeline:
                 self.snapshot()
                 narration_track=next((t for t in self.project.tracks if t.name=='Narração' and not t.locked),None)
