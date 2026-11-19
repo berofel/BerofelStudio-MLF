@@ -272,6 +272,35 @@ class ActionsUITests(unittest.TestCase):
         self.assertEqual(restored.clone_engine.currentData(),'qwen3-tts-native-q4')
         restored.close()
 
+    def test_selecting_saved_purec_voice_prewarms_only_authorized_profile(self):
+        from unittest.mock import Mock
+        with patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
+             patch('berofel.services.qwen3_purec_tts.is_ready',return_value=True):
+            panel=NarrationPanel()
+        with tempfile.NamedTemporaryFile(suffix='.wav',delete=False) as sample:
+            sample_path=sample.name
+        profile={'sample_path':sample_path,'reference_text':'fala de referência',
+                 'authorized':True,'name':'Minha voz'}
+        prepare=Mock()
+        panel.on_prepare_voice=prepare
+        try:
+            with patch.object(panel.voice_profiles,'get',return_value=profile):
+                panel.voice.addItem('Perfil local · Minha voz','voice-profile:profile-1')
+                voice_index=panel.voice.findData('voice-profile:profile-1')
+                panel.voice.setCurrentIndex(voice_index)
+                turbo_index=panel.clone_engine.findData('qwen3-tts-purec-mixed')
+                self.assertGreaterEqual(turbo_index,0)
+                panel.clone_engine.setCurrentIndex(turbo_index)
+                panel.voice.activated.emit(voice_index)
+                prepare.assert_called_once_with(sample_path,'fala de referência','Minha voz')
+                prepare.reset_mock()
+                panel.voice_profiles.get.return_value={**profile,'authorized':False}
+                panel._prewarm_selected_fast_profile()
+                prepare.assert_not_called()
+        finally:
+            Path(sample_path).unlink(missing_ok=True)
+            panel.close()
+
     def test_balanced_panel_selection_builds_native_narration_request(self):
         import tempfile
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True):

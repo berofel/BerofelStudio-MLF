@@ -1439,8 +1439,10 @@ class MainWindow(QMainWindow):
                 cached='já estava preparado' if result.get('cache_hit') else 'preparado e armazenado localmente'
                 self.narration_panel.status.setText(
                     f'Perfil Pure C {cached}. A voz será reutilizada enquanto o modelo estiver ativo.')
-            task=self._task(prepare_voice_profile,purec_ready,reference,reference_text,True,
-                            None,None,engine,
+            def prepare_purec(progress=None,control=None,stage=None):
+                return prepare_voice_profile(reference,reference_text,True,
+                    control=control,stage=stage,engine=engine)
+            task=self._task(prepare_purec,purec_ready,
                             label='Preparar perfil Pure C'+(f' · {name}' if name else ''))
             if task is None:
                 self._ai_busy=False;self.narration_panel.busy(False);return

@@ -692,3 +692,38 @@ testes foram executados com o Python instalado em
 `%LOCALAPPDATA%\BFS\venv\Scripts\python.exe`. Qt rodou offscreen; o teste
 confirma o caminho de reprodução/player e a inserção, mas não prova som nos
 alto-falantes. Continua necessária a avaliação auditiva do usuário.
+
+#### Pré-carga do Turbo ao selecionar uma voz (19/11/2026)
+
+O painel agora inicia o preparo em segundo plano quando o usuário seleciona
+explicitamente um perfil salvo autorizado junto com um dos modos Pure C. A
+restauração automática das preferências ao abrir o editor não dispara carga de
+modelo; perfis temporários não salvos nem vozes sem autorização também não são
+pré-carregados. A tarefa usa a fila já existente, deixando a timeline e a
+edição manual disponíveis enquanto trabalha. Ao clicar em Gerar após o preparo,
+o serviço reutiliza o mesmo servidor e o mesmo x-vector.
+
+O primeiro teste de interface real revelou que a função de pré-preparo Pure C
+recebia `control` e `stage` duplicados pela camada `Task`. O encaminhamento foi
+corrigido para deixar a fila fornecer esses parâmetros uma única vez. A
+revalidação no Qt offline selecionou o perfil salvo, aguardou o preparo e
+gerou uma frase inédita pelo botão normal de Narração:
+
+| Modo | Pré-carga na seleção | Primeira geração depois do preparo | Primeiro PCM | Perfil/modelo recarregados |
+|---|---:|---:|---:|---|
+| Turbo mixed | 4,830 s (uma execução, cache isolado) | 5,129 s para WAV de 6,48 s | 0,531 s desde Gerar | não: 0 s / 0 s, mesmo PID |
+| INT8 | 4,725 s (uma execução, cache isolado) | 4,968 s para WAV de 5,76 s | 0,549 s desde Gerar | não: 0 s / 0 s, mesmo PID |
+
+Esta medição mostra a latência deslocada para o período em que o usuário está
+escolhendo a voz/escrevendo o texto; não elimina o custo total de inicializar
+modelo e perfil, nem representa mediana. Reprodução: variáveis
+`BEROFEL_RUN_PUREC_GUI_INTEGRATION=1`,
+`BEROFEL_PUREC_TEST_ENGINE=qwen3-tts-purec-mixed`,
+`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, depois
+`python -m unittest tests.test_qwen3_purec_tts.PureCEditorIntegrationTests.test_user_selecting_saved_profile_prewarms_server_before_first_generation -v`.
+
+Depois da correção do encaminhamento, a suíte completa do editor passou com
+integrações reais offline ativas: **320 testes passaram, 1 foi ignorado**.
+Incluiu a geração pela interface, inserção na timeline, exportação WAV/MP4 e
+prewarm Turbo mixed. O prewarm INT8 também passou pelo teste de interface real
+separado. Estes testes Qt são offscreen e não certificam saída nos alto-falantes.

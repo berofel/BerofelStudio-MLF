@@ -162,6 +162,84 @@ class PureCRealIntegrationTests(unittest.TestCase):
 @unittest.skipUnless(os.environ.get('BEROFEL_RUN_PUREC_GUI_INTEGRATION') == '1',
                      'Defina BEROFEL_RUN_PUREC_GUI_INTEGRATION=1 para abrir o editor Qt.')
 class PureCEditorIntegrationTests(unittest.TestCase):
+    def test_user_selecting_saved_profile_prewarms_server_before_first_generation(self):
+        import time
+        from PySide6.QtWidgets import QApplication
+        from berofel.ui.window import MainWindow
+        from berofel.services.voice_profiles import VoiceProfileManager
+
+        profile = next(item for item in VoiceProfileManager().list_profiles()
+                       if item.get('authorized') and item.get('reference_text'))
+        test_engine = os.environ.get('BEROFEL_PUREC_TEST_ENGINE', purec.ENGINE_ID)
+        with tempfile.TemporaryDirectory(prefix='bfs_purec_prewarm_test_') as work:
+            with patch.dict(os.environ, {'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work}, clear=False):
+                app = QApplication.instance() or QApplication([])
+                window = MainWindow()
+                try:
+                    window.project.path = str(Path(work) / 'prewarm_test.bfsproj')
+                    window.show(); app.processEvents()
+                    panel = window.narration_panel
+                    voice_index = panel.voice.findData(f'voice-profile:{profile["id"]}')
+                    engine_index = panel.clone_engine.findData(test_engine)
+                    self.assertGreaterEqual(voice_index, 0)
+                    self.assertGreaterEqual(engine_index, 0)
+                    panel.voice.setCurrentIndex(voice_index)
+                    panel.clone_engine.setCurrentIndex(engine_index)
+                    # Simulate the user's explicit selection. Preference
+                    # restoration uses currentIndexChanged and must not prewarm.
+                    prewarm_started=time.perf_counter()
+                    panel.clone_engine.activated.emit(engine_index)
+                    deadline = time.monotonic() + 180
+                    while (window._ai_busy or window.active_task is not None) and time.monotonic() < deadline:
+                        app.processEvents(); time.sleep(.03)
+                    prewarm_wall=time.perf_counter()-prewarm_started
+                    app.processEvents()
+                    self.assertFalse(window._ai_busy, 'Turbo prewarm did not finish')
+                    self.assertIsNotNone(purec._PROCESS,
+                        f'prewarm did not leave a server ready: {panel.status.text()} / {panel.clone_engine.currentData()} / {panel.voice.currentData()} / {window._ai_busy} / {window.active_task} / {[d.text() for d in window._open_error_dialogs]}')
+                    server_pid = purec._PROCESS.pid
+                    self.assertIsNone(purec._PROCESS.poll())
+
+                    panel.text.setPlainText('Esta frase inédita confirma que a voz pré-carregada foi reutilizada.')
+                    panel.name.setText('Teste de primeira geração após preparo')
+                    original_start = purec._start_server
+                    incremental_loads = []
+                    generated_results = []
+                    def record_load(*args, **kwargs):
+                        result = original_start(*args, **kwargs)
+                        incremental_loads.append(result[1])
+                        return result
+                    from berofel.services.narration_service import generate_narration as real_generate
+                    def record_generation(request, **kwargs):
+                        result = real_generate(request, **kwargs)
+                        generated_results.append(result)
+                        return result
+                    with patch.object(purec, '_start_server', side_effect=record_load), \
+                         patch('berofel.ui.window.generate_narration',side_effect=record_generation):
+                        panel._generate(False)
+                        deadline = time.monotonic() + 180
+                        while (window._ai_busy or window.active_task is not None) and time.monotonic() < deadline:
+                            app.processEvents(); time.sleep(.03)
+                    app.processEvents()
+                    self.assertFalse(window._ai_busy, 'first Turbo generation did not finish')
+                    self.assertFalse(window._open_error_dialogs)
+                    self.assertTrue(Path(panel.last_audio).is_file())
+                    self.assertTrue(incremental_loads)
+                    self.assertEqual(incremental_loads[-1], 0.0)
+                    self.assertEqual(len(generated_results),1)
+                    self.assertTrue(generated_results[0]['profile_cache_hit'])
+                    self.assertEqual(generated_results[0]['profile_prepare_seconds'],0.0)
+                    self.assertEqual(generated_results[0]['model_load_seconds'],0.0)
+                    self.assertEqual(purec._PROCESS.pid, server_pid)
+                    print('PUREC_PREWARM_GUI_RESULT ' + json.dumps({
+                        key: generated_results[0].get(key) for key in (
+                            'engine','duration','generation_seconds',
+                            'first_audio_chunk_seconds','profile_prepare_seconds',
+                            'model_load_seconds','profile_cache_hit')},ensure_ascii=False) +
+                        f' prewarm_wall_seconds={prewarm_wall:.3f}')
+                finally:
+                    window.close(); app.processEvents()
+
     def test_editor_generates_and_inserts_purec_clip(self):
         import time
         from PySide6.QtWidgets import QApplication

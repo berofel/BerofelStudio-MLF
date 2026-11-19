@@ -77,6 +77,10 @@ class NarrationPanel(QScrollArea):
         self.voice.addItem('Minha voz / amostra com autorização', '__custom__')
         self.voice.setCurrentIndex(self.voice.findData('__custom__'))
         self.voice.currentIndexChanged.connect(self._update_custom)
+        # User activation (not settings restoration) can warm the fast local
+        # backend while the user prepares the script, reducing first-request
+        # latency without loading large models on every editor launch.
+        self.voice.activated.connect(self._prewarm_selected_fast_profile)
         layout.addWidget(self.voice)
 
         self.sample_path = QLineEdit()
@@ -129,6 +133,7 @@ class NarrationPanel(QScrollArea):
             pass
         self.clone_engine.setVisible(False)
         self.clone_engine.currentIndexChanged.connect(self._update_custom)
+        self.clone_engine.activated.connect(self._prewarm_selected_fast_profile)
         layout.addWidget(self.clone_engine)
         self.reference_text = QLineEdit()
         self.reference_text.setPlaceholderText('Transcrição exata do que é falado na gravação (recomendado)')
@@ -650,6 +655,29 @@ class NarrationPanel(QScrollArea):
 
     def _schedule_preferences_save(self,*_args):
         self._preferences_timer.start()
+
+    def _prewarm_selected_fast_profile(self,*_args):
+        """Warm the Turbo model only after the user selects a saved voice/mode."""
+        engine=self.clone_engine.currentData()
+        if engine not in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8'):
+            return
+        profile_id=self._voice_profile_id(self.voice.currentData())
+        if not profile_id or not self.on_prepare_voice:
+            return
+        try:
+            profile=self.voice_profiles.get(profile_id)
+            if not profile.get('authorized'):
+                return
+            reference=profile.get('sample_path','')
+            if not reference or not Path(reference).is_file():
+                return
+            self.status.setText(
+                'Preparando voz e motor local em segundo plano para acelerar a primeira narração...')
+            self.on_prepare_voice(reference,profile.get('reference_text',''),profile.get('name',''))
+        except (OSError,ValueError,KeyError):
+            # Generation remains available and will surface its own detailed
+            # error if the saved profile cannot be prepared.
+            return
 
     def save_preferences(self):
         settings=self._settings
