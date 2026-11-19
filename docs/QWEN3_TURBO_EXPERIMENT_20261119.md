@@ -362,4 +362,63 @@ backend Original e o Turbo integrado continuam executáveis e intocados.
 
 A rota Turbo usa x-vector apenas. O CLI nativo oferece ICL (`reference + ref-text`); a primeira tentativa falhou porque o MP3 do perfil não foi normalizado. Após usar o normalizador FFmpeg do editor, ICL executou, mas consumiu 43,09 s para a frase curta, usou os 256 tokens permitidos, gerou 20,48 s com repetição forte segundo Whisper Base e teve RSS de 3,16 GB e memória física reportada de 4,46 GB. Não é um backend Turbo validado e não foi integrado. O modo x-vector permaneceu rápido (RTF mediano ~1,02–1,15 nestes testes), mas o WER do Whisper Base variou muito; sem referência mais adequada e escuta humana, a inteligibilidade/fidelidade do Q4 não está aprovada. Clonagem detalhada mantém o backend oficial. Q4 pode variar em pronúncia/fidelidade e não deve ser selecionado automaticamente sem ouvir. Sem GPU dedicada, quantização agressiva INT4 e modo Turbo são experimentais. Não foram implementadas otimizações de Code Predictor além da quantização; não houve destilação ou remoção de codebooks.
 
+### Atualização — backend Pure C compilado no Windows e benchmark de threads
+
+Após aquela primeira tentativa de compilação falhar, consegui compilar uma cópia
+experimental do Pure C em um MSYS2 portátil, sem instalar WSL2 e sem modificar
+o repositório do editor. Corrijo a observação anterior: o backend agora foi
+compilado e executado nesta máquina Windows, embora dependa do runtime MSYS2 e
+de DLLs auxiliares. O binário não é uma distribuição Windows nativa sem runtime.
+O fonte e o toolchain continuam fora do Git do produto, em
+`BerofelStudio_QwenTurbo_Benchmark_20261119`; o build usou o upstream MIT no
+commit `ef339be58a778b062e1c14382347964552eae007` e um ajuste apenas na cópia
+externa para headers POSIX e caminho do OpenBLAS.
+
+O teste usou o modelo oficial local `Qwen3-TTS-12Hz-0.6B-Base`, uma referência
+autorizada convertida para mono PCM16/24 kHz e um perfil x-vector preparado uma
+vez, reutilizado durante as solicitações. A geração foi feita por streaming
+HTTP local, modelo mantido carregado, modo `--quant-mixed-cpu` (Talker INT8 e
+Code Predictor INT4), seed 42/43/44, sem cache de frases. Cada texto teve três
+repetições. O tempo inclui o fluxo de áudio e salvamento WAV; TTFA é o primeiro
+chunk de PCM recebido. Resultados válidos da execução limpa:
+
+| Threads | Texto | Parede mediana | Duração de áudio mediana | RTF mediano | TTFA mediano | RSS de pico |
+|---:|---|---:|---:|---:|---:|---:|
+| 6 | Médio | 10,965 s | 12,24 s | 0,896 | 0,607 s | 3,435 GiB |
+| 8 | Médio | 11,224 s | 11,52 s | 0,974 | 0,629 s | 3,499 GiB |
+| 6 | Longo | 26,761 s | 26,72 s | 1,002 | 0,730 s | 3,435 GiB |
+| 8 | Longo | 25,196 s | 28,00 s | 0,900 | 0,686 s | 3,499 GiB |
+
+O 8-thread foi ~5,8% mais rápido em tempo de parede e RTF no texto longo, mas
+ficou ~2,4% mais lento no texto médio; portanto não há vencedor universal. A
+configuração de 6 threads permanece a escolha equilibrada para o editor; 8
+threads é candidato para síntese longa quando a responsividade do restante do
+editor não for prioridade. O modelo/perfil já estavam carregados nesses
+números. O processo Pure C levou ~2,8 s para inicializar e usar ~3,33 GiB RSS;
+em contraste, o adaptador Q4 integrado mediu ~0,80 s de carga, ~2,69 s até o
+primeiro chunk e ~6,80 s totais para a frase curta. Assim, iniciar o novo
+servidor não melhora a primeira reprodução de uma sessão; o benefício possível
+é em solicitações seguintes e textos longos.
+
+Como proxy de inteligibilidade, Faster-Whisper Base/int8 local (beam 1) deu
+WER mediano j6/j8 de 0,00/0,069 nos textos médios e 0,00/0,00 nos longos,
+sem clipping detectado. O conjunto é pequeno e o ASR pode errar segmentação;
+isso não mede naturalidade, semelhança vocal ou qualidade percebida. Uma rodada
+curta adicional mostrou WER mediano de 0,071 para INT8 e mixed CPU, contra 0,071
+em BF16; o ganho de velocidade não provocou piora mensurável nesse indicador,
+mas a duração gerada mudou entre precisões. WAVs comparáveis e manifestos com
+as transcrições ficam fora do Git na pasta de benchmark para escuta local.
+
+O servidor experimental não está integrado ao Berofel Studio. `ldd` confirmou
+dependências redistribuíveis fora do Windows padrão: `msys-2.0.dll`, GCC runtime,
+OpenBLAS, OpenMP e WinPthreads. Antes de adicionar essa rota ao seletor Turbo,
+faltam empacotamento e validação dos avisos/licenças dessas bibliotecas, teste
+de reprodução auditiva pelo usuário e execução dos fluxos de narração dentro da
+GUI (perfil, timeline, DSP e WAV/MP4). Por isso o backend Q4 integrado continua
+sendo a única rota Turbo no editor e não houve alteração de motor, modelo,
+perfil, configurações ou distribuição. A amostra Pure C não deve ser descrita
+como validada no editor.
+
+O Pure C declara MIT; OpenBLAS usa BSD-3-Clause ([documentação oficial](https://www.openmathlib.org/OpenBLAS/docs/)); o pacote `msys2-runtime` declara GPL-3.0-or-later ([manifesto upstream](https://github.com/msys2/MSYS2-packages/blob/master/msys2-runtime/PKGBUILD)); e as bibliotecas GCC só recebem a exceção de runtime onde o arquivo aplicável traz o aviso correspondente ([GCC Runtime Library Exception](https://www.gnu.org/licenses/gcc-exception-3.1.html)). Isso torna indispensável auditar os avisos e obrigações de cada DLL exata antes de distribuir o build; o executável experimental e suas DLLs não foram copiados para a aplicação.
+
 Para rollback de código: `git switch feat/qwen3-base-optimized` ou checkout de `backup/qwen3-0.6b-stable`. Para rollback integral, restaure a pasta externa; o bundle Git sozinho não contém dados de voz/modelos. O backend original não foi alterado nem removido.
