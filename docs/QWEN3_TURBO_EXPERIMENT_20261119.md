@@ -663,3 +663,32 @@ transcrição nesta única frase. Escolha final de qualidade ainda requer ouvir
 as amostras; o Qwen oficial Original continua preservado para clonagem
 detalhada e fallback. O pico CPU/RSS foi amostrado a cada 100 ms durante cada
 pedido e não representa a carga total do Windows nem toda a sessão.
+
+#### Revalidação dos dois modos no editor (19/11/2026)
+
+Após a comparação acima, repeti separadamente o fluxo Qt com o modo INT8
+selecionado e a geração real do serviço canônico. A execução foi offline
+(`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`), com a referência autorizada
+local, e incluiu criar o WAV, inserir o bloco na timeline e exportar WAV e MP4.
+
+| Modo | Duração do bloco/WAV | Duração MP4 | Faixas verificadas |
+|---|---:|---:|---|
+| Pure C INT8 no editor | 4,24 s | 4,24 s | áudio no WAV e no MP4; vídeo no MP4 |
+
+Na repetição do serviço com caches isolados, INT8 preparou o perfil em 1,952 s,
+carregou o modelo em 2,557 s e gerou 4,08 s de áudio em 3,623 s (primeiro PCM
+em 0,533 s desde o pedido). Uma segunda frase inédita no mesmo processo teve
+cache do perfil, carga incremental do modelo e preparo de perfil iguais a zero;
+gerou 4,56 s em 3,954 s e entregou o primeiro PCM em 0,523 s. Esses dois
+pedidos verificam persistência/reuso, mas não constituem benchmark de mediana.
+
+Reprodução: `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`,
+`BEROFEL_RUN_PUREC_GUI_INTEGRATION=1`,
+`BEROFEL_PUREC_TEST_ENGINE=qwen3-tts-purec-int8` e
+`python -m unittest discover -s tests -p test_qwen3_purec_tts.py -v`.
+Para a repetição do serviço, definir também
+`BEROFEL_RUN_PUREC_TURBO_INTEGRATION=1` e desligar a variável de GUI. Ambos os
+testes foram executados com o Python instalado em
+`%LOCALAPPDATA%\BFS\venv\Scripts\python.exe`. Qt rodou offscreen; o teste
+confirma o caminho de reprodução/player e a inserção, mas não prova som nos
+alto-falantes. Continua necessária a avaliação auditiva do usuário.
