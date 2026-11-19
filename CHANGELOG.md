@@ -43,6 +43,13 @@
 - O instalador Qwen prepara `imageio-ffmpeg` também no ambiente Python isolado, necessário ao worker para normalizar a amostra de referência; a validação de TorchAudio respeita a ABI estável oficial.
 - Qwen agora tenta uma vez novamente quando a resposta não segue o JSON esperado, reconhece alguns formatos equivalentes e mantém a validação estrita dos IDs de palavra. Se continuar inválida, reporta lote/tamanho sem expor a transcrição; outras etapas permanecem preservadas.
 
+## Experimento Qwen Turbo — 19/11/2026
+
+- Adicionado perfil Q4 Equilibrado (8 threads) ao lado do Q4 Turbo (6 threads), configuráveis por ambiente; Original permanece o padrão e fallback.
+- Narração agora mantém histórico das duas últimas gerações para comparação A/B na própria área, sem inferir novamente o áudio anterior.
+- Sweep repetido no Ryzen 7 5700G: Q4 a 6 threads mediana de RTF 0,944; 8 threads RTF 0,978 e menor RSS amostrado (2,264 GiB vs. 2,555 GiB). WER Whisper é proxy e a qualidade subjetiva ainda aguarda avaliação.
+- Testes reais no runtime local geraram voz com ambos os perfis; os dados, condições e limitações estão em `docs/QWEN3_TURBO_EXPERIMENT_20261119.md`.
+
 - Adiciona motor opcional Qwen3-TTS Base 0.6B para clonar voz de referência localmente em CPU, sem login ou gate; download inicial explícito, ambiente Python isolado e botão de preparação na aba Narração.
 - A interface permite transcrever opcionalmente o áudio de referência para melhorar a clonagem, preserva a confirmação de autorização e separa essa rota da voz rápida de catálogo Pocket TTS.
 - Adiciona cache local por conteúdo, worker offline após a instalação, saída WAV durável e testes sintéticos de fluxo, cache e privacidade. Não baixou nem executou os pesos reais nesta sessão; desempenho/qualidade ficam pendentes de validação no PC após a preparação.

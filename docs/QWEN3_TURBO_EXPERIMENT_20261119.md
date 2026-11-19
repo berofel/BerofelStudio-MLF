@@ -37,7 +37,22 @@ a) WER é apenas comparação ASR local por Faster-Whisper base/Português/beam 
 
 Q4 foi ~13,5% mais rápido em RTF e usou ~12% menos RSS que Q8 nas medianas observadas; em relação ao oficial medido, RTF caiu cerca de 79,8%. A duração de saída variou entre gerações, então RTF é mais informativo que comparar tempo bruto. Modelo nativo frio carregou em ~0,78–0,99 s; reutilização de x-vector custa 0 s no cache. Preparação de novo perfil ficou em ~6,6–7,0 s, separada da síntese.
 
-Sweep exploratório (uma observação por célula, portanto não conclusivo): Q4 em 2/6/8 threads deu RTF 1,677/0,926/0,965; Q8 deu 1,801/1,157/1,225. Recomendação provisória: começar com 4 threads, pois essa é a configuração repetida três vezes e estável em torno de RTF 1,05; repetir o sweep antes de recomendar 6 threads.
+### Sweep repetido de threads e perfis no editor
+
+Em 19/11/2026 foi executado um sweep Q4 controlado no Ryzen 7 5700G/16 GB: mesmo texto português, mesmo x-vector autorizado, mesmo modelo em servidor persistente, três gerações inéditas por configuração (sem cache de frase). WAVs e `results.json` estão fora do repositório em `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119\thread_sweep_q4_20261119`. Tempos são mediana (intervalo observado), RSS é pico amostrado:
+
+| Q4 threads | Carga do processo | Geração mediana (intervalo) | Duração mediana | RTF mediano (intervalo) | Pico RSS mediano | WER Whisper mediana (amostras) |
+|---:|---:|---:|---:|---:|---:|---:|
+| 2 | 0,782 s | 13,518 s (12,102–14,066) | 8,24 s | 1,644 (1,6405–1,6587) | 2,295 GiB | 0,200 (0,133; 0,200; 0,200) |
+| 4 | 0,795 s | 7,707 s (7,340–10,132) | 7,52 s | 1,021 (1,0194–1,0249) | 2,370 GiB | 0,333 (0,400; 0,133; 0,333) |
+| 6 | 0,894 s | 7,411 s (6,570–12,615) | 7,92 s | 0,944 (0,9358–0,955) | 2,555 GiB | 0,200 (0,200; 0,200; 0,533) |
+| 8 | 0,821 s | 7,718 s (7,351–7,809) | 7,84 s | 0,978 (0,9745–0,996) | 2,264 GiB | 0,267 (0,267; 0,200; 0,267) |
+
+Turbo ficou configurável em 6 threads (menor mediana de tempo/RTF); Equilibrado em 8 (quase a mesma velocidade mediana, menor RAM amostrada e intervalo temporal/ASR mais estável neste pequeno conjunto). 6 threads teve uma geração e uma transcrição atípicas. Esses 3 exemplos por perfil não bastam para afirmar qualidade perceptiva ou estabilidade geral. WER é proxy de transcrição, não avaliação de voz, semelhança nem naturalidade. A opção Original continua padrão/fallback.
+
+Foram adicionadas variáveis de ajuste local `BEROFEL_QWEN3_NATIVE_TURBO_THREADS` e `BEROFEL_QWEN3_NATIVE_BALANCED_THREADS` (1–8; Turbo ainda aceita a variável legada). O cache do embedding não varia com threads, permitindo que os dois perfis compartilhem o condicionamento. Cache de áudio segue separado por perfil e configuração.
+
+No teste real pela rota canônica do serviço, Turbo e Equilibrado geraram WAV mono 24 kHz com o mesmo perfil local autorizado e texto português inédito; ambos reportaram corretamente 6/8 threads. O teste do painel também seleciona cada modo. A Narração mantém os dois últimos WAVs no histórico da sessão com botões “Ouvir” e “Ouvir geração anterior”, permitindo comparar amostras recentes A/B sem regenerar a primeira.
 
 Não foram obtidas métricas separadas de prefill/talker/code predictor para o runtime nativo. No oficial, o profiler mediu carga 6,008 s, prompt 0,655 s, prefill 0,413 s, 131 chamadas autoregressivas 47,645 s, das quais code predictor aninhado somou ~35,166 s; geração API 54,333 s, primeiro code frame ~0,7 s (não era áudio tocável). Isso aponta o code predictor como parcela dominante no backend oficial, mas não prova a mesma divisão interna no nativo. O script `scripts/benchmark_qwen3_stages.py` registra estágios oficiais.
 
