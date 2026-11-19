@@ -9,7 +9,9 @@
 - Worker Qwen e benchmark agora separam carregamento do modelo, preparação/reuso do perfil vocal e inferência; o benchmark também amostra CPU normalizada e RSS do processo e filhos.
 - Os validadores Qt e DSP aceitam referência sintética para smoke tests reais offline de Qwen, player, timeline e exportação sem alegar identidade vocal.
 - Preparação de prompt permite o modo oficial x-vector-only sem transcrição; o benchmark sintético curto/médio/longo registra carregamento, prompt, geração, RTF, RSS e CPU. Ver resultados e limites no relatório técnico.
-- Histórico de performance continua em `docs/BENCHMARK_QWEN3_TTS_20261118.md`; validação completa no Qt deve ser repetida após esta mudança antes de considerar a atualização pronta.
+- Clonagem detalhada pode gerar sem transcrição de referência usando o caminho x-vector-only oficial; transcrição continua exigida ao salvar um perfil para narração rápida reutilizável.
+- O smoke test Qt agora aciona a ação real Gerar no painel Narração, e não injeta diretamente uma requisição no controlador. Com referência sintética, Qwen offline percorreu player, timeline, WAV, MP4 e salvar/reabrir projeto em 35,7 s; isso valida integração, não semelhança vocal.
+- Histórico de performance continua em `docs/BENCHMARK_QWEN3_TTS_20261118.md`; clonagem de voz pessoal ainda aguarda confirmação de que a gravação configurada é autorizada.
 
 ## 0.10.0-alpha.1 — restauração do Qwen3-TTS (18/11/2026)
 

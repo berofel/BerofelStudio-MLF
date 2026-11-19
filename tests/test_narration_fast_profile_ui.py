@@ -50,5 +50,29 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                 finally:
                     panel.close()
 
+    def test_custom_clone_can_generate_without_reference_transcript(self):
+        """Qwen Base supports x-vector-only cloning when ref_text is omitted."""
+        with tempfile.TemporaryDirectory(prefix='bfs_xvector_voice_ui_') as folder:
+            sample=Path(folder)/'reference.wav'
+            sample.write_bytes(b'RIFF'+b'a'*300)
+            panel=NarrationPanel()
+            try:
+                panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+                panel.sample_path.setText(str(sample))
+                panel.reference_text.clear()
+                panel.authorized.setChecked(True)
+                panel.set_text('Frase de teste sem transcrição da referência.')
+                captured=[]
+                panel.on_generate=lambda request,insert:captured.append((request,insert))
+                panel._generate(False)
+                self.assertEqual(len(captured),1)
+                request,insert=captured[0]
+                self.assertFalse(insert)
+                self.assertEqual(request.reference_text,'')
+                self.assertEqual(request.engine,'qwen3-tts-local')
+                self.assertTrue(request.consent)
+            finally:
+                panel.close()
+
 
 if __name__=='__main__':unittest.main()

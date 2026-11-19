@@ -904,9 +904,6 @@ class NarrationPanel(QScrollArea):
         if not voice or not Path(voice).is_file():
             QMessageBox.warning(self,'Amostra de voz','Escolha uma gravação de referência válida antes de gerar.')
             return
-        if not self.reference_text.text().strip():
-            QMessageBox.warning(self,'Transcrição da referência','Informe o texto falado na gravação para obter clonagem Qwen3 com referência textual.')
-            return
         engine='qwen3-tts-local'
         req = NarrationRequest(text=self.text.toPlainText(), voice=voice,
                                language=self.language.currentData(),

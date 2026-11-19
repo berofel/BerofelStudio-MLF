@@ -30,7 +30,6 @@ sys.path.insert(0,str(ROOT))
 from berofel.core.project import Clip, Project
 from berofel.services.export_multitrack import export_audio_wav, export_project
 from berofel.services.ffmpeg import ffmpeg_path, media_info
-from berofel.services.narration_service import NarrationRequest
 from berofel.ui.window import MainWindow
 
 
@@ -76,13 +75,12 @@ def main() -> int:
         panel.sample_path.setText(str(sample.resolve()))
         panel.reference_text.setText(reference_text)
         panel.authorized.setChecked(True)
-        request=NarrationRequest(
-            text='Esta é uma validação real da narração Qwen dentro do editor.',
-            voice=str(sample.resolve()),language='portuguese',consent=True,
-            project_path=str(project_file),title='Qwen local validation',
-            engine='qwen3-tts-local',reference_text=reference_text)
+        panel.set_text('Esta é uma validação real da narração Qwen dentro do editor.')
+        panel.name.setText('Qwen local validation')
+        # Exercise the same panel action used by the user, including request
+        # validation and dispatch into the application's narration controller.
         started=time.perf_counter()
-        window.generate_narration_ui(request,True)
+        panel._generate(True)
         deadline=time.monotonic()+600
         while time.monotonic()<deadline and window.active_task is not None:
             app.processEvents();time.sleep(.05)
