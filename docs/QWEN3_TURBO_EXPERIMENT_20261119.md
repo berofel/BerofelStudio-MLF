@@ -854,3 +854,50 @@ nos alto-falantes nem latência visual de interação.
 Fontes upstream: [repositório Qwen3-TTS Pure C](https://github.com/gabriele-mastrapasqua/qwen3-tts),
 [guia de build](https://github.com/gabriele-mastrapasqua/qwen3-tts/blob/main/docs/building.md)
 e [release v0.23.0](https://github.com/gabriele-mastrapasqua/qwen3-tts/releases/tag/v0.23.0).
+
+#### Comparação offline em três durações e proxy de inteligibilidade (19/11/2026)
+
+Ampliei o harness para três roteiros fixos em português (curto: 61 caracteres;
+médio: 224; longo: 702), mantendo a mesma referência autorizada, Qwen3 Base
+0.6B e seis threads. Cada motor foi aquecido uma vez; depois foram feitas três
+inferências inéditas por duração (27 WAVs), com o cache de frases isolado e
+limpo antes de cada inferência. O processo ficou offline. A primeira resposta
+é o primeiro chunk PCM reportado pelo adaptador; RSS e CPU são picos amostrados
+da árvore do processo durante cada chamada. RTF = tempo de síntese/duração WAV.
+
+| Backend · 6 threads | Duração texto | Geração mediana | RTF | Primeiro áudio | Pico RSS mediano | WER Base/int8 mediano (intervalo) |
+|---|---:|---:|---:|---:|---:|---:|
+| Nativo Q4 | Curto | 6,094 s | 1,120 | 2,398 s | 2,301 GiB | 0,100 (0,100–0,500) |
+| Nativo Q4 | Médio | 18,955 s | 1,115 | 6,597 s | 2,304 GiB | 0,128 (0,077–0,154) |
+| Nativo Q4 | Longo | 58,963 s | 1,132 | 20,599 s | 2,313 GiB | 0,269 (0,261–0,412) |
+| Pure C mixed · Turbo | Curto | 4,414 s | **0,798** | **0,520 s** | 3,489 GiB | **0,000 (0,000–0,100)** |
+| Pure C mixed · Turbo | Médio | 12,284 s | **0,764** | **0,623 s** | 3,532 GiB | 0,077 (0,026–0,128) |
+| Pure C mixed · Turbo | Longo | 37,521 s | **0,806** | **0,945 s** | 3,570 GiB | 0,076 (0,067–0,101) |
+| Pure C INT8 · Equilibrado | Curto | 4,436 s | 0,853 | 0,543 s | 3,535 GiB | 0,000 (0,000–0,000) |
+| Pure C INT8 · Equilibrado | Médio | 13,044 s | 0,829 | 0,643 s | 3,564 GiB | **0,051 (0,051–0,077)** |
+| Pure C INT8 · Equilibrado | Longo | 38,949 s | 0,874 | 0,981 s | 3,607 GiB | **0,067 (0,050–0,151)** |
+
+Nas frases médias e longas, Turbo mixed foi aproximadamente 5,8% e 3,7% mais
+rápido que INT8, respectivamente, mas teve WER ligeiramente maior nesta pequena
+amostra. INT8 utilizou cerca de 0,04 GiB a mais de RSS nos textos longos e não
+foi o perfil mais rápido. O nativo Q4 usou menos memória, mas foi mais lento e
+teve latência inicial e WER muito maiores nos textos longos. Para este Ryzen,
+Pure C mixed é a opção de velocidade com qualidade proxy utilizável; INT8 é uma
+alternativa ligeiramente melhor neste WER, sem afirmar superioridade acústica.
+
+WER foi calculado por edição de palavras com Faster-Whisper Base/int8 CPU local,
+após reamostragem correta de 24 kHz para 16 kHz. Ele detecta algumas omissões e
+repetições, mas não mede naturalidade, semelhança da voz nem qualidade percebida.
+São três gerações estocásticas de um roteiro por classe e um único perfil; as
+variações do roteiro e sotaques não foram exploradas. A avaliação auditiva do
+usuário continua necessária. Os resultados brutos e WAVs comparáveis estão
+somente em `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119\multi_length_6threads_20261119`;
+`results.json` contém tempos e recursos, e `asr_wer_results.json` traz os WERs
+e transcrições ASR. Nada disso foi adicionado ao Git.
+
+Reprodução do ensaio: no PowerShell, com o venv de desenvolvimento ativo,
+defina `HF_HUB_OFFLINE=1` e `TRANSFORMERS_OFFLINE=1` e execute
+`python scripts/benchmark_qwen3_turbo_backends.py --confirm-own-or-authorized-voice --threads 6 --lengths short medium long --repeats 3 --output-dir <pasta-nova-fora-do-repo>`.
+O harness requer o modelo e os três runtimes locais já instalados e uma voz
+local autorizada. Para a verificação de texto, foi usado Faster-Whisper Base
+int8 local e o procedimento de reamostragem 24→16 kHz descrito acima.

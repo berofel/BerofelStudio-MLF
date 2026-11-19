@@ -26,11 +26,20 @@ import numpy as np
 import psutil
 
 
-TEXT = (
-    "No Berofel Studio, esta frase inédita compara os modos locais do Qwen3 "
-    "Base em português brasileiro, mantendo o mesmo texto para medir tempo "
-    "de geração e disponibilidade do primeiro áudio."
-)
+TEXTS = {
+    "short": "Olá! Esta é uma narração local curta em português brasileiro.",
+    "medium": ("No Berofel Studio, esta frase compara os modos locais do Qwen3 Base "
+        "em português brasileiro. O mesmo perfil vocal e o mesmo roteiro são usados "
+        "para medir o tempo de geração, a primeira resposta de áudio e a inteligibilidade."),
+    "long": ("Estamos avaliando a geração local de uma narração mais extensa em português brasileiro. "
+        "O Berofel Studio deve carregar o Qwen3 Base uma única vez e reutilizar o perfil de voz "
+        "autorizado entre as solicitações. Este texto contém várias frases e pausas naturais, "
+        "para observar se a velocidade se mantém ao longo de um trecho maior. Também verificamos "
+        "se o áudio aparece cedo para a prévia, se o arquivo WAV final permanece íntegro e se "
+        "a voz continua compreensível do começo ao fim. Cada execução usa texto novo para evitar "
+        "confundir cache de frase com aceleração de inferência. O resultado pode ser levado à "
+        "timeline, receber ajustes DSP e ser exportado junto com o vídeo sem alterar a gravação original."),
+}
 ENGINES = (
     ("qwen3-tts-native-q4", "native-q4-turbo"),
     ("qwen3-tts-purec-mixed", "purec-mixed-turbo"),
@@ -46,6 +55,8 @@ def parse_args() -> argparse.Namespace:
                         help="Pasta externa ao repositório para WAVs e JSON.")
     parser.add_argument("--threads", type=int, choices=(2, 4, 6, 8), default=6,
                         help="Threads do motor para cada backend (padrão: 6).")
+    parser.add_argument("--lengths", nargs="+", choices=tuple(TEXTS), default=("short",),
+                        help="Classes de texto para medir (padrão: short).")
     parser.add_argument("--repeats", type=int, default=3)
     args = parser.parse_args()
     if not args.confirm_own_or_authorized_voice:
@@ -175,13 +186,14 @@ def main() -> int:
         project = isolated / "same_text.bfsproj"
         cache_dir = cache_root().parent / "qwen3_native_tts"
         warmup_results = {}
-        records: dict[str, list[dict]] = {label: [] for _, label in ENGINES}
+        records: dict[str, list[dict]] = {
+            f"{label}:{length}": [] for _, label in ENGINES for length in args.lengths}
 
-        def request(engine: str, title: str, text: str = TEXT):
+        def request(engine: str, title: str, text: str):
             return NarrationRequest(text=text, voice=str(voice),
                 language="portuguese", consent=True, title=title,
                 engine=engine, reference_text=reference_text,
-                project_path=str(project))
+                project_path=str(project), thread_count=args.threads)
 
         try:
             # Warm each backend immediately before its measurement block.
@@ -189,7 +201,7 @@ def main() -> int:
             # precision after warmup and accidentally measuring a reload.
             for engine, label in ENGINES:
                 server_name = "qwen3-tts-cli" if engine == "qwen3-tts-native-q4" else "qwen_tts"
-                warm_text = TEXT + " Preparação inicial do benchmark."
+                warm_text = TEXTS["short"] + " Preparação inicial do benchmark."
                 warm, warm_wall, warm_resources = measured(
                     lambda: generate_narration(request(engine, f"warm-{label}", warm_text)),
                     server_name)
@@ -200,37 +212,42 @@ def main() -> int:
                 warmup_results[label].update(warm_resources)
 
                 # Keep the backend/precision resident for the full block.
-                for repetition in range(1, args.repeats + 1):
-                    # The native adapter has a full-phrase cache. Clear only
-                    # this isolated benchmark cache, never the user's cache.
-                    shutil.rmtree(cache_dir, ignore_errors=True)
-                    chunks = []
-                    result, wall, resources = measured(
-                        lambda: generate_narration(
-                            request(engine, f"{label}-r{repetition}"),
-                            audio_chunk=chunks.append), server_name)
-                    wav_path = Path(result["path"])
-                    audio = inspect_wave(wav_path)
-                    if not chunks:
-                        raise RuntimeError(f"O backend {label} não retornou chunks PCM.")
-                    sample = output / f"{label}-rep{repetition}.wav"
-                    shutil.copy2(wav_path, sample)
-                    duration = float(result.get("duration") or audio["duration_seconds"])
-                    records[label].append({
-                        "repetition": repetition,
-                        "engine": engine,
-                        "wall_seconds": round(wall, 3),
-                        "generation_seconds": round(float(result.get("generation_seconds", 0)), 3),
-                        "duration_seconds": round(duration, 3),
-                        "rtf_generation": round(float(result.get("generation_seconds", 0)) / duration, 3),
-                        "first_audio_seconds": result.get("first_audio_chunk_seconds"),
-                        "profile_prepare_seconds": result.get("profile_prepare_seconds"),
-                        "model_load_seconds": result.get("model_load_seconds"),
-                        "profile_cache_hit": result.get("profile_cache_hit", result.get("prompt_cache_hit")),
-                        **resources,
-                        "audio": audio,
-                        "sample": sample.name,
-                    })
+                for length in args.lengths:
+                    for repetition in range(1, args.repeats + 1):
+                        # Native phrase cache is cleared only in this isolated
+                        # run; user cache and voice profile remain untouched.
+                        shutil.rmtree(cache_dir, ignore_errors=True)
+                        chunks = []
+                        title=f"{label}-{length}-r{repetition}"
+                        result, wall, resources = measured(
+                            lambda: generate_narration(
+                                request(engine, title, TEXTS[length]),
+                                audio_chunk=chunks.append), server_name)
+                        wav_path = Path(result["path"])
+                        audio = inspect_wave(wav_path)
+                        if not chunks:
+                            raise RuntimeError(f"O backend {label} não retornou chunks PCM.")
+                        sample = output / f"{title}.wav"
+                        shutil.copy2(wav_path, sample)
+                        duration = float(result.get("duration") or audio["duration_seconds"])
+                        records[f"{label}:{length}"].append({
+                            "length": length,
+                            "characters": len(TEXTS[length]),
+                            "repetition": repetition,
+                            "engine": engine,
+                            "threads": result.get("threads", args.threads),
+                            "wall_seconds": round(wall, 3),
+                            "generation_seconds": round(float(result.get("generation_seconds", 0)), 3),
+                            "duration_seconds": round(duration, 3),
+                            "rtf_generation": round(float(result.get("generation_seconds", 0)) / duration, 3),
+                            "first_audio_seconds": result.get("first_audio_chunk_seconds"),
+                            "profile_prepare_seconds": result.get("profile_prepare_seconds"),
+                            "model_load_seconds": result.get("model_load_seconds"),
+                            "profile_cache_hit": result.get("profile_cache_hit", result.get("prompt_cache_hit")),
+                            **resources,
+                            "audio": audio,
+                            "sample": sample.name,
+                        })
             summary = {}
             for label, rows in records.items():
                 summary[label] = {
@@ -248,7 +265,9 @@ def main() -> int:
                     "repetitions": rows,
                 }
             report = {"model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-                      "text": TEXT,
+                      "texts": {length: {"characters": len(TEXTS[length]),
+                                         "text": TEXTS[length]} for length in args.lengths},
+                      "lengths": list(args.lengths),
                       "threads": {"native": args.threads, "purec": args.threads},
                       "purec_openblas_threads": 1,
                       "offline": True, "warmup": warmup_results, "summary": summary}

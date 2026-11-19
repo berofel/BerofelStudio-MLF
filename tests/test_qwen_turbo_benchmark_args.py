@@ -17,6 +17,13 @@ class QwenTurboBenchmarkArgsTests(unittest.TestCase):
         with patch.object(sys, "argv", ["benchmark", "--confirm-own-or-authorized-voice",
                                          "--output-dir", "C:/benchmark"]):
             self.assertEqual(parse_args().threads, 6)
+            self.assertEqual(parse_args().lengths, ('short',))
+
+    def test_accepts_multiple_text_lengths(self):
+        with patch.object(sys, "argv", ["benchmark", "--confirm-own-or-authorized-voice",
+                                         "--output-dir", "C:/benchmark", "--lengths",
+                                         "short", "medium", "long"]):
+            self.assertEqual(parse_args().lengths, ['short','medium','long'])
 
     def test_rejects_unsupported_thread_count(self):
         with patch.object(sys, "argv", ["benchmark", "--confirm-own-or-authorized-voice",
