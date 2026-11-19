@@ -614,3 +614,13 @@ o campo representa a carga incremental desta solicitação; a carga ocorrida
 durante a primeira preparação continua associada à primeira geração. São duas
 amostras por modo, úteis para confirmar cache/modelo persistente, não para
 declarar latência típica nem qualidade acústica geral.
+
+Depois da alteração, repeti também o fluxo Qt completo com Turbo mixed e
+projeto temporário, em execução offline: a janela gerou a narração, inseriu o
+clipe na timeline e exportou WAV e MP4. O clipe e os dois arquivos exportados
+mediram 5,20 s; ambos continham áudio e o MP4 também continha vídeo. Comando:
+`BEROFEL_RUN_PUREC_GUI_INTEGRATION=1`,
+`BEROFEL_PUREC_TEST_ENGINE=qwen3-tts-purec-mixed`, modo Qt offscreen e o teste
+`PureCEditorIntegrationTests.test_editor_generates_and_inserts_purec_clip`.
+O teste passou em 11,185 s. Os artefatos ficaram no diretório temporário do
+teste; nenhum áudio ou projeto de usuário foi alterado.
