@@ -572,3 +572,25 @@ e MP4 com as faixas esperadas. O modo INT8 usa `--int8`; alternar entre ele e
 Turbo reinicia o servidor para aplicar a precisão correta. Original continua
 selecionado por padrão até o usuário escolher explicitamente um modo
 experimental.
+
+### Revalidação do serviço canônico (19/11/2026)
+
+Repeti `PureCRealIntegrationTests.test_real_profile_generation_stream_and_wave_through_canonical_service`
+com o Python do venv de produção do instalador, `HF_HUB_OFFLINE=1` e
+`TRANSFORMERS_OFFLINE=1`. O teste cria uma cópia temporária da referência
+autorizada, prepara o perfil isoladamente, sintetiza texto português inédito,
+confere WAV mono 24 kHz não silencioso e verifica que o processo servidor
+escuta somente em loopback. Resultados desta repetição:
+
+| Perfil | Duração WAV | Preparação do perfil | Carga do modelo | Síntese | Primeiro PCM | Chunks |
+|---|---:|---:|---:|---:|---:|---:|
+| Turbo mixed · 6 threads | 4,72 s | 1,953 s | 2,650 s | 3,851 s | 0,510 s | 56 |
+| Equilibrado INT8 · 6 threads | 3,92 s | 1,952 s | 2,498 s | 3,494 s | 0,532 s | 46 |
+
+Comandos usados: definir `BEROFEL_RUN_PUREC_TURBO_INTEGRATION=1`, selecionar
+`BEROFEL_PUREC_TEST_ENGINE=qwen3-tts-purec-mixed` ou
+`qwen3-tts-purec-int8`, e executar o teste acima com
+`%LOCALAPPDATA%\BFS\venv\Scripts\python.exe`. Ambos passaram (1 teste por
+perfil). O cache do perfil foi intencionalmente isolado e iniciou como miss;
+esta repetição mede a preparação, não o caso de reutilização. Permanecem
+válidas as medições anteriores de cache hit e exportação Qt descritas acima.
