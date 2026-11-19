@@ -624,3 +624,42 @@ mediram 5,20 s; ambos continham áudio e o MP4 também continha vídeo. Comando:
 `PureCEditorIntegrationTests.test_editor_generates_and_inserts_purec_clip`.
 O teste passou em 11,185 s. Os artefatos ficaram no diretório temporário do
 teste; nenhum áudio ou projeto de usuário foi alterado.
+
+### A/B controlado entre os três backends locais
+
+Usei o mesmo perfil autorizado, a mesma frase inédita em português e seis
+threads para comparar CHE3MZ Q4, Pure C mixed (Talker INT8/Code Predictor INT4)
+e Pure C INT8. Cada configuração recebeu uma frase de aquecimento; depois
+foram feitas três sínteses novas sem cache de WAV, mantendo cada servidor ativo
+durante seu bloco. O callback PCM do editor mediu a chegada do primeiro chunk.
+O script automatizado está em `scripts/benchmark_qwen3_turbo_backends.py`.
+
+| Backend | Síntese mediana | RTF mediano (intervalo) | Primeiro PCM mediano (intervalo) | Pico CPU da máquina | Pico RSS do processo do motor |
+|---|---:|---:|---:|---:|---:|
+| CHE3MZ Q4 Turbo · 6 threads | 17,158 s | 1,110 (1,094–1,141) | 5,928 s (5,51–6,61) | 43,3% | 2,761 GiB |
+| Pure C mixed Turbo · 6 threads | 10,136 s | 0,756 (0,750–0,760) | 0,599 s (0,596–0,600) | 81,0% | 3,513 GiB |
+| Pure C INT8 Equilibrado · 6 threads | 11,116 s | 0,832 (0,828–0,839) | 0,622 s (0,617–0,633) | 79,9% | 3,557 GiB |
+
+Na rodada de aquecimento, antes das três medições quentes, o primeiro uso
+mediu: CHE3MZ — perfil 6,948 s, modelo 0,794 s, parede total 23,222 s; Pure C
+mixed — perfil 1,964 s, modelo 2,698 s, parede total 16,609 s; Pure C INT8 —
+perfil já em cache (0 s), modelo 2,958 s, parede total 14,881 s. Os tempos de
+síntese quente excluem preparação e carga; a parede da primeira solicitação
+inclui essas etapas.
+
+Como proxy de inteligibilidade, transcrevi as mesmas nove saídas com
+Faster-Whisper Base/int8, quatro threads, português e beam 1: WER mediano
+CHE3MZ 0,200; Pure C mixed 0,167; Pure C INT8 0,067. O INT8 ficou cerca de 10%
+mais lento que mixed, mas teve WER inferior nesta frase. O conjunto é pequeno,
+contém termos raros (nome do produto/modelo) e não mede naturalidade, timbre ou
+fidelidade de voz; não há avaliação auditiva cega. Todos os WAVs eram mono
+PCM16/24 kHz, RMS acima de 0,02 e sem clipping detectado. Amostras e JSONs
+locais, fora do Git: `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_Benchmark_20261119\ab_same_text_cpu_delta`.
+
+Conclusão limitada a este Ryzen 7 5700G: **Pure C mixed é a opção de menor
+latência comprovada**, com primeiro PCM próximo de 0,6 s e RTF ~0,76. **INT8 é
+uma alternativa equilibrada**, cerca de 10% mais lenta, com menor erro de
+transcrição nesta única frase. Escolha final de qualidade ainda requer ouvir
+as amostras; o Qwen oficial Original continua preservado para clonagem
+detalhada e fallback. O pico CPU/RSS foi amostrado a cada 100 ms durante cada
+pedido e não representa a carga total do Windows nem toda a sessão.
