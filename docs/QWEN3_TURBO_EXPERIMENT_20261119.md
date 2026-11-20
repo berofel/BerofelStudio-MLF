@@ -1281,8 +1281,10 @@ serviço e a reutilização de modelo/perfil em cache, mas não deve ser citada 
 validação offline. Os testes de integração offline descritos acima são a
 evidência separada para essa condição. O backend Original continua sendo o
 padrão inicial e sua medição anterior foi muito mais lenta (10,16 s de áudio em
-52,78 s, RTF 5,195). A opção ativa no editor precisa ser verificada antes de
-comparar a experiência do usuário com qualquer um desses números.
+52,78 s, RTF 5,195). Na auditoria das preferências atuais do editor, o modo
+salvo era `qwen3-tts-purec-mixed`, com seis threads, e `is_ready()` confirmou
+que o runtime Pure C estava disponível. Essa preferência é local e pode mudar
+quando o usuário troca o backend.
 
 Os WAVs e o relatório da rodada longa permanecem fora do Git em
 `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_OneMinute_20261119_210207`.
