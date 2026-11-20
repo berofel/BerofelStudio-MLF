@@ -1288,3 +1288,13 @@ quando o usuário troca o backend.
 
 Os WAVs e o relatório da rodada longa permanecem fora do Git em
 `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_OneMinute_20261119_210207`.
+
+Repeti os dois testes `PureCEditorIntegrationTests` na branch experimental com
+`BEROFEL_RUN_PUREC_GUI_INTEGRATION=1`, `QT_QPA_PLATFORM=offscreen` e os modos
+offline do Hugging Face ativos; ambos passaram. O teste de edição gerou WAV de
+5,12 s, colocou o clipe na timeline e exportou MP4 com vídeo e áudio presentes
+(5,133 s). O teste de prewarm gerou 6,16 s em 4,875 s (RTF 0,791), com primeiro
+chunk em 0,523 s, cache vocal atingido e 0 s de carregamento/preparo atribuídos
+à geração; o prewarm inicial levou 4,676 s. A execução foi offscreen, sem
+validação visual em monitor ou escuta física. Saída integral do teste: dois
+testes passaram em 20,555 s.
