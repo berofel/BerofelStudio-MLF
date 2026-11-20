@@ -1298,3 +1298,26 @@ chunk em 0,523 s, cache vocal atingido e 0 s de carregamento/preparo atribuídos
 à geração; o prewarm inicial levou 4,676 s. A execução foi offscreen, sem
 validação visual em monitor ou escuta física. Saída integral do teste: dois
 testes passaram em 20,555 s.
+
+#### Amostras A/B Original e Turbo para escuta (19/11/2026)
+
+Gerei duas amostras inéditas pelo serviço canônico, com o mesmo texto em
+português e o mesmo perfil local autorizado, sob `HF_HUB_OFFLINE=1` e
+`TRANSFORMERS_OFFLINE=1`. O perfil original usa a referência/transcrição; o
+Pure C usa o x-vector preparado para esse perfil. A amostragem interna dos
+backends não compartilha uma seed configurável pelo contrato do editor, então
+isto permite comparar a experiência geral e a inteligibilidade, mas não isola
+somente a quantização. As durações resultantes também diferem.
+
+| Amostra | Duração | Geração | RTF | Inicialização do motor | Integridade WAV |
+|---|---:|---:|---:|---:|---|
+| Original | 14,88 s | 77,291 s | 5,194 | 48,331 s | mono, 24 kHz, não silencioso |
+| Turbo Mixed, 6 threads | 6,96 s | 5,480 s | 0,787 | 2,437 s | mono, 24 kHz, não silencioso |
+
+O resultado confirma aceleração forte neste roteiro/perfil, mas não certifica
+naturalidade ou fidelidade vocal. As duas amostras para avaliação auditiva e o
+JSON estão fora do Git em
+`C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_ABListen_20261119`.
+Uma tentativa local de WER adicional não concluiu porque a instalação de
+`faster-whisper` falhou ao chamar `av.open(..., metadata_errors=...)` (API
+incompatível da dependência PyAV); não usei esse teste para afirmar qualidade.
