@@ -1301,22 +1301,23 @@ testes passaram em 20,555 s.
 
 #### Amostras A/B Original e Turbo para escuta (19/11/2026)
 
-Gerei duas amostras inéditas pelo serviço canônico, com o mesmo texto em
-português e o mesmo perfil local autorizado, sob `HF_HUB_OFFLINE=1` e
-`TRANSFORMERS_OFFLINE=1`. O perfil original usa a referência/transcrição; o
-Pure C usa o x-vector preparado para esse perfil. A amostragem interna dos
-backends não compartilha uma seed configurável pelo contrato do editor, então
-isto permite comparar a experiência geral e a inteligibilidade, mas não isola
-somente a quantização. As durações resultantes também diferem.
+Gerei amostras inéditas pelo serviço canônico com o mesmo texto em português e
+o mesmo perfil local autorizado, sob `HF_HUB_OFFLINE=1` e
+`TRANSFORMERS_OFFLINE=1`. O perfil Original usa referência/transcrição; o Pure C
+usa o x-vector preparado para esse perfil. A amostragem interna dos backends
+não compartilha uma seed configurável pelo contrato do editor, então isto
+compara a experiência geral e inteligibilidade, mas não isola somente a
+quantização.
 
 | Amostra | Duração | Geração | RTF | Inicialização do motor | Integridade WAV |
 |---|---:|---:|---:|---:|---|
-| Original | 14,88 s | 77,291 s | 5,194 | 48,331 s | mono, 24 kHz, não silencioso |
+| Original, texto de referência salvo inconsistente | 14,88 s | 77,291 s | 5,194 | 48,331 s | mono, 24 kHz, não silencioso |
+| Original, transcrição ASR temporária | 7,12 s | 37,716 s | 5,297 | 7,513 s | mono, 24 kHz, não silencioso |
 | Turbo Mixed, 6 threads | 6,96 s | 5,480 s | 0,787 | 2,437 s | mono, 24 kHz, não silencioso |
 
-O resultado confirma aceleração forte neste roteiro/perfil, mas não certifica
-naturalidade ou fidelidade vocal. As duas amostras para avaliação auditiva e o
-JSON estão fora do Git em
+O primeiro par mostrou uma degradação causada pelo texto de referência e não é
+uma comparação justa da qualidade do backend Original. As amostras e JSON estão
+fora do Git em
 `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_ABListen_20261119`.
 
 Como proxy adicional, transcrevi os dois WAVs offline com Faster Whisper
@@ -1326,6 +1327,20 @@ reamostrando de 24 kHz para 16 kHz (taxa esperada pelo array de entrada) e
 passando o array ao ASR. Com normalização de caixa e pontuação, o WER foi 1,000
 para Original (hipótese repetitiva, “Infus, infus...”) e 0,056 para Turbo Mixed
 (uma palavra divergente: “sua” por “soar”). Isso é um alerta forte de possível
-falha/inteligibilidade do áudio Original nessa geração e favorece o Turbo neste
-roteiro, mas o ASR não avalia naturalidade, timbre ou identidade vocal; a escuta
-humana continua necessária antes de declarar a qualidade aceitável.
+falha nessa geração Original, mas a auditoria seguinte mostrou que essa amostra
+usara o `ref_text` salvo (18 caracteres), cuja correspondência com a transcrição
+ASR da própria referência era ruim (WER proxy 2,667). Portanto, ela não é uma
+comparação justa da capacidade do backend Original.
+
+Para controlar isso, gerei uma terceira amostra Original com uma transcrição
+ASR da referência, somente para essa chamada e sem atualizar o perfil. O
+resultado ficou inteligível: WER 0,056, igual ao Turbo Mixed. O áudio durou
+7,12 s e a geração levou 37,716 s (RTF 5,297); o Turbo durou 6,96 s e levou
+5,480 s (RTF 0,787). Assim, neste controle, o Turbo foi cerca de 6,8 vezes
+mais rápido na síntese, com o proxy de conteúdo empatado. O Original validado
+para a escuta A/B é
+`comparison_arquivos\narracoes\A_Original_ASR_Reference_20261119_212450_f2db546a.wav`;
+o Turbo é o arquivo `B Turbo Mixed_purec_970eb35d.wav` da mesma pasta. O ASR não
+avalia naturalidade, timbre ou identidade vocal; a escuta humana ainda é
+necessária. A divergência do texto de referência salvo deve ser corrigida no
+perfil para o modo Original padrão, mas não alterei dados do usuário.
