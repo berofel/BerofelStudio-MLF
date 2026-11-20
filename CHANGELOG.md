@@ -1,3 +1,8 @@
+## Operação Qwen Turbo — correção de transcrição em perfis salvos
+
+- Perfis de voz existentes agora permitem atualizar e persistir apenas a transcrição de referência, sem regravar nem substituir a amostra, alterar autorização ou recriar o perfil. No modo Original, o prompt vocal é preparado de novo com a transcrição atualizada.
+- Testes de serviço e interface cobrem persistência após reabertura, preservação da gravação/autorização e despacho do prewarm; validação direcionada: 13 testes passaram.
+
 ## Correção incremental — referências de voz com pausas longas
 
 - A verificação de gravação agora recomenda outra amostra quando mais de 50% do áudio estiver quase silencioso; ao escolher o arquivo, o painel mostra esse aviso sem alterar a gravação original.

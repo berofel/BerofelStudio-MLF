@@ -1343,7 +1343,10 @@ para a escuta A/B é
 o Turbo é o arquivo `B Turbo Mixed_purec_970eb35d.wav` da mesma pasta. O ASR não
 avalia naturalidade, timbre ou identidade vocal; a escuta humana ainda é
 necessária. A divergência do texto de referência salvo deve ser corrigida no
-perfil para o modo Original padrão, mas não alterei dados do usuário.
+perfil para o modo Original padrão. O painel agora oferece “Atualizar
+transcrição do perfil” para persistir essa correção sem substituir a gravação,
+recriar o perfil ou alterar sua autorização. Não alterei o perfil real durante
+esta implementação.
 
 Também calculei a similaridade de speaker embedding para o Original corrigido e
 o Turbo, comparando ambos com a mesma referência e usando o encoder oficial

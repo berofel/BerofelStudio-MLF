@@ -172,6 +172,19 @@ class VoiceProfileManager:
         self._write(profiles)
         return self.get(profile_id)
 
+    def update_reference_text(self, profile_id: str, reference_text: str) -> dict:
+        """Update only the transcript metadata of a saved voice profile."""
+        profiles = self._read()
+        item = profiles.get(str(profile_id))
+        if item is None:
+            raise KeyError(profile_id)
+        normalized = ' '.join(str(reference_text or '').split())
+        if len(normalized) > 4000:
+            raise ValueError('A transcrição da referência deve ter no máximo 4000 caracteres.')
+        item['reference_text'] = normalized
+        self._write(profiles)
+        return self.get(str(profile_id))
+
     def rename(self, profile_id: str, new_name: str) -> str:
         new_name = self._normalize_name(new_name)
         profiles = self._read()

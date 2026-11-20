@@ -99,12 +99,17 @@ class NarrationPanel(QScrollArea):
         layout.addWidget(self.clone_detail_title)
         profile_actions=QHBoxLayout()
         self.save_voice_profile=QPushButton('Salvar perfil')
+        self.update_voice_reference=QPushButton('Atualizar transcrição do perfil')
+        self.update_voice_reference.setToolTip(
+            'Salva o texto exato usado pela clonagem Original; preserva a gravação e a autorização.')
         self.rename_voice_profile=QPushButton('Renomear perfil')
         self.delete_voice_profile=QPushButton('Excluir perfil')
         self.save_voice_profile.clicked.connect(self._save_voice_profile)
+        self.update_voice_reference.clicked.connect(self._update_voice_reference_text)
         self.rename_voice_profile.clicked.connect(self._rename_voice_profile)
         self.delete_voice_profile.clicked.connect(self._delete_voice_profile)
-        for button in (self.save_voice_profile,self.rename_voice_profile,self.delete_voice_profile):
+        for button in (self.save_voice_profile,self.update_voice_reference,
+                       self.rename_voice_profile,self.delete_voice_profile):
             profile_actions.addWidget(button)
         layout.addLayout(profile_actions)
         self._voice_profile_action_rows=[profile_actions]
@@ -761,6 +766,7 @@ class NarrationPanel(QScrollArea):
         self.purec_thread_label.setVisible(use_thread_choice)
         self.purec_threads.setVisible(use_thread_choice)
         self.reference_text.setVisible(qwen)
+        self.update_voice_reference.setVisible(bool(profile_id) and qwen)
         self.install_qwen.setVisible(qwen and engine=='qwen3-tts-local')
         self.qwen_status.setVisible(qwen and bool(self.qwen_status.text()))
         self.quantize.hide()  # Quantization is selected through explicit backend profiles below.
@@ -879,6 +885,21 @@ class NarrationPanel(QScrollArea):
             self.status.setText(f'Perfil “{profile["name"]}” salvo em pasta privada local. A amostra original foi preservada.')
             if self.on_prepare_voice:
                 self.on_prepare_voice(profile['sample_path'],reference_text,profile['name'])
+        except (OSError,ValueError,KeyError) as exc:
+            QMessageBox.warning(self,'Perfil de voz',str(exc))
+
+    def _update_voice_reference_text(self):
+        profile_id=self._voice_profile_id(self.voice.currentData())
+        if not profile_id:return
+        try:
+            profile=self.voice_profiles.update_reference_text(
+                profile_id,self.reference_text.text())
+            self.reference_text.setText(profile['reference_text'])
+            self.save_preferences()
+            self.status.setText(
+                f'Transcrição de “{profile["name"]}” atualizada. A gravação original foi preservada.')
+            if self.on_prepare_voice and self.clone_engine.currentData()=='qwen3-tts-local':
+                self.on_prepare_voice(profile['sample_path'],profile['reference_text'],profile['name'])
         except (OSError,ValueError,KeyError) as exc:
             QMessageBox.warning(self,'Perfil de voz',str(exc))
 

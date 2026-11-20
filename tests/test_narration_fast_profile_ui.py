@@ -85,6 +85,38 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                 finally:
                     panel.close()
 
+    def test_saved_profile_reference_transcript_can_be_corrected_in_place(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_profile_transcript_ui_') as folder:
+            root=Path(folder);store=root/'voices';sample=root/'reference.wav'
+            original=b'RIFF'+b'private voice bytes'*20;sample.write_bytes(original)
+            with patch.dict(os.environ,{'BEROFEL_VOICE_PROFILE_DIR':str(store)}):
+                profile=VoiceProfileManager().create('Voz local',sample,'portuguese',
+                    'texto incorreto',authorized=True)
+                private=Path(profile['sample_path']);private_bytes=private.read_bytes()
+                panel=NarrationPanel()
+                try:
+                    index=panel.voice.findData(f'voice-profile:{profile["id"]}')
+                    self.assertGreaterEqual(index,0)
+                    panel.voice.setCurrentIndex(index)
+                    original_engine=panel.clone_engine.findData('qwen3-tts-local')
+                    self.assertGreaterEqual(original_engine,0)
+                    panel.clone_engine.setCurrentIndex(original_engine)
+                    self.assertFalse(panel.update_voice_reference.isHidden())
+                    panel.reference_text.setText('  texto   corrigido da referência  ')
+                    prepared=[]
+                    panel.on_prepare_voice=lambda *args:prepared.append(args)
+                    panel.update_voice_reference.click()
+                    reopened=VoiceProfileManager(store).get(profile['id'])
+                    self.assertEqual(reopened['reference_text'],
+                                     'texto corrigido da referência')
+                    self.assertTrue(reopened['authorized'])
+                    self.assertEqual(Path(reopened['sample_path']).read_bytes(),private_bytes)
+                    self.assertEqual(sample.read_bytes(),original)
+                    self.assertEqual(len(prepared),1)
+                    self.assertEqual(prepared[0][1],reopened['reference_text'])
+                finally:
+                    panel.close()
+
     def test_custom_clone_can_generate_without_reference_transcript(self):
         """Qwen Base supports x-vector-only cloning when ref_text is omitted."""
         with tempfile.TemporaryDirectory(prefix='bfs_xvector_voice_ui_') as folder:

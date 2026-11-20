@@ -34,6 +34,30 @@ class VoiceProfileManagerTests(unittest.TestCase):
             reopened=VoiceProfileManager(root/'profile_store')
             self.assertTrue(reopened.get(profile['id'])['authorized'])
 
+    def test_reference_transcript_update_preserves_authorization_and_audio(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_voice_profiles_') as folder:
+            root=Path(folder);source=root/'recording.wav';original=b'RIFF'+b'a'*300
+            source.write_bytes(original)
+            manager=VoiceProfileManager(root/'profile_store')
+            profile=manager.create('Minha voz',source,'portuguese',
+                                   'texto antigo',authorized=True)
+            private=Path(profile['sample_path']);private_bytes=private.read_bytes()
+            updated=manager.update_reference_text(profile['id'],
+                '  texto   revisado\n com a transcrição correta  ')
+            self.assertEqual(updated['reference_text'],
+                             'texto revisado com a transcrição correta')
+            self.assertTrue(updated['authorized'])
+            self.assertEqual(updated['id'],profile['id'])
+            self.assertEqual(private.read_bytes(),private_bytes)
+            self.assertEqual(source.read_bytes(),original)
+            reopened=VoiceProfileManager(root/'profile_store')
+            self.assertEqual(reopened.get(profile['id'])['reference_text'],
+                             updated['reference_text'])
+            with self.assertRaisesRegex(ValueError,'4000 caracteres'):
+                reopened.update_reference_text(profile['id'],'x'*4001)
+            self.assertEqual(reopened.get(profile['id'])['reference_text'],
+                             updated['reference_text'])
+
     def test_rename_and_delete_only_remove_private_copy_not_original(self):
         with tempfile.TemporaryDirectory(prefix='bfs_voice_profiles_') as folder:
             root=Path(folder);source=root/'voice.mp3';source.write_bytes(b'ID3'+b'x'*300)
