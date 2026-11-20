@@ -1299,6 +1299,16 @@ chunk em 0,523 s, cache vocal atingido e 0 s de carregamento/preparo atribuídos
 validação visual em monitor ou escuta física. Saída integral do teste: dois
 testes passaram em 20,555 s.
 
+Após a atualização não destrutiva de texto em perfis salvos, repeti os mesmos
+dois testes reais do editor com o runtime Pure C local e variáveis offline do
+Hugging Face; ambos passaram em 22,501 s. A rota MainWindow→player→timeline
+gerou WAV de 7,20 s e MP4 de 7,20 s, ambos com áudio/vídeo presentes. O teste
+de prewarm usou o orçamento isolado de oito threads: áudio de 5,12 s em 4,266 s
+(RTF 0,833), primeiro chunk em 0,533 s, perfil em cache e 0 s de carregamento
+ou preparo atribuídos à geração; prewarm inicial de 4,446 s. A preferência real
+do usuário segue em seis threads. Execução Qt offscreen, sem validação em
+monitor ou alto-falantes.
+
 #### Amostras A/B Original e Turbo para escuta (19/11/2026)
 
 Gerei amostras inéditas pelo serviço canônico com o mesmo texto em português e
