@@ -1344,3 +1344,10 @@ o Turbo é o arquivo `B Turbo Mixed_purec_970eb35d.wav` da mesma pasta. O ASR n�
 avalia naturalidade, timbre ou identidade vocal; a escuta humana ainda é
 necessária. A divergência do texto de referência salvo deve ser corrigida no
 perfil para o modo Original padrão, mas não alterei dados do usuário.
+
+Também calculei a similaridade de speaker embedding para o Original corrigido e
+o Turbo, comparando ambos com a mesma referência e usando o encoder oficial
+Qwen 0.6B Base FP32 como avaliador. Os cossenos foram 0,976927 (Original) e
+0,972541 (Turbo). A diferença de 0,004386 é pequena neste proxy e não indica
+grande perda de identidade vocal no Turbo, mas embeddings não substituem
+avaliação perceptual.
