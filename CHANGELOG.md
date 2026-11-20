@@ -2,6 +2,7 @@
 
 - Perfis de voz existentes agora permitem atualizar e persistir apenas a transcrição de referência, sem regravar nem substituir a amostra, alterar autorização ou recriar o perfil. No modo Original, o prompt vocal é preparado de novo com a transcrição atualizada.
 - Testes de serviço e interface cobrem persistência após reabertura, preservação da gravação/autorização e despacho do prewarm; validação direcionada: 13 testes passaram.
+- A chave do cache do prompt inclui o hash da transcrição: a correção produz um prompt novo sem reutilizar o condicionamento anterior.
 
 ## Correção incremental — referências de voz com pausas longas
 

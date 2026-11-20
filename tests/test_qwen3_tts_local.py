@@ -262,5 +262,16 @@ class QwenLocalCloneTests(unittest.TestCase):
             self.assertFalse(result['prompt_cache_hit'])
             self.assertEqual(runtime.call_args.args[0]['reference_text'],'')
 
+    def test_correcting_profile_transcript_invalidates_only_the_old_prompt_cache_key(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);sample=root/'reference.wav';sample.write_bytes(b'RIFF'+b'x'*200)
+            model=root/'model';model.mkdir()
+            with patch.object(qwen,'_model_fingerprint',return_value={'model':'fixture'}):
+                old=qwen._prompt_cache_file(sample,'texto salvo incorreto',model)
+                corrected=qwen._prompt_cache_file(sample,'transcrição corrigida',model)
+                repeated=qwen._prompt_cache_file(sample,'texto salvo incorreto',model)
+            self.assertNotEqual(old,corrected)
+            self.assertEqual(old,repeated)
+
 
 if __name__=='__main__':unittest.main()
