@@ -1318,6 +1318,14 @@ O resultado confirma aceleração forte neste roteiro/perfil, mas não certifica
 naturalidade ou fidelidade vocal. As duas amostras para avaliação auditiva e o
 JSON estão fora do Git em
 `C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_ABListen_20261119`.
-Uma tentativa local de WER adicional não concluiu porque a instalação de
-`faster-whisper` falhou ao chamar `av.open(..., metadata_errors=...)` (API
-incompatível da dependência PyAV); não usei esse teste para afirmar qualidade.
+
+Como proxy adicional, transcrevi os dois WAVs offline com Faster Whisper
+Base/int8 em CPU. O leitor de caminho falhou por incompatibilidade entre
+Faster Whisper e PyAV (`metadata_errors`); contornei isso lendo PCM diretamente,
+reamostrando de 24 kHz para 16 kHz (taxa esperada pelo array de entrada) e
+passando o array ao ASR. Com normalização de caixa e pontuação, o WER foi 1,000
+para Original (hipótese repetitiva, “Infus, infus...”) e 0,056 para Turbo Mixed
+(uma palavra divergente: “sua” por “soar”). Isso é um alerta forte de possível
+falha/inteligibilidade do áudio Original nessa geração e favorece o Turbo neste
+roteiro, mas o ASR não avalia naturalidade, timbre ou identidade vocal; a escuta
+humana continua necessária antes de declarar a qualidade aceitável.
