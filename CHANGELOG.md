@@ -1,3 +1,7 @@
+## Validação local Turbo sem proxy externo
+
+- Fluxo UI→Qwen Pure C mixed→timeline→WAV/MP4 repetido com proxy externo indisponível em `127.0.0.1:9`, loopback liberado e Hugging Face offline. Gerou clipe de 4,32 s em 9,869 s e exportou WAV/MP4 com áudio e vídeo. A sessão não tinha privilégio de administrador; portanto isso não substitui o teste com regra de firewall de saída.
+
 ## Operação Qwen Turbo — correção de transcrição em perfis salvos
 
 - Perfis de voz existentes agora permitem atualizar e persistir apenas a transcrição de referência, sem regravar nem substituir a amostra, alterar autorização ou recriar o perfil. No modo Original, o prompt vocal é preparado de novo com a transcrição atualizada.
