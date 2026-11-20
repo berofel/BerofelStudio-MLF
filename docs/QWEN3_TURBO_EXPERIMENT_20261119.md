@@ -1265,3 +1265,24 @@ Amostras HTTP e relatório estão fora do Git em
 A fonte upstream documenta a política de ownership e a condição de ausência da
 variável para builds com controle efetivo em
 [feature-flags.md v0.23.0](https://github.com/gabriele-mastrapasqua/qwen3-tts/blob/e391ec5467b0218eeb175f4888ad65b259d1e7c7/docs/feature-flags.md#L248).
+
+#### Medição longa no serviço canônico (19/11/2026)
+
+Para responder à comparação entre duração falada e tempo de geração, usei o
+serviço de narração Pure C mixed, com seis threads, modelo já carregado e perfil
+autorizado já preparado. Três WAVs inéditos, gerados a partir do mesmo roteiro
+de 226 palavras, tiveram duração mediana de 81,84 s e levaram 71,219 s para
+sintetizar (RTF 0,872); o primeiro áudio ficou disponível em 1,444 s. Portanto,
+nesse modo aquecido a síntese foi cerca de 13% mais rápida que a reprodução,
+mas ainda próxima de tempo real. O roteiro produziu 82 s, não 60 s exatos.
+
+Essa rodada específica tinha `offline: false`; ela comprova o caminho real do
+serviço e a reutilização de modelo/perfil em cache, mas não deve ser citada como
+validação offline. Os testes de integração offline descritos acima são a
+evidência separada para essa condição. O backend Original continua sendo o
+padrão inicial e sua medição anterior foi muito mais lenta (10,16 s de áudio em
+52,78 s, RTF 5,195). A opção ativa no editor precisa ser verificada antes de
+comparar a experiência do usuário com qualquer um desses números.
+
+Os WAVs e o relatório da rodada longa permanecem fora do Git em
+`C:\Users\Berofel\Desktop\BerofelStudio_QwenTurbo_OneMinute_20261119_210207`.
