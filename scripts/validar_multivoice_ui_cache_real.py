@@ -175,6 +175,14 @@ def main() -> int:
             if len(clips) != 2 or len(result.lines) != 2:
                 raise RuntimeError('O editor não inseriu os dois blocos na timeline.')
             first, second = result.lines
+            clips_by_line = {clip.narration_line_id: clip for clip in clips}
+            first_clip = clips_by_line.get(first.id)
+            second_clip = clips_by_line.get(second.id)
+            if first_clip is None or second_clip is None:
+                raise RuntimeError('Os clips não mantiveram o ID estável de cada fala.')
+            expected_second_start = first_clip.timeline_end + result.pause_ms / 1000.0
+            if abs(second_clip.timeline_start - expected_second_start) > 0.001:
+                raise RuntimeError('A pausa entre as falas não foi respeitada na timeline.')
             if not (first.status == second.status == 'generated' and
                     first.cache_hit is False and second.cache_hit is True):
                 raise RuntimeError('Estado/cache das falas não corresponde à validação esperada.')
@@ -192,6 +200,9 @@ def main() -> int:
                 window.export_multivoice_script(result)
             _wait_task(window, app)
             export_metrics = _measure_wav(export_path)
+            expected_export_duration = first.duration + second.duration + result.pause_ms / 1000.0
+            if abs(export_metrics['duration_seconds'] - expected_export_duration) > 0.03:
+                raise RuntimeError('A duração exportada não corresponde aos WAVs e à pausa da timeline.')
             report = {
                 'offline': True,
                 'through_editor_ui': True,
@@ -201,6 +212,8 @@ def main() -> int:
                 'synthesis_calls': 1,
                 'cache_hit_per_line': [first.cache_hit, second.cache_hit],
                 'timeline_clips': len(clips),
+                'timeline_pause_ms_preserved': result.pause_ms,
+                'timeline_order_and_spacing_verified': True,
                 'project_reopen_preserved_script_and_clips': True,
                 'individual_wav_metrics': [_measure_wav(first.audio_path),
                                            _measure_wav(second.audio_path)],

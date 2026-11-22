@@ -58,10 +58,10 @@ Também foi executado o smoke Qt completo `scripts/validar_multivoice_ui_cache_r
 
 | Backend | WAV por fala | WAV do roteiro exportado | Timeline/projeto |
 |---|---|---|---|
-| Pure C INT8 | 2 mono, 24 kHz, 5,68 s cada, RMS 1.073,3 | 48 kHz estéreo, 11,56 s, sinal não silencioso | 2 clips; salvar/reabrir preservou IDs e roteiro |
-| Pure C Mixer | 2 mono, 24 kHz, 5,52 s cada, RMS 1.027,9 | 48 kHz estéreo, 11,24 s, sinal não silencioso | 2 clips; salvar/reabrir preservou IDs e roteiro |
+| Pure C INT8 | 2 mono, 24 kHz, 4,48 s cada, RMS 1.045,3 | 48 kHz estéreo, 9,16 s, RMS 196.792,4 | 2 clips, pausa de 200 ms; salvar/reabrir preservou IDs e roteiro |
+| Pure C Mixer | 2 mono, 24 kHz, 4,96 s cada, RMS 944,1 | 48 kHz estéreo, 10,12 s, RMS 178.040,4 | 2 clips, pausa de 200 ms; salvar/reabrir preservou IDs e roteiro |
 
-Cada par de WAV individual tinha caminhos distintos e hash SHA-256 igual; somente a primeira fala foi sintetizada. A referência V1/V2 é o mesmo perfil autorizado, por isso o smoke comprova integração UI/cache/timeline/exportação para os dois modos, mas não vozes de pessoas diferentes nem a avaliação auditiva subjetiva. Todos os projetos, saídas e caches foram temporários e removidos.
+Cada par de WAV individual tinha caminhos distintos e hash SHA-256 igual; somente a primeira fala foi sintetizada. O teste verificou a ordem/posição das falas e que a duração do WAV exportado equivale à soma dos áudios mais a pausa de 200 ms. A referência V1/V2 é o mesmo perfil autorizado, por isso o smoke comprova integração UI/cache/timeline/exportação para os dois modos, mas não vozes de pessoas diferentes nem a avaliação auditiva subjetiva. Todos os projetos, saídas e caches foram temporários e removidos.
 
 ## Limite técnico conhecido do Pure C
 

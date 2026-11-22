@@ -20,7 +20,7 @@
 ## Smoke Qt real de multivozes e exportação WAV
 
 - Adicionado `scripts/validar_multivoice_ui_cache_real.py` para gerar roteiro duplicado pela janela Qt real, conferir dois clips, salvar/reabrir projeto e exportar WAV do roteiro offline.
-- INT8 e Mixer passaram com uma inferência, WAVs separados por fala e exportação estéreo 48 kHz não silenciosa. V1/V2 usam intencionalmente o mesmo perfil autorizado; o smoke não valida vozes de locutores diferentes.
+- INT8 e Mixer passaram com uma inferência, WAVs separados por fala, pausa de 200 ms preservada na timeline e exportação estéreo 48 kHz com duração sincronizada. V1/V2 usam intencionalmente o mesmo perfil autorizado; o smoke não valida vozes de locutores diferentes.
 
 ## Multivozes: cache compartilha síntese idêntica entre personagens da mesma voz
 
