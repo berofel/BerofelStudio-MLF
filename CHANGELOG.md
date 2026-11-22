@@ -11,6 +11,7 @@
 - Regenerar uma fala mantém o ID do roteiro e escreve apenas seu progresso em checkpoint próprio; a nova síntese usa o cache persistente do roteiro, sem alterar o checkpoint canônico até a fala validar.
 - A regeneração carrega somente o perfil associado à fala selecionada, mesmo se outros slots configurados tiverem perfis removidos ou indisponíveis.
 - Após a troca validada, o checkpoint completo do roteiro é atualizado; os WAVs das demais falas continuam associados ao projeto.
+- O checkpoint temporário daquela regeneração é removido somente depois que o resultado validado e o projeto foram salvos.
 - Teste Qt verifica o ID/pasta preservados, o perfil usado e a integridade dos demais WAVs.
 
 ## Multivozes: inserção idempotente após geração em lote

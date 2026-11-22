@@ -1267,8 +1267,11 @@ class ActionsUITests(unittest.TestCase):
                 captured={}
 
                 def fake_generate(work, profiles, project_path, **kwargs):
+                    checkpoint=Path(kwargs['checkpoint_path'])
+                    checkpoint.parent.mkdir(parents=True,exist_ok=True)
+                    checkpoint.write_text('checkpoint provisório',encoding='utf-8')
                     captured.update({'script_id':work.id,'line_count':len(work.lines),
-                        'profile_ids':set(profiles), 'run_checkpoint':Path(kwargs['checkpoint_path']),
+                        'profile_ids':set(profiles), 'run_checkpoint':checkpoint,
                         'project_path':project_path})
                     line=work.lines[0]
                     with wave.open(str(new_audio),'wb') as output:
@@ -1294,6 +1297,8 @@ class ActionsUITests(unittest.TestCase):
                 expected_root=Path(win.project.path).parent/(Path(win.project.path).stem+'_arquivos')
                 expected_run_root=expected_root/'narracoes'/'roteiros'/script.id/'runs'
                 self.assertEqual(captured['run_checkpoint'].parent,expected_run_root)
+                self.assertFalse(captured['run_checkpoint'].exists(),
+                    'O checkpoint temporário deve ser removido após salvar o resultado completo.')
                 self.assertEqual(captured['project_path'],win.project.path)
                 saved=MultiVoiceScript.from_dict(win.project.narration_scripts[0])
                 self.assertEqual(saved.lines[0].text,'Texto corrigido.')
