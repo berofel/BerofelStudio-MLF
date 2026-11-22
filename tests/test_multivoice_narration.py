@@ -182,6 +182,50 @@ class MultiVoiceScriptTests(unittest.TestCase):
                     self.assertEqual(restored.lines[0].audio_path, '')
                     self.assertIn('WAV salvo', restored.lines[0].error)
 
+    def test_restore_sanitizes_project_without_checkpoint_and_keeps_approved_audio(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            project_path = root / 'episode.berofel.json'
+            script = create_script('[001 | V1]\nTexto salvo.',
+                {'V1': {'profile_id': 'p1'}}, 'qwen3-tts-purec-int8')
+            missing = root / 'removed.wav'
+            line = script.lines[0]
+            line.status = 'generated'; line.audio_path = str(missing); line.duration = .2
+            restored = load_script_checkpoint(str(project_path), script.id,
+                                               expected_script=script)
+            self.assertEqual(restored.lines[0].status, 'pending')
+            self.assertEqual(restored.lines[0].audio_path, '')
+
+            approved = root / 'approved.wav'
+            _wav(approved)
+            expected = MultiVoiceScript.from_dict(script.to_dict())
+            expected.lines[0].status = 'pending'
+            expected.lines[0].audio_path = str(approved)
+            expected.lines[0].duration = .1
+            interrupted = MultiVoiceScript.from_dict(expected.to_dict())
+            interrupted.lines[0].status = 'generated'
+            interrupted.lines[0].audio_path = str(missing)
+            interrupted.lines[0].duration = .2
+            save_script_checkpoint(interrupted, str(project_path))
+            restored = load_script_checkpoint(str(project_path), script.id,
+                                               expected_script=expected)
+            self.assertEqual(restored.lines[0].status, 'pending')
+            self.assertEqual(restored.lines[0].audio_path, str(approved))
+
+    def test_interrupted_generating_checkpoint_restores_as_pending(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            project_path = root / 'episode.berofel.json'
+            script = create_script('[001 | V1]\nTexto salvo.',
+                {'V1': {'profile_id': 'p1'}}, 'qwen3-tts-purec-int8')
+            interrupted = MultiVoiceScript.from_dict(script.to_dict())
+            interrupted.lines[0].status = 'generating'
+            save_script_checkpoint(interrupted, str(project_path))
+            restored = load_script_checkpoint(str(project_path), script.id,
+                                               expected_script=script)
+            self.assertEqual(restored.lines[0].status, 'pending')
+            self.assertIn('interrompida', restored.lines[0].error)
+
     def test_grouping_merges_character_slots_that_share_the_same_saved_profile(self):
         script = create_script('[001 | V1]\nA\n[002 | V2]\nB\n[003 | V3]\nC\n[004 | V2]\nD',
             {'V1': {'profile_id': 'p1'}, 'V2': {'profile_id': 'p1'},

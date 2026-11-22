@@ -511,14 +511,25 @@ def load_script_checkpoint(project_path: str, script_id: str,
             valid.append((path.stat().st_mtime_ns, path, checkpoint))
         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
             continue
-    if not valid:
-        return None
-    _modified, path, checkpoint = max(valid, key=lambda item: item[0])
+    restored = None
     if expected_script is not None:
         # Keep project-authored edits such as timeline position, title, and
         # unused profile slots; checkpoints contribute generated-state only.
         import copy
         restored = copy.deepcopy(expected_script)
+        for line in restored.lines:
+            if line.status != 'generated':
+                continue
+            saved_audio = Path(line.audio_path) if line.audio_path else None
+            if saved_audio is None or not _cached_wav_valid(saved_audio)[1]:
+                line.status = 'pending'
+                line.audio_path = ''
+                line.duration = 0.0
+                line.error = 'O WAV salvo não existe ou está inválido; gere esta fala novamente.'
+    if not valid:
+        return restored
+    _modified, path, checkpoint = max(valid, key=lambda item: item[0])
+    if expected_script is not None:
         saved_lines = {line.id: line for line in checkpoint.lines}
         for line in restored.lines:
             saved = saved_lines.get(line.id)
@@ -527,18 +538,16 @@ def load_script_checkpoint(project_path: str, script_id: str,
             if saved.status == 'generated':
                 saved_audio = Path(saved.audio_path) if saved.audio_path else None
                 if saved_audio is None or not _cached_wav_valid(saved_audio)[1]:
-                    # A checkpoint may outlive a manually removed or damaged
-                    # WAV. Never restore a generated state that the player or
-                    # timeline can no longer actually use.
-                    line.status = 'pending'
-                    line.audio_path = ''
-                    line.duration = 0.0
-                    line.error = 'O WAV salvo não existe ou está inválido; gere esta fala novamente.'
+                    # Keep any still-valid approved audio already in the project
+                    # if a newer temporary run points to a damaged WAV.
                     continue
             for attribute in ('status', 'audio_path', 'duration', 'clip_id', 'cache_key',
                               'error', 'generation_seconds', 'model_load_seconds',
                               'profile_prepare_seconds', 'first_audio_seconds', 'cache_hit'):
                 setattr(line, attribute, getattr(saved, attribute))
+            if saved.status == 'generating':
+                line.status = 'pending'
+                line.error = 'A fila foi interrompida; retome o roteiro para continuar.'
         restored.total_seconds = checkpoint.total_seconds
         restored.first_audio_ready_seconds = checkpoint.first_audio_ready_seconds
         restored.checkpoint_path = str(canonical)
