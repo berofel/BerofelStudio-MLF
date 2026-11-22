@@ -229,13 +229,22 @@ class MultiVoicePanel(QWidget):
     def _update_engine_note(self, *_):
         if not hasattr(self, 'engine_note'):
             return
-        selected_profiles = {combo.currentData() for combo in self.assignments.values()
-                             if combo.currentData()}
+        if self.active_script:
+            selected_profiles = {str(voice.get('profile_id', ''))
+                                 for voice in self.active_script.voices.values()
+                                 if voice.get('profile_id')}
+        else:
+            selected_profiles = {combo.currentData() for combo in self.assignments.values()
+                                 if combo.currentData()}
         engine_id = str(self.engine.currentData() or '')
         if engine_id in ('qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8') and len(selected_profiles) > 1:
             self.engine_note.setText(
                 'Atenção: o Pure C fixa uma voz clonada por servidor. Ao trocar entre perfis '
                 'diferentes, o Qwen reinicia e recarrega o modelo em cada lote de voz.')
+        elif engine_id == 'qwen3-tts-local' and len(selected_profiles) > 1:
+            self.engine_note.setText(
+                'Original mantém um único Qwen carregado e reutiliza o condicionamento de cada '
+                'perfil durante a sessão. A geração pode ser mais lenta que nos perfis Pure C.')
         elif engine_id in ('qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8'):
             self.engine_note.setText(
                 'Pure C agrupa as falas pelo perfil e mantém o servidor aquecido enquanto usa '

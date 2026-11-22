@@ -106,6 +106,12 @@ class MultiVoicePanelTests(unittest.TestCase):
         self.panel.assignments['V2'].setCurrentIndex(
             self.panel.assignments['V2'].findData(self.profile['id']))
         self.assertIn('mantém o servidor aquecido', self.panel.engine_note.text())
+        self.panel.assignments['V2'].setCurrentIndex(
+            self.panel.assignments['V2'].findData(second['id']))
+        if self.panel.engine.findData('qwen3-tts-local') < 0:
+            self.panel.engine.addItem('Original test', 'qwen3-tts-local')
+        self.panel.engine.setCurrentIndex(self.panel.engine.findData('qwen3-tts-local'))
+        self.assertIn('um único Qwen carregado', self.panel.engine_note.text())
 
 
 if __name__ == '__main__':

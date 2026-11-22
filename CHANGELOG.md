@@ -8,6 +8,7 @@
 - Validação real pela interface em roteiros de 100 falas nos perfis Pure C INT8 e Pure C Mixed: WAVs individuais, 100 clips em ordem, salvamento/reabertura, WAV completo e MP4 (Mixed). Resultados, limites de uma única voz autorizada disponível e métricas estão em `docs/NARRACAO_MULTIVOZES.md`.
 - Regeneração real de uma fala preservou os outros WAVs e suportou Undo/Redo. Adicionado teste de geração/união de fala segmentada. A troca real entre perfis de pessoas diferentes permanece sem validação porque havia apenas um perfil vocal autorizado no ambiente.
 - O painel multivozes agora avisa quando personagens usam perfis Pure C diferentes, pois cada troca exige reinício e recarga do servidor/modelo.
+- Para roteiros com vários perfis sem recarga entre personagens, o painel explica que Original reutiliza um worker e até 64 prompts vocais em memória, com a contrapartida de inferência mais lenta.
 
 ## Validação local Turbo sem proxy externo
 
