@@ -16,6 +16,7 @@ import tempfile
 import wave
 
 import numpy as np
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -118,6 +119,9 @@ def main() -> int:
     from berofel.services.qwen3_native_tts import is_ready as native_ready, _layout as native_layout
     from berofel.ui.window import MainWindow
     from berofel.services.multivoice_narration import MultiVoiceScript
+    from berofel.core.project import Clip, Project
+    from berofel.services.export_multitrack import export_project
+    from berofel.services.ffmpeg import ffmpeg_path, media_info
 
     if (args.engine.startswith('qwen3-tts-purec-') and not purec_ready()) or (
             args.engine == 'qwen3-tts-native-q4' and not native_ready()):
@@ -160,8 +164,17 @@ def main() -> int:
             stop_purec_worker()
             project_path = root / 'ui_smoke.berofel.json'
             export_path = root / 'multivoice.wav'
+            mp4_path = root / 'multivoice.mp4'
+            video = root / 'background.png'
+            Image.new('RGB', (320, 180), (28, 38, 54)).save(video)
+            project = Project(width=320, height=180, fps=12)
+            project.path = str(project_path)
+            project.add_clip(Clip(str(video), 0, 15,
+                                  track_id=project.tracks[0].id,
+                                  kind='image', title='multivoice smoke background'))
             window = MainWindow()
-            window.project.path = str(project_path)
+            window.project = project
+            window.refresh([])
             panel = window.narration_panel.multivoice_panel
             panel.refresh_profiles()
             for voice_id in ('V1', 'V2'):
@@ -207,7 +220,10 @@ def main() -> int:
                 raise RuntimeError('O projeto do smoke não pôde ser salvo.')
             reopened = load_project(str(project_path))
             restored = MultiVoiceScript.from_dict(reopened.narration_scripts[0])
-            if len(reopened.clips) != 2 or [line.id for line in restored.lines] != [line.id for line in result.lines]:
+            reopened_script_clips = [clip for clip in reopened.clips
+                                     if clip.narration_script_id == script.id]
+            if (len(reopened_script_clips) != 2 or
+                    [line.id for line in restored.lines] != [line.id for line in result.lines]):
                 raise RuntimeError('Salvar/reabrir não preservou falas e timeline.')
 
             with patch.object(QFileDialog, 'getSaveFileName',
@@ -218,6 +234,17 @@ def main() -> int:
             expected_export_duration = first.duration + second.duration + result.pause_ms / 1000.0
             if abs(export_metrics['duration_seconds'] - expected_export_duration) > 0.03:
                 raise RuntimeError('A duração exportada não corresponde aos WAVs e à pausa da timeline.')
+            export_project(window.project, str(mp4_path))
+            mp4_duration, has_video, has_audio = media_info(str(mp4_path))
+            if not has_video or not has_audio or mp4_duration <= 0:
+                raise RuntimeError('O MP4 multivozes não contém vídeo e áudio válidos.')
+            decoded_audio = root / 'multivoice_mp4_audio.wav'
+            import subprocess
+            subprocess.run([ffmpeg_path(), '-hide_banner', '-loglevel', 'error', '-y',
+                            '-i', str(mp4_path), '-map', '0:a:0', '-vn', '-ac', '1',
+                            '-ar', '24000', '-c:a', 'pcm_s16le', str(decoded_audio)],
+                           check=True, capture_output=True, timeout=120)
+            mp4_audio_metrics = _measure_wav(decoded_audio)
             report = {
                 'offline': True,
                 'through_editor_ui': True,
@@ -236,6 +263,9 @@ def main() -> int:
                                            _measure_wav(second.audio_path)],
                 'individual_wav_hashes_equal': True,
                 'full_script_wav_export': export_metrics,
+                'mp4_export': {'duration_seconds': round(mp4_duration, 3),
+                               'has_video': has_video, 'has_audio': has_audio,
+                               'decoded_audio_metrics': mp4_audio_metrics},
                 'temporary_project_audio_and_caches_removed': True,
             }
             print(json.dumps(report, ensure_ascii=False, indent=2))
