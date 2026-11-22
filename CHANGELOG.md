@@ -13,6 +13,7 @@
 - O worker Original agora informa as fases de inicialização PyTorch/Qwen/pesos na interface e devolve erros de carga ao editor, sem ocultá-los como espera indefinida.
 - A carga local do Qwen evita importar o pacote completo librosa/numba; a compatibilidade para load, soxr e filtros mel segue as APIs usadas pelo Qwen, e a saída mel foi comparada com a implementação instalada.
 - Após a correção, o backend Original Qwen foi validado por uma sessão offline nova: prompt vocal persistido reaproveitado, WAV audível inserido na timeline, player, exportação WAV/MP4 e projeto reaberto; latência fria observada ficou documentada como fallback lento.
+- O smoke de dois lotes Original passou offline com o mesmo worker/PID e apenas uma carga do modelo; o segundo prompt foi recuperado do cache persistente. As duas IDs usaram a mesma gravação, então isso não valida vozes distintas.
 - O editor visual aceita trocar uma fala para qualquer perfil já configurado, mesmo que o personagem ainda não apareça no roteiro importado; perfis extras não usados não impedem a geração.
 - O painel avisa quando personagens diferentes apontam para o mesmo perfil vocal, deixando explícito que eles terão a mesma identidade de voz.
 

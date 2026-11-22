@@ -32,7 +32,7 @@ Os perfis Pure C em uso fixam um x-vector com `--load-voice` no início do servi
 
 Para um roteiro com perfis diferentes sem recarga entre personagens, o perfil **Original — Qwen3 Base** mantém o worker PyTorch e seus prompts de voz em memória (limite LRU atual de 64 prompts por sessão). É a alternativa de menor recarga, embora a inferência seja mais lenta que Pure C. O painel explica essa diferença quando Original está selecionado. A lógica está confirmada no código do worker persistente, mas a síntese real de várias identidades ainda precisa ser repetida quando houver perfis autorizados distintos.
 
-Uma tentativa real adicional do worker Original em duas IDs de perfil (mesma amostra autorizada, portanto sem alegação de timbres distintos) não gerou a primeira fala após vários minutos e foi interrompida para liberar o CPU. Ela não conta como teste de geração concluído. O script `scripts/validar_multivoice_original_real.py` reproduz essa verificação offline com timeout máximo de 10 minutos; o fluxo Original deve ser tratado como não validado para produção multivozes até terminar e produzir WAVs nesse ambiente.
+Antes da camada de compatibilidade de áudio, uma tentativa real adicional do worker Original em duas IDs de perfil (mesma amostra autorizada, sem alegação de timbres distintos) não gerou a primeira fala após vários minutos e foi interrompida para liberar o CPU. A repetição após a correção está registrada abaixo.
 
 Na repetição diagnóstica, o worker reportou que PyTorch foi importado, mas não saiu da importação de `qwen_tts` em 90 segundos; nenhum WAV foi gerado. Os módulos Python `torch`, `torchaudio`, `qwen_tts` e `imageio_ffmpeg` estão presentes. O `stderr` mostrou também que o executável `sox` não está no PATH, mas não houve evidência de que esse aviso seja a causa da demora. O worker agora envia as fases de importação/carga para o painel e encaminha exceções de inicialização, permitindo distinguir importação lenta, leitura dos pesos e erro explícito.
 
@@ -41,6 +41,10 @@ O import do pacote foi então repetido com uma camada local compatível com a AP
 #### Backend Original Qwen após a correção do import
 
 Também executei o caminho completo na interface com `qwen3-tts-local`, em uma sessão nova/offline, usando o único perfil pessoal autorizado já salvo. O worker carregou o Qwen Base 0.6B e o prompt vocal persistido (`prompt_cache_hit=true`, `model_load_count=1`); o WAV mono 24 kHz teve 10,80 s e sinal não silencioso. Do clique à inserção na timeline foram 62,83 s (RTF frio do fluxo UI 5,817, incluindo inicialização/carga do modelo). Player, busca, exportação WAV 48 kHz, MP4 com vídeo/áudio e salvar/reabrir o projeto passaram. Esse resultado valida o Original dentro do editor como fallback, mas não é uma otimização de velocidade: o Pure C INT8 permanece a rota recomendada para narração rápida. A medição é uma execução, feita em `QT_QPA_PLATFORM=offscreen`, sem avaliação por alto-falantes.
+
+#### Reuso do Original entre lotes de perfil
+
+Reexecutei `scripts/validar_multivoice_original_real.py` offline, em um processo novo, com duas IDs de perfil apontando para a mesma referência autorizada. As duas falas geraram WAVs válidos (8,32 s e 8,16 s), usaram o mesmo PID de worker, reportaram `model_load_count=1`, e a segunda fala atingiu o cache persistente do prompt (`false`/`true` para miss/hit). O carregamento inicial mediu 6,46 s; inferência das falas, 42,63 s e 41,86 s (RTF 5,12 e 5,13). Áudios e caches temporários foram removidos. Isso comprova o reaproveitamento de uma sessão Original entre grupos, mas **não** comprova identidades vocais diferentes: ainda falta um segundo perfil autorizado com gravação distinta.
 
 ### Validar duas referências autorizadas diferentes
 
