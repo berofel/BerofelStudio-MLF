@@ -1449,7 +1449,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, 'Perfis de voz', str(exc))
             return
         from berofel.services.multivoice_narration import (
-            MultiVoiceScript, script_generation_fingerprint,
+            MultiVoiceScript, save_script_checkpoint, script_generation_fingerprint,
         )
         is_resume = any(item.get('id') == script.id for item in self.project.narration_scripts)
         script.title = script.title or 'Roteiro multivozes'
@@ -1458,10 +1458,19 @@ class MainWindow(QMainWindow):
         script_path = self.project.path
         if script_path:
             from berofel.services.narration_service import persistent_folder
-            script.checkpoint_path = str(persistent_folder(script_path) / 'roteiros' /
-                                         script.id / 'roteiro.json')
+            output_root = persistent_folder(script_path) / 'roteiros' / script.id
+            script.checkpoint_path = str(output_root / 'roteiro.json')
+            try:
+                save_script_checkpoint(script, script_path)
+            except OSError as exc:
+                QMessageBox.warning(self, 'Salvar roteiro',
+                                    f'Não foi possível preparar o checkpoint do roteiro: {exc}')
+                return
         generation_script = MultiVoiceScript.from_dict(script.to_dict())
         generation_fingerprint = script_generation_fingerprint(generation_script)
+        from uuid import uuid4
+        run_checkpoint = (output_root / 'runs' /
+                          f'{generation_fingerprint}_{uuid4().hex}.json')
         self.snapshot()
         self.project.narration_scripts = [item for item in self.project.narration_scripts
                                           if item.get('id') != script.id]
@@ -1474,7 +1483,8 @@ class MainWindow(QMainWindow):
         panel.status.setText('Preparando fila agrupada por personagem…')
         def run(progress=None, control=None, stage=None):
             return generate_script_audio(generation_script, profiles, script_path, control=control,
-                                         progress=progress, stage=stage)
+                                         progress=progress, stage=stage,
+                                         checkpoint_path=str(run_checkpoint))
         def ready(result):
             latest_data = next((item for item in self.project.narration_scripts
                                 if item.get('id') == result.id), None)
@@ -1540,6 +1550,12 @@ class MainWindow(QMainWindow):
                 clips.append(clip)
                 cursor += line.duration + result.pause_ms / 1000.0
             result.lines = [line_by_id[line.id] for line in sorted(result.lines, key=lambda item:item.number)]
+            checkpoint_warning = ''
+            if self.project.path:
+                try:
+                    save_script_checkpoint(result, self.project.path)
+                except OSError as exc:
+                    checkpoint_warning = f' · checkpoint pendente: {exc}'
             self.project.narration_scripts = [item for item in self.project.narration_scripts
                                               if item.get('id') != result.id]
             self.project.narration_scripts.append(result.to_dict())
@@ -1556,7 +1572,8 @@ class MainWindow(QMainWindow):
             telemetry = (f' · RTF {rtf:.2f} · primeira fala disponível '
                          f'{result.first_audio_ready_seconds:.1f}s · fila {result.total_seconds:.1f}s')
             panel.status.setText(f'{len(clips)} falas geradas em {len(used_profiles)} perfil(is). '
-                                 'Os WAVs estão separados e ordenados na timeline.' + telemetry)
+                                 'Os WAVs estão separados e ordenados na timeline.' + telemetry +
+                                 checkpoint_warning)
             self.statusBar().showMessage(f'Roteiro concluído: {len(clips)} falas em {track.name}.')
         task = self._task(run, ready, label=f'Qwen3 · roteiro multivozes · {script.engine_id}')
         if task is None:
@@ -1768,7 +1785,9 @@ class MainWindow(QMainWindow):
 
     def update_multivoice_script(self, script):
         """Persist visual edits and reflow only clips owned by that script."""
-        from berofel.services.multivoice_narration import MultiVoiceScript
+        from berofel.services.multivoice_narration import (
+            MultiVoiceScript, save_script_checkpoint,
+        )
         if script is None:
             return
         existing = next((item for item in self.project.narration_scripts
@@ -1810,6 +1829,12 @@ class MainWindow(QMainWindow):
                 cursor += clip.duration + script.pause_ms / 1000.0
         self.project.narration_scripts = [item for item in self.project.narration_scripts
                                           if item.get('id') != script.id]
+        if self.project.path:
+            try:
+                save_script_checkpoint(script, self.project.path)
+            except OSError as exc:
+                QMessageBox.warning(self, 'Checkpoint do roteiro',
+                                    f'O projeto será salvo, mas o checkpoint não pôde ser atualizado: {exc}')
         self.project.narration_scripts.append(script.to_dict())
         self.refresh(self.selected_ids)
         if self.project.path:

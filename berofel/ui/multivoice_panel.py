@@ -536,7 +536,9 @@ class MultiVoicePanel(QWidget):
         for data in reversed(list(scripts or [])):
             try:
                 script = MultiVoiceScript.from_dict(data)
-                checkpoint = load_script_checkpoint(project_path, script.id) if project_path else None
+                checkpoint = (load_script_checkpoint(project_path, script.id,
+                                                     expected_script=script)
+                              if project_path else None)
                 self.set_active_script(checkpoint or script)
                 return
             except (OSError, ValueError, TypeError, KeyError):

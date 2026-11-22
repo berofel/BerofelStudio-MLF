@@ -8,7 +8,8 @@ from berofel.services.multivoice_narration import (
     DEFAULT_PAUSE_MS, MultiVoiceScript, ScriptValidationError,
     create_script, group_lines_by_voice, group_script_lines_by_profile, parse_berofel_script,
     generate_script_audio, profile_ids_used_by_script, reorder_lines, split_dialogue_text,
-    synthesis_cache_key, script_generation_fingerprint, update_line_text,
+    synthesis_cache_key, script_generation_fingerprint, load_script_checkpoint,
+    save_script_checkpoint, update_line_text,
 )
 from berofel.services.narration_service import persistent_folder
 
@@ -108,6 +109,53 @@ class MultiVoiceScriptTests(unittest.TestCase):
         self.assertEqual(initial, script_generation_fingerprint(script))
         script.lines[0].text = 'Editado'
         self.assertNotEqual(initial, script_generation_fingerprint(script))
+
+    def test_stale_run_checkpoint_cannot_replace_manual_script_edits_on_restore(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            reference = root / 'voice.wav'
+            _wav(reference)
+            profile = {'id': 'p1', 'sample_path': str(reference),
+                       'reference_text': 'fala', 'language': 'portuguese',
+                       'authorized': True}
+            project_path = root / 'episode.berofel.json'
+            script = create_script('[001 | V1]\nTexto original.',
+                {'V1': {'profile_id': 'p1'}, 'V2': {'profile_id': 'unused-1'}},
+                'qwen3-tts-purec-int8')
+            script.timeline_start = 2.0
+            save_script_checkpoint(script, str(project_path))
+            run_script = MultiVoiceScript.from_dict(script.to_dict())
+            run_script.timeline_start = 8.0
+            run_path = (persistent_folder(str(project_path)) / 'roteiros' / script.id /
+                        'runs' / 'test-run.json')
+
+            def fake_generate(_request, **_kwargs):
+                output = root / 'generated.wav'
+                _wav(output)
+                return {'path': str(output), 'duration': .1, 'cache_hit': False}
+
+            generated = generate_script_audio(run_script, {'p1': profile}, str(project_path),
+                generator=fake_generate, checkpoint_path=str(run_path))
+            self.assertEqual(Path(generated.checkpoint_path), run_path)
+            self.assertEqual(load_script_checkpoint(str(project_path), script.id).lines[0].status,
+                             'pending')
+
+            restored = load_script_checkpoint(str(project_path), script.id,
+                                               expected_script=script)
+            self.assertEqual(restored.lines[0].status, 'generated')
+            self.assertEqual(restored.timeline_start, 2.0)
+            self.assertEqual(restored.voices['V2']['profile_id'], 'unused-1')
+
+            edited = MultiVoiceScript.from_dict(script.to_dict())
+            update_line_text(edited, edited.lines[0].id, 'Texto corrigido durante a IA.')
+            edited.voices['V2']['profile_id'] = 'unused-2'
+            save_script_checkpoint(edited, str(project_path))
+            restored_after_edit = load_script_checkpoint(str(project_path), script.id,
+                                                          expected_script=edited)
+            self.assertEqual(restored_after_edit.lines[0].text,
+                             'Texto corrigido durante a IA.')
+            self.assertEqual(restored_after_edit.lines[0].status, 'pending')
+            self.assertEqual(restored_after_edit.voices['V2']['profile_id'], 'unused-2')
 
     def test_grouping_merges_character_slots_that_share_the_same_saved_profile(self):
         script = create_script('[001 | V1]\nA\n[002 | V2]\nB\n[003 | V3]\nC\n[004 | V2]\nD',

@@ -478,11 +478,62 @@ def _write_checkpoint(script: MultiVoiceScript, path: Path) -> None:
     os.replace(temp, path)
 
 
-def load_script_checkpoint(project_path: str, script_id: str) -> MultiVoiceScript | None:
-    path = persistent_folder(project_path) / 'roteiros' / script_id / 'roteiro.json'
-    if not path.is_file():
+def save_script_checkpoint(script: MultiVoiceScript, project_path: str) -> Path:
+    """Persist the current project-authored script as the canonical checkpoint."""
+    root = persistent_folder(project_path) / 'roteiros' / script.id
+    path = root / 'roteiro.json'
+    script.checkpoint_path = str(path)
+    _write_checkpoint(script, path)
+    return path
+
+
+def load_script_checkpoint(project_path: str, script_id: str,
+                           expected_script: MultiVoiceScript | None = None) -> MultiVoiceScript | None:
+    root = persistent_folder(project_path) / 'roteiros' / script_id
+    canonical = root / 'roteiro.json'
+    candidates = [canonical]
+    if expected_script is not None:
+        candidates.extend((root / 'runs').glob('*.json'))
+    valid: list[tuple[int, Path, MultiVoiceScript]] = []
+    expected_fingerprint = (script_generation_fingerprint(expected_script)
+                            if expected_script is not None else '')
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            checkpoint = MultiVoiceScript.from_dict(
+                json.loads(path.read_text(encoding='utf-8')))
+            if checkpoint.id != script_id:
+                continue
+            if (expected_script is not None and
+                    script_generation_fingerprint(checkpoint) != expected_fingerprint):
+                continue
+            valid.append((path.stat().st_mtime_ns, path, checkpoint))
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+            continue
+    if not valid:
         return None
-    return MultiVoiceScript.from_dict(json.loads(path.read_text(encoding='utf-8')))
+    _modified, path, checkpoint = max(valid, key=lambda item: item[0])
+    if expected_script is not None:
+        # Keep project-authored edits such as timeline position, title, and
+        # unused profile slots; checkpoints contribute generated-state only.
+        import copy
+        restored = copy.deepcopy(expected_script)
+        saved_lines = {line.id: line for line in checkpoint.lines}
+        for line in restored.lines:
+            saved = saved_lines.get(line.id)
+            if saved is None:
+                continue
+            for attribute in ('status', 'audio_path', 'duration', 'clip_id', 'cache_key',
+                              'error', 'generation_seconds', 'model_load_seconds',
+                              'profile_prepare_seconds', 'first_audio_seconds', 'cache_hit'):
+                setattr(line, attribute, getattr(saved, attribute))
+        restored.total_seconds = checkpoint.total_seconds
+        restored.first_audio_ready_seconds = checkpoint.first_audio_ready_seconds
+        restored.checkpoint_path = str(canonical)
+        return restored
+    checkpoint.checkpoint_path = str(path)
+    return checkpoint
 
 
 def generate_script_audio(script: MultiVoiceScript, profiles: Mapping[str, Mapping],
@@ -490,7 +541,8 @@ def generate_script_audio(script: MultiVoiceScript, profiles: Mapping[str, Mappi
                           progress: Callable[[int, int], None] | None = None,
                           stage: Callable[[str], None] | None = None,
                           generator: Callable = generate_narration,
-                          engine_fingerprint: str = '') -> MultiVoiceScript:
+                          engine_fingerprint: str = '',
+                          checkpoint_path: str | None = None) -> MultiVoiceScript:
     """Generate one independent WAV per line, grouped by voice, serially.
 
     The Pure C serving API pins a clone embedding at server startup. Lines in a
@@ -520,7 +572,13 @@ def generate_script_audio(script: MultiVoiceScript, profiles: Mapping[str, Mappi
 
     output_root = persistent_folder(project_path) / 'roteiros' / script.id
     output_root.mkdir(parents=True, exist_ok=True)
-    script.checkpoint_path = str(output_root / 'roteiro.json')
+    canonical_checkpoint = output_root / 'roteiro.json'
+    selected_checkpoint = Path(checkpoint_path) if checkpoint_path else canonical_checkpoint
+    try:
+        selected_checkpoint.resolve().relative_to(output_root.resolve())
+    except ValueError as exc:
+        raise ValueError('O checkpoint do roteiro precisa ficar na pasta privada do próprio roteiro.') from exc
+    script.checkpoint_path = str(selected_checkpoint)
     _write_checkpoint(script, Path(script.checkpoint_path))
     total = len(script.lines)
     started = time.perf_counter()

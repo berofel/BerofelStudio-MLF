@@ -1,3 +1,10 @@
+## Multivozes: checkpoints isolados por execução e recuperação sem sobrescrever edições
+
+- Cada fila em segundo plano agora escreve progresso em checkpoint próprio, sem competir com o checkpoint canônico editado pelo usuário.
+- Na reabertura, checkpoints incrementais só restauram o estado das falas quando o fingerprint do roteiro corresponde ao projeto; título, início da timeline e perfis não usados vêm sempre do projeto atual.
+- Edições manuais atualizam o checkpoint canônico. WAVs concluídos de uma execução antiga continuam reaproveitáveis pelo cache, mas seus textos não substituem o roteiro atualizado.
+- Teste cobre checkpoint de execução desatualizado, edição concorrente e recuperação do progresso quando os dados de síntese ainda coincidem.
+
 ## Multivozes: inserção idempotente após geração em lote
 
 - A conclusão de uma fila agora atualiza o bloco existente da fala, preserva posição manual e ajustes DSP e não cria duplicatas ao gerar novamente um roteiro.
