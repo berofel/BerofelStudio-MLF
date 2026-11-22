@@ -1291,6 +1291,12 @@ class ActionsUITests(unittest.TestCase):
                     narration_voice_id='V1')
                 win.project.add_clip(clip)
                 first.clip_id=clip.id
+                following_clip=Clip(source=str(old_audio),start=0,end=.2,track_id=track.id,
+                    timeline_start=.4,source_length=.2,kind='audio',
+                    narration_script_id=script.id,narration_line_id=second.id,
+                    narration_voice_id='V1')
+                win.project.add_clip(following_clip)
+                second.clip_id=following_clip.id
                 win.project.narration_scripts[0]=script.to_dict()
                 panel.set_active_script(script,first.id)
                 captured={}
@@ -1334,7 +1340,19 @@ class ActionsUITests(unittest.TestCase):
                 self.assertEqual(saved.lines[0].audio_path,str(new_audio))
                 self.assertEqual(saved.lines[1].audio_path,str(old_audio))
                 self.assertEqual(win.project.clip(clip.id).source,str(new_audio))
+                self.assertAlmostEqual(win.project.clip(following_clip.id).timeline_start,.5)
+                self.assertEqual(win.project.clip(following_clip.id).source,str(old_audio))
                 self.assertIsNone(win.active_task)
+                win.undo()
+                self.assertEqual(win.project.clip(clip.id).source,str(old_audio))
+                self.assertAlmostEqual(win.project.clip(following_clip.id).timeline_start,.4)
+                self.assertEqual(MultiVoiceScript.from_dict(
+                    win.project.narration_scripts[0]).lines[0].text,'Texto antigo.')
+                win.redo()
+                self.assertEqual(win.project.clip(clip.id).source,str(new_audio))
+                self.assertAlmostEqual(win.project.clip(following_clip.id).timeline_start,.5)
+                self.assertEqual(MultiVoiceScript.from_dict(
+                    win.project.narration_scripts[0]).lines[0].text,'Texto corrigido.')
             finally:
                 win.close()
 
