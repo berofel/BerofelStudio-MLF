@@ -9,6 +9,7 @@
 - Regeneração real de uma fala preservou os outros WAVs e suportou Undo/Redo. Adicionado teste de geração/união de fala segmentada. A troca real entre perfis de pessoas diferentes permanece sem validação porque havia apenas um perfil vocal autorizado no ambiente.
 - O painel multivozes agora avisa quando personagens usam perfis Pure C diferentes, pois cada troca exige reinício e recarga do servidor/modelo.
 - Para roteiros com vários perfis sem recarga entre personagens, o painel explica que Original reutiliza um worker e até 64 prompts vocais em memória, com a contrapartida de inferência mais lenta.
+- Incluído smoke real offline para Original com timeout e cache temporário; nesta máquina a primeira fala não terminou após vários minutos, então esse caminho permanece não validado e não é recomendado como conclusão de geração.
 
 ## Validação local Turbo sem proxy externo
 
