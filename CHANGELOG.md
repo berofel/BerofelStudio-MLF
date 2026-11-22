@@ -17,6 +17,7 @@
 - Adicionado smoke opt-in com duas referências artificiais para medir troca de perfil Pure C em INT8 e Mixer, incluindo preparação, recarga, primeiro áudio e geração; não é teste de identidade ou qualidade vocal.
 - O editor visual aceita trocar uma fala para qualquer perfil já configurado, mesmo que o personagem ainda não apareça no roteiro importado; perfis extras não usados não impedem a geração.
 - O painel avisa quando personagens diferentes apontam para o mesmo perfil vocal, deixando explícito que eles terão a mesma identidade de voz.
+- O painel também detecta perfis distintos criados da mesma gravação de referência, usando o SHA-256 já persistido no manifesto, para não sugerir identidades diferentes por IDs duplicados. A suíte completa passou: 359 testes aprovados, 4 ignorados.
 
 ## Validação local Turbo sem proxy externo
 

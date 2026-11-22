@@ -155,6 +155,24 @@ class MultiVoicePanelTests(unittest.TestCase):
         self.assertIn('terão a mesma identidade de voz',
                       self.panel.engine_note.text())
 
+    def test_duplicate_profile_copy_warns_that_reference_identity_is_the_same(self):
+        duplicate = self.manager.create(
+            'Cópia do mesmo áudio', self.profile['sample_path'], 'portuguese',
+            'fala de referência', authorized=True)
+        self.assertNotEqual(self.profile['id'], duplicate['id'])
+        self.assertEqual(self.profile['sample_sha256'], duplicate['sample_sha256'])
+        self.panel.refresh_profiles()
+        self.panel.assignments['V1'].setCurrentIndex(
+            self.panel.assignments['V1'].findData(self.profile['id']))
+        self.panel.assignments['V2'].setCurrentIndex(
+            self.panel.assignments['V2'].findData(duplicate['id']))
+        self.panel.script_text.setPlainText(
+            '[001 | V1 | Ana]\nPrimeira fala.\n[002 | V2 | Bruno]\nSegunda fala.')
+        self.assertIn('perfis diferentes, mas a mesma gravação de referência',
+                      self.panel.engine_note.text())
+        self.assertIn('identidade vocal tende a ser a mesma',
+                      self.panel.engine_note.text())
+
 
 if __name__ == '__main__':
     unittest.main()

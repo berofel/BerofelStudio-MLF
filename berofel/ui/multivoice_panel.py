@@ -30,6 +30,7 @@ class MultiVoicePanel(QWidget):
         self.on_export = None
         self.active_script = None
         self.voice_profiles = VoiceProfileManager()
+        self._profile_sha256: dict[str, str] = {}
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
@@ -200,6 +201,10 @@ class MultiVoicePanel(QWidget):
             error = str(exc)
         else:
             error = ''
+        self._profile_sha256 = {
+            str(profile['id']): str(profile.get('sample_sha256', ''))
+            for profile in profiles if profile.get('authorized') and
+            profile.get('sample_sha256')}
         names = {f'V{i}' for i in range(1, 11)}
         for voice_id in sorted(names, key=lambda key: int(key[1:])):
             row = QWidget()
@@ -261,6 +266,20 @@ class MultiVoicePanel(QWidget):
             notes.append('Os personagens ' + ', '.join(repeated_voice_ids) +
                 ' usam o mesmo perfil vocal e terão a mesma identidade de voz. ' +
                 'Associe perfis diferentes se quiser vozes distintas.')
+        elif len(selected_profiles) > 1:
+            voices_by_reference: dict[str, list[str]] = {}
+            for voice_id, profile_id in profile_by_voice.items():
+                fingerprint = self._profile_sha256.get(profile_id, '')
+                if fingerprint:
+                    voices_by_reference.setdefault(fingerprint, []).append(voice_id)
+            duplicated_reference_voices = next((sorted(voice_ids,
+                key=lambda voice: int(voice[1:]))
+                for voice_ids in voices_by_reference.values() if len(voice_ids) > 1), [])
+            if duplicated_reference_voices:
+                notes.append('Os personagens ' + ', '.join(duplicated_reference_voices) +
+                    ' usam perfis diferentes, mas a mesma gravação de referência; ' +
+                    'a identidade vocal tende a ser a mesma. Escolha gravações distintas ' +
+                    'para personagens com vozes diferentes.')
         engine_id = str(self.engine.currentData() or '')
         if engine_id in ('qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8') and len(selected_profiles) > 1:
             notes.append(
