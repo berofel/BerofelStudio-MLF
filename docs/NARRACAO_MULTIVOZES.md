@@ -96,3 +96,17 @@ Também foram executados pela interface: três falas reais em cada perfil, expor
 Antes da implementação foi criado o tag imutável `backup/qwen3-turbo-pre-multivoice-20261122`. O bundle de recuperação da base está em `C:\Users\Berofel\Desktop\BerofelStudio_codigo_base_alpha\BerofelStudio_Qwen3Turbo_PreMultivoice_20261122.bundle`; o bundle com esta implementação e o tag original está em `C:\Users\Berofel\Desktop\BerofelStudio_codigo_base_alpha\BerofelStudio_Qwen3MultiVoice_20261122.bundle`. Ambos são verificáveis com `git bundle verify <caminho>`. Para abrir uma cópia da implementação, execute `git clone --branch feat/qwen3-multivoice-narration <caminho-do-bundle> <pasta-nova>`. Para inspecionar a base anterior, na cópia execute `git switch --detach backup/qwen3-turbo-pre-multivoice-20261122`. Perfis, gravações, modelos e configurações do usuário estão fora da árvore Git; não foram editados nem copiados para esses bundles.
 
 Bundle atualizado após o diagnóstico de troca de perfil: `C:\Users\Berofel\Desktop\BerofelStudio_codigo_base_alpha\BerofelStudio_Qwen3MultiVoice_20261122_after_profile_switch.bundle`. O arquivo inclui o HEAD da branch e a referência de backup acima; pode ser validado com `git bundle verify` e sua integridade confirmada pelo SHA-256 reportado na entrega.
+
+### Diagnóstico offline reproduzível com trechos da voz autorizada
+
+Para medir a troca real do servidor sem aguardar uma segunda gravação, `scripts/validar_troca_perfis_trechos_voz_autorizada.py` cria dois perfis efêmeros a partir de janelas diferentes de uma referência autorizada. Ele exige confirmação explícita, trabalha offline, valida WAV não silencioso, registra PID/carga/preparação/geração e remove os perfis, arquivos e caches temporários ao terminar. Repetição:
+
+```powershell
+& "$env:LOCALAPPDATA\BFS\venv\Scripts\python.exe" `
+  scripts/validar_troca_perfis_trechos_voz_autorizada.py `
+  --confirm-own-or-authorized-voice `
+  --engine qwen3-tts-purec-int8 `
+  --engine qwen3-tts-purec-mixed
+```
+
+Execução offline nesta máquina: INT8 terminou em 14,489 s e Mixer em 10,566 s, com dois WAVs válidos por backend. Os PIDs diferiram entre V1 e V2 e houve cerca de 2,4–2,7 s de carga do servidor em cada lote: a troca Pure C reinicia/recarrega o modelo, mesmo com prompt-cache hit no Mixer. A geração medida foi 3,137/3,589 s no INT8 e 2,738/2,460 s no Mixed. Os dois condicionamentos são trechos diferentes do **mesmo locutor** (`speaker_identity_distinct=false`); isso valida o caminho operacional de troca e recarga, não diferenciação de identidade, fidelidade a duas pessoas ou qualidade subjetiva. A validação com o segundo perfil vocal autorizado que o usuário está preparando continua pendente. Foram adicionados testes de seleção dos segmentos, cobrindo recusa de silêncio e gravação curta.

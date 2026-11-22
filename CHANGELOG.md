@@ -1,3 +1,9 @@
+## Diagnóstico de troca de perfis multivozes
+
+- Adicionado smoke offline que cria dois perfis temporários a partir de segmentos diferentes de uma gravação autorizada e mede troca real nos backends Pure C INT8 e Mixer, removendo os artefatos temporários ao final.
+- A execução gerou WAVs não silenciosos e mostrou recarga do servidor/modelo por troca. Os segmentos são do mesmo locutor, então isso não certifica identidades vocais distintas; a validação aguarda o segundo perfil autorizado.
+- Dois testes cobrem a seleção dos segmentos e rejeição de gravações silenciosas/curtas. Detalhes em `docs/NARRACAO_MULTIVOZES.md`.
+
 ## Branch `feat/qwen3-multivoice-narration` — Uma voz / Várias vozes
 
 - A aba Narração agora separa os modos Uma voz e Várias vozes. Pure C INT8 e Pure C mixed são destacados com os identificadores instalados e seis threads; os modos Original e Q4 continuam em Outros perfis.

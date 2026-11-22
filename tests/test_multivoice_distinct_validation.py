@@ -3,6 +3,9 @@ import unittest
 import wave
 from pathlib import Path
 
+import numpy as np
+
+from scripts.validar_troca_perfis_trechos_voz_autorizada import select_speech_segments
 from scripts.validar_multivoice_distinct_profiles import (
     select_authorized_distinct_profiles,
 )
@@ -73,6 +76,25 @@ class DistinctProfileAcceptanceTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, 'IDs de perfil diferentes'):
             select_authorized_distinct_profiles(self.manager, profile['id'], profile['id'])
+
+    def test_temporary_segment_selector_returns_distinct_high_energy_windows(self):
+        rate = 24_000
+        t = np.arange(6 * rate, dtype=np.float64) / rate
+        signal = np.where(t < 3, np.sin(2 * np.pi * 125 * t),
+                          np.sin(2 * np.pi * 205 * t))
+        pcm = np.clip(signal * 12_000, -32768, 32767).astype(np.int16)
+        first, second, rms = select_speech_segments(pcm, rate)
+        self.assertEqual(len(first), 3 * rate)
+        self.assertEqual(len(second), 3 * rate)
+        self.assertFalse(np.array_equal(first, second))
+        self.assertTrue(all(value > 0.003 for value in rms))
+
+    def test_temporary_segment_selector_rejects_silent_or_short_reference(self):
+        rate = 24_000
+        with self.assertRaisesRegex(ValueError, 'curta demais'):
+            select_speech_segments(np.ones(rate * 3, dtype=np.int16), rate)
+        with self.assertRaisesRegex(ValueError, 'pouco sinal'):
+            select_speech_segments(np.zeros(rate * 6, dtype=np.int16), rate)
 
 
 if __name__ == '__main__':
