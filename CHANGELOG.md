@@ -17,6 +17,7 @@
 - A chave de síntese usa conteúdo e identidade/perfil vocal, sem depender do alias V1–V10.
 - Falas com texto, perfil e backend idênticos reaproveitam o áudio pronto e copiam para um WAV próprio por fala, mantendo blocos independentes na timeline.
 - Testes verificam uma única chamada de síntese, arquivos separados e conteúdo idêntico; o caminho usa o SHA-256 completo para identificar cache.
+- Smoke offline com Qwen3-TTS Pure C INT8 confirmou uma síntese para duas falas iguais, WAVs independentes com hashes iguais, primeira saída em 0,491 s e inferência em 4,016 s (uma execução, sem atribuição de hardware).
 
 ## Multivozes: regeneração individual reaproveita a pasta de cache
 
