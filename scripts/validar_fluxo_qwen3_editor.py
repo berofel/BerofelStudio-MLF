@@ -51,7 +51,13 @@ def main() -> int:
     parser.add_argument('--native-engine',choices=('qwen3-tts-native-q4',
         'qwen3-tts-native-q4-balanced'),
         help='valida pela UI um perfil nativo experimental e os chunks enviados à prévia.')
+    parser.add_argument('--clone-engine',choices=('qwen3-tts-local',
+        'qwen3-tts-purec-int8','qwen3-tts-purec-mixed',
+        'qwen3-tts-native-q4','qwen3-tts-native-q4-balanced'),
+        help='seleciona explicitamente um backend Qwen existente para o smoke real da UI.')
     args=parser.parse_args()
+    if args.native_engine and args.clone_engine:
+        parser.error('use --native-engine ou --clone-engine, não ambos')
     settings=QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
                        'Berofel','BerofelStudio')
     synthetic=args.synthetic_reference or args.synthetic_fast_profile
@@ -59,8 +65,9 @@ def main() -> int:
         parser.error('confirme autorização com --confirm-own-or-authorized-voice')
     if args.persist_profile and not args.configured_fast_profile:
         parser.error('--persist-profile requer --configured-fast-profile')
-    if args.native_engine and not (args.configured_fast_profile or args.saved_fast_profile):
-        parser.error('--native-engine requer um perfil rápido configurado ou salvo')
+    if (args.native_engine or args.clone_engine) and not (
+            args.configured_fast_profile or args.saved_fast_profile):
+        parser.error('--clone-engine/--native-engine requer um perfil rápido configurado ou salvo')
     saved_profile=None
     if args.saved_fast_profile:
         from berofel.services.voice_profiles import VoiceProfileManager
@@ -169,13 +176,15 @@ def main() -> int:
         panel.set_text('Esta é uma validação real da narração Qwen dentro do editor.')
         panel.name.setText('Qwen local validation')
         streamed_chunks=[]
-        if args.native_engine:
-            engine_index=panel.clone_engine.findData(args.native_engine)
+        requested_engine=args.clone_engine or args.native_engine
+        if requested_engine:
+            engine_index=panel.clone_engine.findData(requested_engine)
             if engine_index<0:
-                raise RuntimeError('O seletor da interface não oferece o runtime nativo solicitado.')
+                raise RuntimeError('O seletor da interface não oferece o backend Qwen solicitado.')
             panel.clone_engine.setCurrentIndex(engine_index)
-            if panel.clone_engine.currentData()!=args.native_engine:
-                raise RuntimeError('A interface não manteve o perfil nativo selecionado.')
+            if panel.clone_engine.currentData()!=requested_engine:
+                raise RuntimeError('A interface não manteve o backend Qwen selecionado.')
+        if args.native_engine:
             # Keep the smoke test silent while exercising the real Task signal
             # path from native inference into the preview's PCM callback.
             window.narration_stream.push=lambda data:streamed_chunks.append(bytes(data))
@@ -197,25 +206,30 @@ def main() -> int:
         generation_seconds=time.perf_counter()-started
         if 'Reaproveitado do cache' in window.narration_panel.status.text():
             raise RuntimeError('A validação da interface esperava uma inferência Qwen nova, não um cache hit.')
-        if args.synthetic_fast_profile or args.configured_fast_profile:
+        if (args.synthetic_fast_profile or args.configured_fast_profile or
+                args.saved_fast_profile):
             from berofel.services.ai_cache import cache_root
-            cache_name='qwen3_native_tts' if args.native_engine else 'qwen3_tts'
-            qwen_cache=cache_root().parent/cache_name
-            metadata=list(qwen_cache.rglob('result.json'))
-            entries=[__import__('json').loads(path.read_text(encoding='utf-8'))
-                     for path in metadata]
-            output_key_prefix=Path(narration.source).stem.rsplit('_',1)[-1]
-            output_metadata=[item for item in entries
-                             if str(item.get('key','')).startswith(output_key_prefix)]
-            if args.native_engine:
-                valid_reuse=any(item.get('engine')==args.native_engine and
-                    item.get('profile_embedding_cache_hit') is True
-                    for item in output_metadata)
-            else:
-                valid_reuse=any(item.get('prompt_cache_hit') is True and
-                    item.get('model_load_count') == 1 for item in output_metadata)
-            if not valid_reuse:
-                raise RuntimeError('A narração rápida não reutilizou o prompt vocal preparado.')
+            if selected_engine in ('qwen3-tts-local','qwen3-tts-native-q4',
+                                   'qwen3-tts-native-q4-balanced'):
+                cache_name=('qwen3_native_tts' if selected_engine.startswith('qwen3-tts-native-')
+                            else 'qwen3_tts')
+                qwen_cache=cache_root().parent/cache_name
+                metadata=list(qwen_cache.rglob('result.json'))
+                entries=[__import__('json').loads(path.read_text(encoding='utf-8'))
+                         for path in metadata]
+                output_key_prefix=Path(narration.source).stem.rsplit('_',1)[-1]
+                output_metadata=[item for item in entries
+                                 if str(item.get('key','')).startswith(output_key_prefix)]
+                if selected_engine=='qwen3-tts-local':
+                    valid_reuse=any(item.get('engine')==selected_engine and
+                        item.get('prompt_cache_hit') is True and
+                        item.get('model_load_count')==1 for item in output_metadata)
+                else:
+                    valid_reuse=any(item.get('engine')==selected_engine and
+                        item.get('profile_embedding_cache_hit') is True
+                        for item in output_metadata)
+                if not valid_reuse:
+                    raise RuntimeError('A narração rápida não reutilizou o condicionamento vocal esperado.')
             if args.configured_fast_profile or args.saved_fast_profile:
                 current=sample.stat()
                 if (current.st_size,current.st_mtime_ns)!=(source_stat.st_size,source_stat.st_mtime_ns):
