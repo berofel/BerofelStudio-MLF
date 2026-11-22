@@ -19,6 +19,7 @@
 - O painel avisa quando personagens diferentes apontam para o mesmo perfil vocal, deixando explícito que eles terão a mesma identidade de voz.
 - O painel também detecta perfis distintos criados da mesma gravação de referência, usando o SHA-256 já persistido no manifesto, para não sugerir identidades diferentes por IDs duplicados. A suíte completa passou: 359 testes aprovados, 4 ignorados.
 - Auditoria do código upstream Pure C (`qwen_tts_server.c`/`qwen_tts.h`) confirma que `speaker` seleciona slots preset e que o contexto carrega um único x-vector clonado; não há campo de embedding por requisição. Registrar essa fronteira evita tratar a recarga por personagem como cache ou como recurso já concluído.
+- Smoke offline para dois perfis reais agora isola a seleção dos perfis: exige autorização explícita, IDs diferentes e hashes de gravação distintos. Testes cobrem as recusas e o caminho válido sem carregar modelo nem acessar perfis reais.
 
 ## Validação local Turbo sem proxy externo
 

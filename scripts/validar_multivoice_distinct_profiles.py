@@ -45,6 +45,28 @@ def _list_profiles(manager: VoiceProfileManager) -> int:
     return 0
 
 
+def select_authorized_distinct_profiles(manager: VoiceProfileManager,
+                                        profile_v1: str, profile_v2: str
+                                        ) -> tuple[dict[str, dict], dict[str, str]]:
+    """Load only the chosen, authorized profiles and reject duplicate references."""
+    if not profile_v1 or not profile_v2:
+        raise ValueError('Informe os IDs dos perfis V1 e V2.')
+    if profile_v1 == profile_v2:
+        raise ValueError('V1 e V2 precisam usar IDs de perfil diferentes.')
+    profiles = {profile_v1: manager.get(profile_v1),
+                profile_v2: manager.get(profile_v2)}
+    for voice_id, profile in zip(('V1', 'V2'), profiles.values()):
+        if not profile.get('authorized'):
+            raise PermissionError(f'O perfil associado a {voice_id} não está autorizado.')
+        if not Path(str(profile.get('sample_path', ''))).is_file():
+            raise FileNotFoundError(f'A gravação do perfil associado a {voice_id} não existe.')
+    hashes = {profile_id: _sha256(profile['sample_path'])
+              for profile_id, profile in profiles.items()}
+    if len(set(hashes.values())) != 2:
+        raise ValueError('As duas referências precisam ser gravações diferentes.')
+    return profiles, hashes
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--confirm-own-or-authorized-voice', action='store_true',
@@ -61,20 +83,11 @@ def main() -> int:
         return _list_profiles(manager)
     if not args.confirm_own_or_authorized_voice:
         parser.error('confirme que os dois perfis têm autorização de uso.')
-    if not args.profile_v1 or not args.profile_v2:
-        parser.error('informe --profile-v1 e --profile-v2; não reutilize o mesmo perfil nos dois.')
-    if args.profile_v1 == args.profile_v2:
-        parser.error('V1 e V2 precisam usar IDs de perfil diferentes.')
-
-    profiles = {args.profile_v1: manager.get(args.profile_v1),
-                args.profile_v2: manager.get(args.profile_v2)}
-    for voice_id, profile in zip(('V1', 'V2'), profiles.values()):
-        if not profile.get('authorized'):
-            raise SystemExit(f'O perfil associado a {voice_id} não está autorizado.')
-    hashes = {profile_id: _sha256(profile['sample_path'])
-              for profile_id, profile in profiles.items()}
-    if len(set(hashes.values())) != 2:
-        raise SystemExit('As duas referências precisam ser arquivos distintos para este teste.')
+    try:
+        profiles, hashes = select_authorized_distinct_profiles(
+            manager, args.profile_v1, args.profile_v2)
+    except (ValueError, PermissionError, FileNotFoundError, KeyError) as exc:
+        raise SystemExit(str(exc)) from exc
 
     if args.engine == 'qwen3-tts-local':
         from berofel.services.qwen3_tts_local import is_ready

@@ -58,7 +58,7 @@ python scripts/validar_multivoice_distinct_profiles.py `
   --engine qwen3-tts-purec-int8
 ```
 
-Use `qwen3-tts-purec-mixed` para o Turbo Pure C Mixer ou `qwen3-tts-local` para o Original. O script rejeita IDs iguais, referências duplicadas ou perfis sem autorização; mantém WAVs e caches em diretório temporário e retorna métricas sem nomes ou caminhos pessoais. Esse teste ainda não foi executado porque este ambiente contém somente uma referência autorizada.
+Use `qwen3-tts-purec-mixed` para o Turbo Pure C Mixer ou `qwen3-tts-local` para o Original. O script rejeita IDs iguais, referências duplicadas ou perfis sem autorização; mantém WAVs e caches em diretório temporário e retorna métricas sem nomes ou caminhos pessoais. `tests/test_multivoice_distinct_validation.py` cobre a seleção segura sem carregar o modelo. Uma gravação diferente não prova, sozinha, que a pessoa que fala é diferente; escolha perfis de locutores distintos e autorizados e avalie as saídas por escuta. O smoke real ainda aguarda a gravação do segundo perfil autorizado.
 
 ### Diagnosticar troca Pure C sem usar gravações pessoais
 
