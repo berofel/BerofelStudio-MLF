@@ -219,6 +219,8 @@ def main() -> int:
                 report['engines'].append({
                     'engine': engine,
                     'elapsed_seconds': round(time.perf_counter() - started, 3),
+                    'preparation_seconds': round(result.profile_preparation_seconds, 3),
+                    'server_model_load_seconds': round(result.model_load_seconds, 3),
                     'grouped_order': grouped_order,
                     'runs': runs,
                     'wavs': wav_metrics,

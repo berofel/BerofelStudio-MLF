@@ -515,9 +515,9 @@ class ActionsUITests(unittest.TestCase):
             self.assertTrue(slider.isEnabled())
             with patch('berofel.ui.window.generate_narration') as tts:
                 slider.setValue(40)  # controle interno usa décimos de dB
-                QTest.qWait(240)
+                QTest.qWait(500)  # margem para o timer de debounce também sob carga da suíte
                 panel.pitch_slider.setValue(30)
-                QTest.qWait(240)
+                QTest.qWait(500)
                 panel.speed_slider.setValue(111)
                 self.assertEqual(panel.speed_slider.value(),110)
                 panel.speed_readout.setValue(1.10)
@@ -538,6 +538,35 @@ class ActionsUITests(unittest.TestCase):
             self.assertEqual(win.project.clip(clip.id).voice_eq_bass_db,4.)
             self.assertEqual(win.project.clip(clip.id).voice_pitch_semitones,3.)
             self.assertAlmostEqual(win.project.clip(clip.id).speed,1.1)
+            win.close();self.app.processEvents()
+
+    def test_native_q4_voice_preparation_uses_native_embedding_and_model_warmup(self):
+        from types import SimpleNamespace
+        win=MainWindow()
+        try:
+            panel=win.narration_panel
+            index=panel.clone_engine.findData('qwen3-tts-native-q4')
+            if index<0:
+                panel.clone_engine.addItem('Native Q4 test','qwen3-tts-native-q4')
+                index=panel.clone_engine.count()-1
+            panel.clone_engine.setCurrentIndex(index)
+            task=SimpleNamespace(signals=SimpleNamespace(finished=MagicMock()))
+            with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True), \
+                 patch('berofel.services.qwen3_native_tts.prepare_native_voice_profile',
+                       return_value={'prepared':True,'embedding_cache_hit':True,
+                                     'model_load_seconds':0.0}) as prepare, \
+                 patch.object(win,'_task',return_value=task) as submit:
+                win.prepare_narration_voice('C:/private/voice.wav','transcrição','Narrador')
+                self.assertIn('Native Q4',submit.call_args.kwargs['label'])
+                task_fn=submit.call_args.args[0]
+                task_fn(progress=None,control=None,stage=None)
+                prepare.assert_called_once_with(
+                    'C:/private/voice.wav','transcrição',
+                    engine='qwen3-tts-native-q4',control=None,
+                    progress=None,stage=None)
+                task.signals.finished.connect.call_args.args[0]()
+            self.assertFalse(win._ai_busy)
+        finally:
             win.close();self.app.processEvents()
 
     def test_narration_speed_slider_keeps_linked_video_and_captions_in_sync(self):

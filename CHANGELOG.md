@@ -3,7 +3,10 @@
 - O diagnóstico offline agora também mede `qwen3-tts-native-q4`, preservando executável e modelo instalados e isolando embeddings/cache temporários.
 - Validado mesmo PID entre V1/V2, carga de modelo apenas no primeiro lote e WAVs não silenciosos; resultado documentado sem alegar locutores distintos.
 - A aba Várias vozes explica que Pure C recarrega ao trocar perfil e que Native Q4 mantém o modelo residente, com preparação inicial de embeddings por perfil.
-- Smoke Qt real validou geração Native Q4, cache, clips, pausa, round-trip do projeto e WAV completo sincronizado.
+- Corrigido o botão “Preparar perfil” para usar o encoder de embedding Native Q4 e aquecer seu worker, em vez de chamar o preparador Original.
+- Em roteiros Native Q4, embeddings ausentes são preparados em série antes da carga do servidor; uma instância de síntese atende todos os personagens, sem sobrepor modelos na memória.
+- O projeto registra preparo vocal e carga do modelo separadamente; a UI exibe ambos junto ao RTF.
+- Smoke real de troca V1→V2 confirmou o mesmo PID, 0 s de recarga entre falas, WAVs audíveis e preflight separado; smoke Qt real confirmou cache, clips, pausa, round-trip e exportação WAV sincronizada.
 
 ## Revalidação real do worker Original em multivozes
 

@@ -229,6 +229,8 @@ def main() -> int:
                 'timeline_clips': len(clips),
                 'timeline_pause_ms_preserved': result.pause_ms,
                 'timeline_order_and_spacing_verified': True,
+                'profile_preparation_seconds': round(result.profile_preparation_seconds, 3),
+                'model_load_seconds': round(result.model_load_seconds, 3),
                 'project_reopen_preserved_script_and_clips': True,
                 'individual_wav_metrics': [_measure_wav(first.audio_path),
                                            _measure_wav(second.audio_path)],

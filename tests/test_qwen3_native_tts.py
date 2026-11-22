@@ -127,6 +127,30 @@ class NativeQwenAdapterTests(unittest.TestCase):
                 result=np.frombuffer(stream.read(),dtype='<f4')
             np.testing.assert_array_equal(result,vector)
 
+    def test_prepare_native_profile_reuses_embedding_and_warms_resident_server(self):
+        with tempfile.TemporaryDirectory() as folder:
+            reference=Path(folder)/'voice.wav';reference.write_bytes(b'authorized sample')
+            exe=Path(folder)/'qwen3-tts-cli.exe'
+            model=Path(folder)/'model.gguf'
+            tokenizer=Path(folder)/'tokenizer.gguf'
+            for path in (exe,model,tokenizer):
+                path.write_bytes(b'fixture')
+            with patch.object(native,'is_ready',return_value=True), \
+                 patch.object(native,'_layout',return_value=(exe,model,tokenizer)), \
+                 patch.object(native,'_native_embedding',return_value=(Path(folder)/'voice.bin',True,0.0)) as embed, \
+                 patch.object(native,'_start_server',return_value=(MagicMock(),0.0)) as start:
+                result=native.prepare_native_voice_profile(
+                    str(reference),'transcript ignored for x-vector',
+                    engine=native.BALANCED_ENGINE_ID)
+            self.assertTrue(result['prepared'])
+            self.assertTrue(result['embedding_cache_hit'])
+            self.assertEqual(result['engine'],native.BALANCED_ENGINE_ID)
+            self.assertEqual(result['threads'],8)
+            embed.assert_called_once()
+            self.assertEqual(embed.call_args.args[1],
+                             'transcript ignored for x-vector')
+            start.assert_called_once_with(exe,model,tokenizer,None,8)
+
     def test_narration_service_routes_native_engine_without_changing_default(self):
         with tempfile.TemporaryDirectory() as folder:
             voice=Path(folder)/'voice.wav';voice.write_bytes(b'authorized reference audio'*4)

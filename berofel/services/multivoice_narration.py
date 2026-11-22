@@ -82,6 +82,8 @@ class MultiVoiceScript:
     checkpoint_path: str = ''
     total_seconds: float = 0.0
     first_audio_ready_seconds: float = 0.0
+    profile_preparation_seconds: float = 0.0
+    model_load_seconds: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -96,6 +98,8 @@ class MultiVoiceScript:
             'checkpoint_path': self.checkpoint_path,
             'total_seconds': self.total_seconds,
             'first_audio_ready_seconds': self.first_audio_ready_seconds,
+            'profile_preparation_seconds': self.profile_preparation_seconds,
+            'model_load_seconds': self.model_load_seconds,
             'voices': {key: dict(value) for key, value in self.voices.items()},
             'lines': [asdict(line) for line in self.lines],
         }
@@ -115,6 +119,8 @@ class MultiVoiceScript:
                 checkpoint_path=str(data.get('checkpoint_path', '')),
                 total_seconds=float(data.get('total_seconds', 0.0)),
                 first_audio_ready_seconds=float(data.get('first_audio_ready_seconds', 0.0)),
+                profile_preparation_seconds=float(data.get('profile_preparation_seconds', 0.0)),
+                model_load_seconds=float(data.get('model_load_seconds', 0.0)),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ScriptValidationError(f'Dados do roteiro inválidos: {exc}') from exc
@@ -550,6 +556,8 @@ def load_script_checkpoint(project_path: str, script_id: str,
                 line.error = 'A fila foi interrompida; retome o roteiro para continuar.'
         restored.total_seconds = checkpoint.total_seconds
         restored.first_audio_ready_seconds = checkpoint.first_audio_ready_seconds
+        restored.profile_preparation_seconds = checkpoint.profile_preparation_seconds
+        restored.model_load_seconds = checkpoint.model_load_seconds
         restored.checkpoint_path = str(canonical)
         return restored
     checkpoint.checkpoint_path = str(path)
@@ -567,8 +575,8 @@ def generate_script_audio(script: MultiVoiceScript, profiles: Mapping[str, Mappi
 
     The Pure C serving API pins a clone embedding at server startup. Lines in a
     voice group therefore share its warmed server; switching to the next voice
-    is serialized by the existing singleton worker and may reload its model.
-    This avoids simultaneous Qwen copies and per-line profile switches.
+    may reload its model. Native Q4 prepares all missing profile embeddings
+    before synthesis, then keeps one warmed worker across voice groups.
     """
     validate_script(script)
     configured: dict[str, Mapping] = {}
@@ -604,9 +612,29 @@ def generate_script_audio(script: MultiVoiceScript, profiles: Mapping[str, Mappi
     started = time.perf_counter()
     script.total_seconds = 0.0
     script.first_audio_ready_seconds = 0.0
+    script.profile_preparation_seconds = 0.0
+    script.model_load_seconds = 0.0
     done = 0
     by_id = {line.id: line for line in script.lines}
     original_order = [line.id for line in sorted(script.lines, key=lambda item: item.number)]
+    if script.engine_id in ('qwen3-tts-native-q4', 'qwen3-tts-native-q4-balanced'):
+        pending_profile_ids = {
+            script.voices[line.voice_id]['profile_id'] for line in script.lines
+            if line.status != 'generated' or not line.audio_path or
+            not _cached_wav_valid(Path(line.audio_path))[1]
+        }
+        if pending_profile_ids:
+            from .qwen3_native_tts import prepare_native_voice_profiles
+            profiles_to_prepare = [configured[voice_id] for voice_id in
+                                   sorted(configured, key=_voice_order)
+                                   if script.voices[voice_id]['profile_id'] in pending_profile_ids]
+            preparation = prepare_native_voice_profiles(
+                profiles_to_prepare, engine=script.engine_id, control=control,
+                stage=stage)
+            script.profile_preparation_seconds = float(
+                preparation['profile_prepare_seconds'])
+            script.model_load_seconds = float(preparation['model_load_seconds'])
+            _write_checkpoint(script, Path(script.checkpoint_path))
     for profile_id, voice_lines in group_script_lines_by_profile(script):
         voice_ids = sorted({line.voice_id for line in voice_lines}, key=_voice_order)
         if stage:

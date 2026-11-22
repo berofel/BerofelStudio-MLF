@@ -174,7 +174,11 @@ Reexecutado `scripts/validar_multivoice_original_real.py --confirm-own-or-author
 
 O backend já existente `qwen3-tts-native-q4` aceita um embedding x-vector por solicitação e mantém um servidor/modelo residente, ao contrário do Pure C instalado, que fixa a voz no início do servidor. Atualizei o aviso da aba Várias vozes para explicar esse comportamento quando há perfis diferentes; os dois perfis Pure C continuam em destaque e continuam disponíveis. O Native Q4 permanece em “Outros perfis”, como alternativa para evitar a recarga entre personagens. Perfis ainda sem embedding em cache podem pagar a preparação inicial; embeddings são guardados em cache local por gravação/modelo.
 
-Smoke real offline com duas referências temporárias (segmentos diferentes da mesma gravação autorizada): o Native Q4 processou V1→V2 com o mesmo PID, 0,778 s de carga do servidor na primeira fala e 0 s na segunda. A preparação de embeddings foi 3,783/3,810 s porque o cache temporário iniciou vazio; a inferência levou 3,294/2,608 s. Os WAVs tinham 3,92/3,04 s e sinal não silencioso. O teste não compara timbres de locutores distintos.
+O botão existente “Preparar perfil” na aba Narração agora encaminha também Native Q4 ao encoder x-vector nativo e aquece o worker correto; antes, essa opção caía indevidamente no preparador do backend Original. Teste Qt cobre o roteamento. Smoke real com o perfil autorizado local e cache temporário concluiu preparação do embedding em 6,855 s e carga do worker em 0,774 s, seis threads; o worker foi encerrado e o cache temporário removido. A biblioteca de perfis persistente não foi alterada.
+
+Na fila Native Q4, o editor agora prepara todos os embeddings ausentes em série antes de abrir o servidor residente. Se um perfil ainda não tem embedding em cache, o worker antigo é encerrado primeiro; depois da preparação, uma só instância de síntese é carregada para todo o roteiro. O projeto persiste separadamente o tempo de preparo dos perfis e o tempo de carga do modelo, e a tela mostra esses tempos junto ao RTF.
+
+Smoke real offline atualizado, com duas referências temporárias (segmentos diferentes da mesma gravação autorizada): V1→V2 compartilhou o mesmo PID. Preparo dos embeddings: 7,535 s no total; carga única do servidor: 0,776 s; geração: 2,673/3,084 s; os WAVs tinham 3,12/3,60 s e sinal não silencioso. A carga/preparo ocorre antes da primeira fala e está medida separadamente. O teste não compara timbres de locutores distintos.
 
 Reproduzir essa medição sem alterar os perfis persistentes, usando caches e referências efêmeros:
 
@@ -185,4 +189,4 @@ Reproduzir essa medição sem alterar os perfis persistentes, usando caches e re
   --engine qwen3-tts-native-q4
 ```
 
-Também validei pela janela Qt real: geração com Native Q4, um WAV sintetizado e reaproveitado para duas falas idênticas do mesmo perfil, dois clips na timeline, pausa de 200 ms, salvar/reabrir o projeto e exportar WAV estéreo 48 kHz com 11,08 s sincronizados. Este smoke confirma integração do perfil Native Q4 com o editor e o exportador, mas não valida identidade vocal distinta, MP4 nesse backend, nem perfis separados no fluxo UI.
+Também reexecutei pela janela Qt real após integrar o pré-preparo: 6,866 s para preparar o perfil e 0,773 s para carregar o servidor; um WAV sintetizado foi reaproveitado para as duas falas idênticas do mesmo perfil, com dois clips na timeline, pausa de 200 ms, salvar/reabrir e exportação WAV estéreo 48 kHz de 11,88 s sincronizados. Este smoke confirma a integração Native Q4 e o novo pré-preparo no editor, mas não valida identidade vocal distinta, MP4 nesse backend, nem perfis separados no fluxo UI.

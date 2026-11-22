@@ -1571,6 +1571,9 @@ class MainWindow(QMainWindow):
                              for line in result.lines if line.voice_id in result.voices}
             telemetry = (f' · RTF {rtf:.2f} · primeira fala disponível '
                          f'{result.first_audio_ready_seconds:.1f}s · fila {result.total_seconds:.1f}s')
+            if result.engine_id in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced'):
+                telemetry += (f' · perfis preparados {result.profile_preparation_seconds:.1f}s'
+                              f' · carga única {result.model_load_seconds:.1f}s')
             panel.status.setText(f'{len(clips)} falas geradas em {len(used_profiles)} perfil(is). '
                                  'Os WAVs estão separados e ordenados na timeline.' + telemetry +
                                  checkpoint_warning)
@@ -1719,6 +1722,8 @@ class MainWindow(QMainWindow):
             original.cache_hit = replacement.cache_hit
             current.total_seconds = result.total_seconds
             current.first_audio_ready_seconds = result.first_audio_ready_seconds
+            current.profile_preparation_seconds = result.profile_preparation_seconds
+            current.model_load_seconds = result.model_load_seconds
             current_data_index = self.project.narration_scripts.index(current_data)
             self.project.narration_scripts[current_data_index] = current.to_dict()
             checkpoint_warning = ''
@@ -1861,6 +1866,32 @@ class MainWindow(QMainWindow):
                 'Perfil salvo. A preparação será feita na próxima narração, pois a fila de IA está ocupada.')
             return
         engine=self.narration_panel.clone_engine.currentData()
+        if engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced'):
+            from berofel.services.qwen3_native_tts import (
+                is_ready, prepare_native_voice_profile,
+            )
+            if not is_ready():
+                self.narration_panel.status.setText(
+                    'Perfil salvo. Instale o runtime Qwen Turbo Q4 para preparar o embedding nativo.')
+                return
+            self._ai_busy=True
+            self.narration_panel.busy(True)
+            def native_ready(result):
+                cached='já estava preparado' if result.get('embedding_cache_hit') else 'preparado e armazenado localmente'
+                warmed='modelo já estava carregado' if result.get('model_load_seconds',0)==0 else 'modelo carregado e mantido nesta sessão'
+                self.narration_panel.status.setText(
+                    f'Perfil Native Q4 {cached}; {warmed}. A transcrição de referência não é usada por este modo x-vector.')
+            def prepare_native(progress=None,control=None,stage=None):
+                return prepare_native_voice_profile(
+                    reference,reference_text,engine=engine,control=control,
+                    progress=progress,stage=stage)
+            task=self._task(prepare_native,native_ready,
+                            label='Preparar perfil Native Q4'+(f' · {name}' if name else ''))
+            if task is None:
+                self._ai_busy=False;self.narration_panel.busy(False);return
+            task.signals.finished.connect(
+                lambda:(setattr(self,'_ai_busy',False),self.narration_panel.busy(False)))
+            return
         if engine in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8'):
             from berofel.services.qwen3_purec_tts import is_ready,prepare_voice_profile
             if not is_ready():

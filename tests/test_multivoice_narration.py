@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import wave
 from pathlib import Path
+from unittest.mock import patch
 
 from berofel.services.multivoice_narration import (
     DEFAULT_PAUSE_MS, MultiVoiceScript, ScriptValidationError,
@@ -308,6 +309,52 @@ class MultiVoiceScriptTests(unittest.TestCase):
             self.assertTrue(all(Path(line.audio_path).is_file() for line in result.lines))
             self.assertEqual(Path(result.lines[0].audio_path).read_bytes(),
                              Path(result.lines[1].audio_path).read_bytes())
+
+    def test_native_multivoice_prepares_all_profiles_before_first_synthesis(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            references=[]
+            profiles={}
+            assignments={}
+            for index,voice in enumerate(('V1','V2'),1):
+                reference=root/f'voice{index}.wav';_wav(reference)
+                profile_id=f'p{index}'
+                references.append(reference)
+                profiles[profile_id]={'id':profile_id,'sample_path':str(reference),
+                    'reference_text':f'referência {index}','language':'portuguese',
+                    'authorized':True}
+                assignments[voice]={'profile_id':profile_id}
+            script=create_script(
+                '[001 | V2]\nSegunda personagem.\n[002 | V1]\nPrimeira personagem.',
+                assignments,'qwen3-tts-native-q4')
+            order=[]
+            def prepare(selected,**kwargs):
+                order.append(('prepare',[item['id'] for item in selected]))
+                return {'prepared':True,'profile_count':2,'embedding_cache_hits':0,
+                        'profile_prepare_seconds':7.6,'model_load_seconds':0.8,
+                        'engine':'qwen3-tts-native-q4','threads':6}
+            def synthesize(request,**kwargs):
+                order.append(('synthesize',request.voice))
+                output=root/'generated.wav';_wav(output,frames=2400)
+                return {'path':str(output),'duration':.1,'cache_hit':False,
+                        'generation_seconds':.2,'model_load_seconds':0.0,
+                        'profile_prepare_seconds':0.0}
+            with patch('berofel.services.qwen3_native_tts.prepare_native_voice_profiles',
+                       side_effect=prepare) as preparation:
+                result=generate_script_audio(script,profiles,
+                    str(root/'episode.berofel.json'),generator=synthesize,
+                    engine_fingerprint='native-q4-fixture')
+            self.assertEqual(order[0],('prepare',['p1','p2']))
+            self.assertEqual([item[0] for item in order],
+                             ['prepare','synthesize','synthesize'])
+            self.assertEqual([item[1] for item in order[1:]],
+                             [str(references[0]),str(references[1])])
+            self.assertEqual(preparation.call_count,1)
+            self.assertEqual(result.profile_preparation_seconds,7.6)
+            self.assertEqual(result.model_load_seconds,.8)
+            restored=MultiVoiceScript.from_dict(result.to_dict())
+            self.assertEqual(restored.profile_preparation_seconds,7.6)
+            self.assertEqual(restored.model_load_seconds,.8)
 
     def test_batch_generates_by_voice_then_restores_script_order_and_regenerates_one_line(self):
         with tempfile.TemporaryDirectory() as folder:
