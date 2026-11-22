@@ -12,6 +12,11 @@
 - Reexecutado smoke real com Pure C INT8, Pure C Mixer e Original, usando dois trechos temporários da mesma referência autorizada. O Original manteve o worker/modelo; Pure C recarregou o runtime ao trocar a referência, conforme o limite do servidor instalado.
 - Os três fluxos geraram WAVs não silenciosos na ordem V1→V2 e removeram seus artefatos temporários. O resultado está documentado como teste de troca/worker, sem alegar locutores distintos.
 
+## Smoke reproduzível do cache de fala nos perfis Pure C
+
+- Adicionado `scripts/validar_cache_voz_multivozes_real.py`, que exige confirmação da referência local, executa offline, valida um WAV próprio por alias e verifica uma única inferência para falas idênticas no mesmo perfil.
+- Executado em Pure C INT8 e Pure C Mixer: `cache_hit=false/true`, arquivos separados com hashes iguais e sinais PCM não silenciosos. Métricas completas documentadas; a referência é da mesma pessoa, portanto não comprova identidades vocais diferentes.
+
 ## Multivozes: cache compartilha síntese idêntica entre personagens da mesma voz
 
 - A chave de síntese usa conteúdo e identidade/perfil vocal, sem depender do alias V1–V10.

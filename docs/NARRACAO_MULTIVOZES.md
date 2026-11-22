@@ -38,7 +38,21 @@ O projeto guarda os metadados do roteiro em JSON versionado. Áudios e checkpoin
 
 Quando duas falas usam exatamente o mesmo texto, perfil vocal, backend e parâmetros de síntese, a segunda pode copiar o WAV já pronto sem nova inferência, mesmo que pertença a outro alias V1–V10. Cada fala continua recebendo um arquivo próprio e um clip independente; o cache usa o hash completo do conteúdo e não inclui o alias do personagem.
 
-Smoke real offline no Pure C INT8, com o perfil vocal autorizado já instalado: duas falas iguais em V1/V2 resultaram em uma chamada de síntese; `cache_hit` foi `false/true`, os arquivos WAV tinham caminhos distintos e hashes SHA-256 iguais, com duração de 4,80 s cada. A inferência mediu 4,016 s, carga do modelo 2,575 s, preparação da referência 2,087 s e primeiro chunk 0,491 s. Saídas e caches temporários foram removidos. É evidência de cache entre aliases para o mesmo perfil, não de duas identidades vocais diferentes, nem benchmark atribuído ao Ryzen 7 5700G.
+Smoke preliminar real offline no Pure C INT8, com o perfil vocal autorizado já instalado: duas falas iguais em V1/V2 resultaram em uma chamada de síntese; `cache_hit` foi `false/true`, os arquivos WAV tinham caminhos distintos e hashes SHA-256 iguais, com duração de 4,80 s cada. A inferência mediu 4,016 s, carga do modelo 2,575 s, preparação da referência 2,087 s e primeiro chunk 0,491 s. Saídas e caches temporários foram removidos. É evidência de cache entre aliases para o mesmo perfil, não de duas identidades vocais diferentes, nem benchmark atribuído ao Ryzen 7 5700G.
+
+O teste reproduzível `scripts/validar_cache_voz_multivozes_real.py` repete o mesmo contrato em qualquer dos dois perfis Pure C aprovados. Execução offline nesta máquina em 2026-11-22:
+
+```powershell
+& "$env:LOCALAPPDATA\BFS\venv\Scripts\python.exe" `
+  scripts/validar_cache_voz_multivozes_real.py `
+  --confirm-own-or-authorized-voice --engine qwen3-tts-purec-int8
+
+& "$env:LOCALAPPDATA\BFS\venv\Scripts\python.exe" `
+  scripts/validar_cache_voz_multivozes_real.py `
+  --confirm-own-or-authorized-voice --engine qwen3-tts-purec-mixed
+```
+
+INT8 gerou WAV mono PCM16/24 kHz de 5,76 s (RMS 935,4) em 4,624 s de inferência; carga do modelo 2,453 s, preparação do perfil 2,092 s e primeiro chunk 0,492 s. O Mixer gerou WAV de 4,08 s (RMS 915,0) em 3,164 s de inferência; carga 2,463 s, preparação 2,149 s e primeiro chunk 0,471 s. Nos dois casos, uma inferência serviu V1 e V2 (`cache_hit=false/true`), os WAVs mantiveram caminhos separados e o SHA-256 foi igual. A validação usa a mesma referência/identidade para os dois aliases; não substitui o teste pendente com locutores distintos e não atribui estes números a um modelo específico de CPU.
 
 ## Limite técnico conhecido do Pure C
 
