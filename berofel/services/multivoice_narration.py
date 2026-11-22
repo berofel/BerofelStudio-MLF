@@ -620,6 +620,8 @@ def generate_script_audio(script: MultiVoiceScript, profiles: Mapping[str, Mappi
     script.first_audio_ready_seconds = 0.0
     script.profile_preparation_seconds = 0.0
     script.model_load_seconds = 0.0
+    profile_preparation_total = 0.0
+    model_load_total = 0.0
     done = 0
     by_id = {line.id: line for line in script.lines}
     original_order = [line.id for line in sorted(script.lines, key=lambda item: item.number)]
@@ -640,6 +642,8 @@ def generate_script_audio(script: MultiVoiceScript, profiles: Mapping[str, Mappi
             script.profile_preparation_seconds = float(
                 preparation['profile_prepare_seconds'])
             script.model_load_seconds = float(preparation['model_load_seconds'])
+            profile_preparation_total = script.profile_preparation_seconds
+            model_load_total = script.model_load_seconds
             _write_checkpoint(script, Path(script.checkpoint_path))
     for profile_id, voice_lines in group_script_lines_by_profile(script):
         voice_ids = sorted({line.voice_id for line in voice_lines}, key=_voice_order)
@@ -725,8 +729,14 @@ def generate_script_audio(script: MultiVoiceScript, profiles: Mapping[str, Mappi
                                                                          'qwen3-tts-purec-int8') else None))
                             result = generator(request, control=control, stage=stage)
                             line.generation_seconds += max(0.0, float(result.get('generation_seconds', 0.0) or 0.0))
-                            line.model_load_seconds += max(0.0, float(result.get('model_load_seconds', 0.0) or 0.0))
-                            line.profile_prepare_seconds += max(0.0, float(result.get('profile_prepare_seconds', 0.0) or 0.0))
+                            model_load_seconds = max(0.0, float(result.get('model_load_seconds', 0.0) or 0.0))
+                            profile_prepare_seconds = max(0.0, float(result.get('profile_prepare_seconds', 0.0) or 0.0))
+                            line.model_load_seconds += model_load_seconds
+                            line.profile_prepare_seconds += profile_prepare_seconds
+                            model_load_total += model_load_seconds
+                            profile_preparation_total += profile_prepare_seconds
+                            script.model_load_seconds = model_load_total
+                            script.profile_preparation_seconds = profile_preparation_total
                             first_audio = float(result.get('first_audio_chunk_seconds',
                                                            result.get('first_audio_seconds', 0.0)) or 0.0)
                             if line.first_audio_seconds <= 0 and first_audio > 0:
@@ -772,6 +782,8 @@ def generate_script_audio(script: MultiVoiceScript, profiles: Mapping[str, Mappi
             _write_checkpoint(script, Path(script.checkpoint_path))
     script.lines = [by_id[line_id] for line_id in original_order]
     script.total_seconds = time.perf_counter() - started
+    script.profile_preparation_seconds = profile_preparation_total
+    script.model_load_seconds = model_load_total
     validate_script(script)
     _write_checkpoint(script, Path(script.checkpoint_path))
     return script

@@ -386,7 +386,9 @@ class MultiVoiceScriptTests(unittest.TestCase):
                 out=root/'backend-output'/f'{len(calls)}.wav'
                 _wav(out,frames=1200+len(calls))
                 return {'path':str(out),'duration':(1200+len(calls))/24000,
-                        'cache_hit':False}
+                        'cache_hit':False,
+                        'model_load_seconds':.8 if len(calls) in (1,4) else 0.0,
+                        'profile_prepare_seconds':.5 if len(calls) in (1,4) else 0.0}
             project_path=root/'episode.berofel.json'
             result=generate_script_audio(script,profiles,str(project_path),
                                          generator=fake_generate)
@@ -394,6 +396,8 @@ class MultiVoiceScriptTests(unittest.TestCase):
                              [str(ref1)]*3+[str(ref2)]*3)
             self.assertEqual({item[2:] for item in calls},
                              {('qwen3-tts-purec-int8',6)})
+            self.assertEqual(result.model_load_seconds, 1.6)
+            self.assertEqual(result.profile_preparation_seconds, 1.0)
             self.assertEqual([line.number for line in result.lines],list(range(1,7)))
             self.assertTrue(all(line.status=='generated' and Path(line.audio_path).is_file()
                                 for line in result.lines))
