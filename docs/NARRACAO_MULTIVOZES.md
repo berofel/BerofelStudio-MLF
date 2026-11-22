@@ -113,6 +113,18 @@ Antes da implementação foi criado o tag imutável `backup/qwen3-turbo-pre-mult
 
 Bundle atualizado após o diagnóstico de troca de perfil: `C:\Users\Berofel\Desktop\BerofelStudio_codigo_base_alpha\BerofelStudio_Qwen3MultiVoice_20261122_after_profile_switch.bundle`. O arquivo inclui o HEAD da branch e a referência de backup acima; pode ser validado com `git bundle verify` e sua integridade confirmada pelo SHA-256 reportado na entrega.
 
+### Revalidação offline da troca de lotes — 2026-11-22
+
+Executei `scripts/validar_troca_perfis_trechos_voz_autorizada.py` nos três backends, sem rede, usando dois segmentos de 3 s extraídos de uma única gravação autorizada. Os segmentos são referências diferentes da **mesma pessoa**: isto valida o encadeamento entre lotes, o estado do worker e a integridade dos WAVs, não vozes de locutores diferentes nem qualidade de identidade vocal. O teste limpou referências temporárias, áudio e caches ao sair.
+
+| Backend | Tempo total | Carga do modelo por lote | Preparação de perfil por lote | Inferência por fala | WAVs (duração / RMS PCM16) |
+|---|---:|---:|---:|---:|---|
+| Pure C INT8 | 13,341 s | 3,151 / 2,205 s; PIDs diferentes | 1,253 / 1,401 s | 2,883 / 2,388 s | 3,36 / 2,64 s; 889,7 / 1.069,9 |
+| Pure C Mixer | 9,825 s | 2,434 / 2,430 s; PIDs diferentes | 0 / 0 s; cache de perfil hit | 1,968 / 2,703 s | 2,32 / 3,36 s; 838,9 / 744,2 |
+| Original | 35,926 s | 6,952 / 0 s; mesmo PID | 0,278 / 0,234 s | 14,545 / 12,642 s | 3,04 / 2,64 s; 925,6 / 766,7 |
+
+Os WAVs tinham sinal não silencioso e a ordem observada foi V1 seguida de V2. Nesta execução, o Original manteve o mesmo worker e não recarregou o modelo ao mudar de prompt. O Pure C reiniciou o servidor e recarregou pesos para o segundo perfil, confirmando a limitação documentada. Os tempos são uma execução por perfil e não devem ser tratados como benchmark do Ryzen 7 5700G, cuja identificação não foi confirmada neste ambiente.
+
 ### Diagnóstico offline reproduzível com trechos da voz autorizada
 
 Para medir a troca real do servidor sem aguardar uma segunda gravação, `scripts/validar_troca_perfis_trechos_voz_autorizada.py` cria dois perfis efêmeros a partir de janelas diferentes de uma referência autorizada. Ele exige confirmação explícita, trabalha offline, valida WAV não silencioso, registra PID/carga/preparação/geração e remove os perfis, arquivos e caches temporários ao terminar. Repetição:

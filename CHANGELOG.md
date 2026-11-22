@@ -7,6 +7,11 @@
 - Edições manuais atualizam o checkpoint canônico. WAVs concluídos de uma execução antiga continuam reaproveitáveis pelo cache, mas seus textos não substituem o roteiro atualizado.
 - Teste cobre checkpoint de execução desatualizado, edição concorrente e recuperação do progresso quando os dados de síntese ainda coincidem.
 
+## Validação offline de troca de referências entre lotes
+
+- Reexecutado smoke real com Pure C INT8, Pure C Mixer e Original, usando dois trechos temporários da mesma referência autorizada. O Original manteve o worker/modelo; Pure C recarregou o runtime ao trocar a referência, conforme o limite do servidor instalado.
+- Os três fluxos geraram WAVs não silenciosos na ordem V1→V2 e removeram seus artefatos temporários. O resultado está documentado como teste de troca/worker, sem alegar locutores distintos.
+
 ## Multivozes: regeneração individual reaproveita a pasta de cache
 
 - Regenerar uma fala mantém o ID do roteiro e escreve apenas seu progresso em checkpoint próprio; a nova síntese usa o cache persistente do roteiro, sem alterar o checkpoint canônico até a fala validar.
