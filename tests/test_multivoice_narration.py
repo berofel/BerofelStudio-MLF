@@ -195,6 +195,54 @@ class MultiVoiceScriptTests(unittest.TestCase):
                                 for line in result.lines if line.id!=target.id))
             self.assertNotEqual(target.audio_path,prior_paths[target.id])
 
+    def test_cancel_during_single_line_regeneration_preserves_approved_audio_and_checkpoint(self):
+        from berofel.services.process_control import ProcessCancelled
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            reference = root / 'voice.wav'
+            _wav(reference)
+            profile = {'id': 'p1', 'sample_path': str(reference),
+                       'reference_text': 'fala', 'language': 'portuguese',
+                       'authorized': True}
+            script = create_script('[001 | V1]\nTexto original.',
+                {'V1': {'profile_id': 'p1'}}, 'qwen3-tts-purec-int8')
+            line = script.lines[0]
+            approved = root / 'approved.wav'
+            _wav(approved, frames=2400)
+            line.status = 'generated'
+            line.audio_path = str(approved)
+            line.duration = 0.1
+            old_audio = approved.read_bytes()
+            update_line_text(script, line.id, 'Texto novo para regenerar.')
+
+            class CancelAfterSynthesisStarts:
+                cancelled = False
+
+                def checkpoint(self):
+                    return None
+
+            control = CancelAfterSynthesisStarts()
+
+            def cancel_during_generation(_request, **_kwargs):
+                control.cancelled = True
+                raise ProcessCancelled('Cancelado pelo usuário.')
+
+            with self.assertRaises(ProcessCancelled):
+                generate_script_audio(script, {'p1': profile},
+                    str(root / 'episode.berofel.json'), control=control,
+                    generator=cancel_during_generation)
+
+            self.assertEqual(line.status, 'pending')
+            self.assertEqual(line.audio_path, str(approved))
+            self.assertEqual(approved.read_bytes(), old_audio)
+            checkpoint = MultiVoiceScript.from_dict(
+                json.loads(Path(script.checkpoint_path).read_text(encoding='utf-8')))
+            restored = checkpoint.lines[0]
+            self.assertEqual(restored.status, 'pending')
+            self.assertEqual(restored.audio_path, str(approved))
+            self.assertEqual(approved.read_bytes(), old_audio)
+
     def test_long_dialogue_is_generated_as_safe_chunks_and_merged_to_one_wav(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

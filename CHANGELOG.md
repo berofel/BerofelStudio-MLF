@@ -1,3 +1,8 @@
+## Multivozes: cancelamento seguro da regeneração individual
+
+- Adicionado teste de regressão que cancela uma síntese no meio da regeneração e verifica que o WAV aprovado continua byte a byte intacto, ligado à fala e presente no checkpoint recuperável.
+- Validação direcionada passou; o roteiro permanece pendente para retomar a fala alterada.
+
 ## Pure C: serialização segura de preparação vocal
 
 - Ao preparar uma referência sem x-vector em cache, o adapter agora serializa a extração com a inferência e encerra o servidor Pure C residente antes de iniciar o extrator. Isso evita duas instâncias do Qwen 0.6B ocuparem RAM simultaneamente em trocas para novos perfis.
