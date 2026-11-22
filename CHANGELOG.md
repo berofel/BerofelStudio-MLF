@@ -9,11 +9,12 @@
 - Regeneração real de uma fala preservou os outros WAVs e suportou Undo/Redo. Adicionado teste de geração/união de fala segmentada. A troca real entre perfis de pessoas diferentes permanece sem validação porque havia apenas um perfil vocal autorizado no ambiente.
 - O painel multivozes agora avisa quando personagens usam perfis Pure C diferentes, pois cada troca exige reinício e recarga do servidor/modelo.
 - Para roteiros com vários perfis sem recarga entre personagens, o painel explica que Original reutiliza um worker e até 64 prompts vocais em memória, com a contrapartida de inferência mais lenta.
-- Incluído smoke real offline para Original com timeout e cache temporário; nesta máquina a primeira fala não terminou após vários minutos, então esse caminho permanece não validado e não é recomendado como conclusão de geração.
+- Incluído smoke real offline para Original com timeout e cache temporário; a primeira tentativa travou na importação do Qwen e motivou a correção de startup, seguida da validação real registrada abaixo.
 - O worker Original agora informa as fases de inicialização PyTorch/Qwen/pesos na interface e devolve erros de carga ao editor, sem ocultá-los como espera indefinida.
 - A carga local do Qwen evita importar o pacote completo librosa/numba; a compatibilidade para load, soxr e filtros mel segue as APIs usadas pelo Qwen, e a saída mel foi comparada com a implementação instalada.
 - Após a correção, o backend Original Qwen foi validado por uma sessão offline nova: prompt vocal persistido reaproveitado, WAV audível inserido na timeline, player, exportação WAV/MP4 e projeto reaberto; latência fria observada ficou documentada como fallback lento.
 - O editor visual aceita trocar uma fala para qualquer perfil já configurado, mesmo que o personagem ainda não apareça no roteiro importado; perfis extras não usados não impedem a geração.
+- O painel avisa quando personagens diferentes apontam para o mesmo perfil vocal, deixando explícito que eles terão a mesma identidade de voz.
 
 ## Validação local Turbo sem proxy externo
 

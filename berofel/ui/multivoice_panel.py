@@ -232,8 +232,8 @@ class MultiVoicePanel(QWidget):
             return
         if self.active_script:
             used_voices = {line.voice_id for line in self.active_script.lines}
-            selected_profiles = {
-                str(self.active_script.voices[voice_id].get('profile_id', ''))
+            profile_by_voice = {
+                voice_id: str(self.active_script.voices[voice_id].get('profile_id', ''))
                 for voice_id in used_voices
                 if voice_id in self.active_script.voices and
                 self.active_script.voices[voice_id].get('profile_id')}
@@ -244,26 +244,37 @@ class MultiVoicePanel(QWidget):
                                if hasattr(self, 'script_text') else set())
             except ScriptValidationError:
                 used_voices = set()
-            selected_profiles = {
-                self.assignments[voice_id].currentData()
+            profile_by_voice = {
+                voice_id: str(self.assignments[voice_id].currentData() or '')
                 for voice_id in used_voices
                 if voice_id in self.assignments and
                 self.assignments[voice_id].currentData()}
+        selected_profiles = set(profile_by_voice.values())
+        voices_by_profile: dict[str, list[str]] = {}
+        for voice_id, profile_id in profile_by_voice.items():
+            voices_by_profile.setdefault(profile_id, []).append(voice_id)
+        repeated_voice_ids = next((sorted(voice_ids,
+            key=lambda voice: int(voice[1:]))
+            for voice_ids in voices_by_profile.values() if len(voice_ids) > 1), [])
+        notes = []
+        if repeated_voice_ids:
+            notes.append('Os personagens ' + ', '.join(repeated_voice_ids) +
+                ' usam o mesmo perfil vocal e terão a mesma identidade de voz. ' +
+                'Associe perfis diferentes se quiser vozes distintas.')
         engine_id = str(self.engine.currentData() or '')
         if engine_id in ('qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8') and len(selected_profiles) > 1:
-            self.engine_note.setText(
+            notes.append(
                 'Atenção: o Pure C fixa uma voz clonada por servidor. Ao trocar entre perfis '
                 'diferentes, o Qwen reinicia e recarrega o modelo em cada lote de voz.')
         elif engine_id == 'qwen3-tts-local' and len(selected_profiles) > 1:
-            self.engine_note.setText(
+            notes.append(
                 'Original mantém um único Qwen carregado e reutiliza o condicionamento de cada '
                 'perfil durante a sessão. A geração pode ser mais lenta que nos perfis Pure C.')
         elif engine_id in ('qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8'):
-            self.engine_note.setText(
+            notes.append(
                 'Pure C agrupa as falas pelo perfil e mantém o servidor aquecido enquanto usa '
                 'a mesma voz. Perfis clonados diferentes exigem recarga entre lotes.')
-        else:
-            self.engine_note.setText('')
+        self.engine_note.setText('\n'.join(notes))
 
     def import_script(self):
         path, _ = QFileDialog.getOpenFileName(

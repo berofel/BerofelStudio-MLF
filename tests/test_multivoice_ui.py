@@ -143,6 +143,18 @@ class MultiVoicePanelTests(unittest.TestCase):
         self.panel.engine.setCurrentIndex(self.panel.engine.findData('qwen3-tts-local'))
         self.assertIn('um único Qwen carregado', self.panel.engine_note.text())
 
+    def test_same_profile_for_multiple_characters_warns_they_sound_the_same(self):
+        self.panel.assignments['V1'].setCurrentIndex(
+            self.panel.assignments['V1'].findData(self.profile['id']))
+        self.panel.assignments['V2'].setCurrentIndex(
+            self.panel.assignments['V2'].findData(self.profile['id']))
+        self.panel.script_text.setPlainText(
+            '[001 | V1 | Ana]\nPrimeira fala.\n[002 | V2 | Bruno]\nSegunda fala.')
+        self.assertIn('V1, V2 usam o mesmo perfil vocal',
+                      self.panel.engine_note.text())
+        self.assertIn('terão a mesma identidade de voz',
+                      self.panel.engine_note.text())
+
 
 if __name__ == '__main__':
     unittest.main()
