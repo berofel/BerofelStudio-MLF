@@ -157,6 +157,31 @@ class MultiVoiceScriptTests(unittest.TestCase):
             self.assertEqual(restored_after_edit.lines[0].status, 'pending')
             self.assertEqual(restored_after_edit.voices['V2']['profile_id'], 'unused-2')
 
+    def test_restore_does_not_mark_missing_or_silent_checkpoint_wav_as_generated(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            project_path = root / 'episode.berofel.json'
+            for wav_state in ('missing', 'silent'):
+                with self.subTest(wav_state=wav_state):
+                    script = create_script('[001 | V1]\nTexto preservado.',
+                        {'V1': {'profile_id': 'p1'}}, 'qwen3-tts-purec-int8')
+                    audio = root / f'{wav_state}.wav'
+                    if wav_state == 'silent':
+                        audio.parent.mkdir(parents=True, exist_ok=True)
+                        with wave.open(str(audio), 'wb') as output:
+                            output.setnchannels(1); output.setsampwidth(2)
+                            output.setframerate(24000); output.writeframes(bytes(4800))
+                    line = script.lines[0]
+                    line.status = 'generated'; line.audio_path = str(audio)
+                    line.duration = 0.1; line.clip_id = 'existing-clip'
+                    save_script_checkpoint(script, str(project_path))
+                    expected = MultiVoiceScript.from_dict(script.to_dict())
+                    restored = load_script_checkpoint(str(project_path), script.id,
+                                                       expected_script=expected)
+                    self.assertEqual(restored.lines[0].status, 'pending')
+                    self.assertEqual(restored.lines[0].audio_path, '')
+                    self.assertIn('WAV salvo', restored.lines[0].error)
+
     def test_grouping_merges_character_slots_that_share_the_same_saved_profile(self):
         script = create_script('[001 | V1]\nA\n[002 | V2]\nB\n[003 | V3]\nC\n[004 | V2]\nD',
             {'V1': {'profile_id': 'p1'}, 'V2': {'profile_id': 'p1'},

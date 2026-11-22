@@ -2,6 +2,7 @@
 
 - Cada fila em segundo plano agora escreve progresso em checkpoint próprio, sem competir com o checkpoint canônico editado pelo usuário.
 - Na reabertura, checkpoints incrementais só restauram o estado das falas quando o fingerprint do roteiro corresponde ao projeto; título, início da timeline e perfis não usados vêm sempre do projeto atual.
+- A retomada valida que o WAV de cada fala ainda existe e contém áudio antes de marcá-la como gerada; arquivos ausentes ou silenciosos deixam a fala pendente para regeneração.
 - Edições manuais atualizam o checkpoint canônico. WAVs concluídos de uma execução antiga continuam reaproveitáveis pelo cache, mas seus textos não substituem o roteiro atualizado.
 - Teste cobre checkpoint de execução desatualizado, edição concorrente e recuperação do progresso quando os dados de síntese ainda coincidem.
 

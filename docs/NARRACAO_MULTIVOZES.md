@@ -28,7 +28,7 @@ A geração em lote trabalha sobre uma cópia do roteiro. Antes de inserir os WA
 
 Somente perfis ligados a vozes efetivamente usadas no roteiro são carregados. Slots V1–V10 configurados sem falas não exigem que seus perfis existam nem impedem a geração.
 
-O checkpoint canônico acompanha o roteiro salvo no projeto. Cada inferência em segundo plano escreve em `roteiros/<id>/runs/` e não pode sobrescrever esse arquivo. Na reabertura, o editor só aplica estado de geração de um checkpoint cujo fingerprint ainda corresponda aos textos/vozes/backend atuais; detalhes de timeline e perfis não usados continuam vindo do projeto. Se uma edição invalidar um checkpoint, os WAVs continuam no cache e são reaproveitados ao gerar o roteiro corrigido.
+O checkpoint canônico acompanha o roteiro salvo no projeto. Cada inferência em segundo plano escreve em `roteiros/<id>/runs/` e não pode sobrescrever esse arquivo. Na reabertura, o editor só aplica estado de geração de um checkpoint cujo fingerprint ainda corresponda aos textos/vozes/backend atuais; detalhes de timeline e perfis não usados continuam vindo do projeto. A retomada também valida cada WAV; arquivo ausente, truncado ou silencioso não aparece como fala pronta e pode ser regenerado. Se uma edição invalidar um checkpoint, os WAVs continuam no cache e são reaproveitados ao gerar o roteiro corrigido.
 
 ## Persistência e retomada
 

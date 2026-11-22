@@ -524,6 +524,17 @@ def load_script_checkpoint(project_path: str, script_id: str,
             saved = saved_lines.get(line.id)
             if saved is None:
                 continue
+            if saved.status == 'generated':
+                saved_audio = Path(saved.audio_path) if saved.audio_path else None
+                if saved_audio is None or not _cached_wav_valid(saved_audio)[1]:
+                    # A checkpoint may outlive a manually removed or damaged
+                    # WAV. Never restore a generated state that the player or
+                    # timeline can no longer actually use.
+                    line.status = 'pending'
+                    line.audio_path = ''
+                    line.duration = 0.0
+                    line.error = 'O WAV salvo não existe ou está inválido; gere esta fala novamente.'
+                    continue
             for attribute in ('status', 'audio_path', 'duration', 'clip_id', 'cache_key',
                               'error', 'generation_seconds', 'model_load_seconds',
                               'profile_prepare_seconds', 'first_audio_seconds', 'cache_hit'):
