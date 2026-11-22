@@ -1161,6 +1161,72 @@ class ActionsUITests(unittest.TestCase):
         finally:
             win.close()
 
+    def test_multivoice_batch_insertion_can_be_repeated_without_duplicate_clips(self):
+        from berofel.services.multivoice_narration import MultiVoiceScript
+        from berofel.services.voice_profiles import VoiceProfileManager
+        with tempfile.TemporaryDirectory(prefix='bfs_multivoice_idempotent_') as folder, \
+                patch.dict(os.environ, {'BEROFEL_VOICE_PROFILE_DIR':str(Path(folder)/'profiles')}):
+            sample=Path(folder)/'reference.wav'
+            import wave
+            with wave.open(str(sample),'wb') as output:
+                output.setnchannels(1);output.setsampwidth(2);output.setframerate(24000)
+                output.writeframes(b'\x20\x01'*24000)
+            win=MainWindow()
+            try:
+                profile=VoiceProfileManager().create(
+                    'Voz UI',sample,'portuguese','referência autorizada',authorized=True)
+                panel=win.narration_panel.multivoice_panel
+                panel.refresh_profiles()
+                panel.assignments['V1'].setCurrentIndex(
+                    panel.assignments['V1'].findData(profile['id']))
+                panel.script_text.setPlainText('[001 | V1]\nFala de teste.')
+                script=panel.build_script()
+                project_path=Path(folder)/'ui_test.bfsproj'
+                win.project.path=str(project_path)
+                win.project.narration_scripts=[script.to_dict()]
+
+                def fake_generate(current, *_args, **_kwargs):
+                    wav_path=Path(folder)/'line.wav'
+                    with wave.open(str(wav_path),'wb') as output:
+                        output.setnchannels(1);output.setsampwidth(2);output.setframerate(24000)
+                        output.writeframes(b'\x40\x02'*4800)
+                    line=current.lines[0]
+                    line.status='generated';line.audio_path=str(wav_path)
+                    line.duration=.2;line.cache_hit=True
+                    return current
+
+                def generate_and_wait(current):
+                    win.generate_multivoice_ui(current)
+                    task=win.active_task
+                    self.assertIsNotNone(task)
+                    loop=QEventLoop()
+                    task.signals.finished.connect(loop.quit)
+                    QTimer.singleShot(8000,loop.quit)
+                    loop.exec()
+                    self.app.processEvents()
+                    self.assertIsNone(win.active_task)
+
+                with patch('berofel.ui.window.generate_script_audio',side_effect=fake_generate):
+                    generate_and_wait(script)
+                    self.assertEqual(len([c for c in win.project.clips
+                                          if c.narration_script_id==script.id]),1)
+                    first=next(c for c in win.project.clips
+                               if c.narration_script_id==script.id)
+                    first.timeline_start=9.0;first.voice_eq_bass_db=2.5
+                    saved=MultiVoiceScript.from_dict(next(
+                        item for item in win.project.narration_scripts
+                        if item.get('id')==script.id))
+                    generate_and_wait(saved)
+                    same=next(c for c in win.project.clips
+                              if c.narration_script_id==script.id)
+                    self.assertEqual(len([c for c in win.project.clips
+                                          if c.narration_script_id==script.id]),1)
+                    self.assertEqual(same.id,first.id)
+                    self.assertEqual(same.timeline_start,9.0)
+                    self.assertEqual(same.voice_eq_bass_db,2.5)
+            finally:
+                win.close()
+
     def test_slip_tool_moves_source_and_linked_audio_with_undo(self):
         win=MainWindow()
         project=Project()
