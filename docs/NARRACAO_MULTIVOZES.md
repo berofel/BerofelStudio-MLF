@@ -24,6 +24,10 @@ Cabeçalhos repetidos, número duplicado, voz fora de V1–V10, texto sem cabeç
 
 Ao substituir uma fala por outra de duração diferente, somente as falas seguintes do mesmo roteiro são deslocadas. Música, clipes independentes e outros roteiros na mesma camada não se movem. Se o clipe ou uma fala seguinte estiver numa camada bloqueada, a regeneração é recusada antes da síntese; o estado é verificado novamente ao concluir para proteger alterações feitas enquanto o Qwen trabalha. Edição, remoção ou reordenação do roteiro também é recusada quando uma camada dele estiver bloqueada, e a tabela volta ao último estado salvo.
 
+A geração em lote trabalha sobre uma cópia do roteiro. Antes de inserir os WAVs, compara o fingerprint de texto, vozes, ordem, pausa e backend com o projeto atual; se algo mudou durante a inferência, não aplica uma resposta desatualizada. Gerar novamente um roteiro pronto atualiza os clipes encontrados pelos IDs estáveis das falas, sem duplicá-los, preserva a posição manual e os ajustes DSP existentes, e abre espaço na camada do roteiro somente quando uma fala nova ou uma mudança de duração exigir.
+
+Somente perfis ligados a vozes efetivamente usadas no roteiro são carregados. Slots V1–V10 configurados sem falas não exigem que seus perfis existam nem impedem a geração.
+
 ## Persistência e retomada
 
 O projeto guarda os metadados do roteiro em JSON versionado. Áudios e checkpoint incremental ficam junto dos arquivos do projeto, em `*_arquivos/narracoes/roteiros/<id>/`. Em cancelamento, os WAVs já concluídos ficam preservados; se a regeneração individual for cancelada, o áudio aprovado anteriormente continua byte a byte intacto e associado à fala pendente. Ao reabrir o projeto, use **Retomar roteiro salvo**. O cache de cada fala considera texto, hash da referência autorizada, perfil, backend, threads e fingerprint do runtime/modelo; mudar só a posição não sintetiza novamente. A origem da voz permanece na pasta privada local de perfis.

@@ -273,6 +273,12 @@ def group_script_lines_by_profile(script: MultiVoiceScript) -> list[tuple[str, l
             for profile_id in sorted(groups, key=lambda item: order[item])]
 
 
+def profile_ids_used_by_script(script: MultiVoiceScript) -> set[str]:
+    """Return only profiles needed for actual lines, excluding unused slots."""
+    validate_script(script)
+    return {script.voices[line.voice_id]['profile_id'] for line in script.lines}
+
+
 def reorder_lines(script: MultiVoiceScript, ordered_ids: Iterable[str]) -> None:
     ordered = list(ordered_ids)
     by_id = {line.id: line for line in script.lines}
@@ -310,6 +316,21 @@ def profile_fingerprint(profile: Mapping) -> str:
                    'sample_sha256': hasher.hexdigest(),
                    'reference_text': str(profile.get('reference_text', '')),
                    'model': MODEL_ID})
+
+
+def script_generation_fingerprint(script: MultiVoiceScript) -> str:
+    """Identify synthesis inputs so stale asynchronous results cannot replace edits."""
+    used_voice_ids = {line.voice_id for line in script.lines}
+    return digest({
+        'id': script.id,
+        'engine': script.engine_id,
+        'pause_ms': script.pause_ms,
+        'voices': {key: dict(script.voices[key])
+                   for key in sorted(used_voice_ids) if key in script.voices},
+        'lines': [{'id': line.id, 'number': line.number, 'voice_id': line.voice_id,
+                   'character_name': line.character_name, 'text': line.text}
+                  for line in sorted(script.lines, key=lambda item: item.number)],
+    })
 
 
 def synthesis_cache_key(line: DialogueLine, profile: Mapping, engine_id: str,

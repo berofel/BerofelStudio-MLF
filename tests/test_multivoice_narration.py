@@ -7,8 +7,8 @@ from pathlib import Path
 from berofel.services.multivoice_narration import (
     DEFAULT_PAUSE_MS, MultiVoiceScript, ScriptValidationError,
     create_script, group_lines_by_voice, group_script_lines_by_profile, parse_berofel_script,
-    generate_script_audio, reorder_lines, split_dialogue_text, synthesis_cache_key,
-    update_line_text,
+    generate_script_audio, profile_ids_used_by_script, reorder_lines, split_dialogue_text,
+    synthesis_cache_key, script_generation_fingerprint, update_line_text,
 )
 from berofel.services.narration_service import persistent_folder
 
@@ -94,6 +94,21 @@ class MultiVoiceScriptTests(unittest.TestCase):
         self.assertEqual(restored.pause_ms, 425)
         self.assertEqual(DEFAULT_PAUSE_MS, 200)
 
+    def test_generation_fingerprint_ignores_runtime_state_but_detects_script_edits(self):
+        script = create_script('[001 | V1]\nOriginal',
+                               {'V1': {'profile_id': 'p1'},
+                                'V2': {'profile_id': 'unused'}},
+                               'qwen3-tts-purec-int8')
+        initial = script_generation_fingerprint(script)
+        script.lines[0].status = 'generated'
+        script.lines[0].audio_path = 'cached.wav'
+        script.total_seconds = 8.0
+        script.timeline_start = 12.0
+        script.voices['V2']['profile_id'] = 'changed-unused-profile'
+        self.assertEqual(initial, script_generation_fingerprint(script))
+        script.lines[0].text = 'Editado'
+        self.assertNotEqual(initial, script_generation_fingerprint(script))
+
     def test_grouping_merges_character_slots_that_share_the_same_saved_profile(self):
         script = create_script('[001 | V1]\nA\n[002 | V2]\nB\n[003 | V3]\nC\n[004 | V2]\nD',
             {'V1': {'profile_id': 'p1'}, 'V2': {'profile_id': 'p1'},
@@ -112,6 +127,7 @@ class MultiVoiceScriptTests(unittest.TestCase):
             script = create_script('[001 | V1]\nFala ativa.',
                 {'V1': {'profile_id': 'p1'}, 'V2': {'profile_id': 'deleted-unused-profile'}},
                 'qwen3-tts-purec-int8')
+            self.assertEqual(profile_ids_used_by_script(script), {'p1'})
 
             def fake_generate(request, **_kwargs):
                 output = root / 'generated.wav'

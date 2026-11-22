@@ -48,6 +48,37 @@ class ProjectTests(unittest.TestCase):
             'script-a',target.id,0,1,.5))
         self.assertEqual((target.timeline_start,later.timeline_start),(0,1.2))
 
+    def test_multivoice_timeline_upsert_is_idempotent_and_keeps_manual_position_dsp(self):
+        p=Project();lane=p.tracks[0]
+        clip,created=p.upsert_narration_line_clip(
+            script_id='script-a',line_id='line-1',source='old.wav',duration=1.2,
+            title='001 · V1',track_id=lane.id,timeline_start=4.0,voice_id='V1')
+        self.assertTrue(created)
+        clip.voice_eq_bass_db=3.0
+        clip.timeline_start=8.5
+
+        same,created=p.upsert_narration_line_clip(
+            script_id='script-a',line_id='line-1',source='new.wav',duration=1.7,
+            title='001 · V2',track_id=lane.id,timeline_start=0.0,voice_id='V2')
+        self.assertFalse(created)
+        self.assertIs(same,clip)
+        self.assertEqual(len(p.clips),1)
+        self.assertEqual((clip.source,clip.duration,clip.timeline_start),
+                         ('new.wav',1.7,8.5))
+        self.assertEqual(clip.voice_eq_bass_db,3.0)
+
+    def test_multivoice_timeline_upsert_does_not_change_locked_clip(self):
+        p=Project();lane=p.tracks[0]
+        clip=p.add_clip(Clip('old.wav',0,1,kind='audio',track_id=lane.id,
+                             narration_script_id='script-a',narration_line_id='line-1'))
+        lane.locked=True
+        result,created=p.upsert_narration_line_clip(
+            script_id='script-a',line_id='line-1',source='new.wav',duration=2,
+            title='Edited',track_id=lane.id,timeline_start=3,voice_id='V1')
+        self.assertIsNone(result)
+        self.assertFalse(created)
+        self.assertEqual((clip.source,clip.duration,clip.title),('old.wav',1,'') )
+
     def test_middle_selected_only(self):
         p=self.make_project()
         l,m,r=(c.id for c in p.clips)

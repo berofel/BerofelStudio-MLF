@@ -1,3 +1,12 @@
+## Multivozes: inserção idempotente após geração em lote
+
+- A conclusão de uma fila agora atualiza o bloco existente da fala, preserva posição manual e ajustes DSP e não cria duplicatas ao gerar novamente um roteiro.
+- O roteiro enviado ao worker é uma cópia imutável. Se texto, vozes, ordem, pausa ou backend mudarem durante a síntese, a resposta antiga não substitui a edição recente.
+- A interface carrega apenas os perfis associados a falas do roteiro; slots configurados mas não usados não bloqueiam a fila se seu perfil não estiver disponível.
+- Inclusão de fala ausente e mudanças de duração abrem espaço apenas na sequência do próprio roteiro.
+- Exceções ao aplicar resultados assíncronos agora são tratadas pelo fluxo de erro do editor, em vez de escapar do callback Qt.
+- Testes cobrem idempotência, posição manual, DSP, bloqueio e fingerprint de entrada.
+
 ## Multivozes: ripple seguro ao regenerar uma fala
 
 - A regeneração individual agora desloca apenas os clipes posteriores pertencentes ao mesmo roteiro, sem mover mídia independente nem outros roteiros na mesma camada.

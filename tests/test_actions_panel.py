@@ -6,7 +6,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 try:
     from PySide6.QtCore import QThreadPool, QPoint, QPointF, QSettings, QEventLoop, QTimer, Qt
@@ -1138,6 +1138,28 @@ class ActionsUITests(unittest.TestCase):
             self.app.processEvents()
             win.close()
         self.assertIsNone(win.active_task,'O worker deve liberar a fila ao concluir.')
+
+    def test_background_success_callback_errors_are_reported_without_escaping_qt(self):
+        win=MainWindow()
+        def invalid_commit(_result):
+            raise RuntimeError('alteração concorrente detectada')
+        dialog=MagicMock()
+        try:
+            with patch('berofel.ui.window.make_processing_error_dialog',
+                       return_value=dialog) as make_dialog:
+                task=win._task(lambda:'resultado',invalid_commit,
+                               label='Commit de resultado assíncrono')
+                loop=QEventLoop()
+                task.signals.finished.connect(loop.quit)
+                QTimer.singleShot(5000,loop.quit)
+                loop.exec()
+                self.app.processEvents()
+                make_dialog.assert_called_once()
+                self.assertIn('alteração concorrente detectada',
+                              make_dialog.call_args.args[1])
+                self.assertIsNone(win.active_task)
+        finally:
+            win.close()
 
     def test_slip_tool_moves_source_and_linked_audio_with_undo(self):
         win=MainWindow()

@@ -1436,13 +1436,21 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, 'Batata Quente',
                                     'Aguarde o processo atual antes de gerar este roteiro.')
             return
+        if not self.project.narration_script_is_editable(script.id):
+            QMessageBox.information(self, 'Gerar roteiro',
+                                    'Desbloqueie as camadas deste roteiro antes de gerar ou inserir as falas.')
+            return
         try:
-            profiles = {voice['profile_id']: panel.voice_profiles.get(voice['profile_id'])
-                        for voice in script.voices.values()}
+            from berofel.services.multivoice_narration import profile_ids_used_by_script
+            used_profile_ids = profile_ids_used_by_script(script)
+            profiles = {profile_id: panel.voice_profiles.get(profile_id)
+                        for profile_id in used_profile_ids}
         except (OSError, ValueError, KeyError, PermissionError) as exc:
             QMessageBox.warning(self, 'Perfis de voz', str(exc))
             return
-        from dataclasses import replace
+        from berofel.services.multivoice_narration import (
+            MultiVoiceScript, script_generation_fingerprint,
+        )
         is_resume = any(item.get('id') == script.id for item in self.project.narration_scripts)
         script.title = script.title or 'Roteiro multivozes'
         if not is_resume:
@@ -1452,6 +1460,8 @@ class MainWindow(QMainWindow):
             from berofel.services.narration_service import persistent_folder
             script.checkpoint_path = str(persistent_folder(script_path) / 'roteiros' /
                                          script.id / 'roteiro.json')
+        generation_script = MultiVoiceScript.from_dict(script.to_dict())
+        generation_fingerprint = script_generation_fingerprint(generation_script)
         self.snapshot()
         self.project.narration_scripts = [item for item in self.project.narration_scripts
                                           if item.get('id') != script.id]
@@ -1463,27 +1473,68 @@ class MainWindow(QMainWindow):
         panel.set_busy(True)
         panel.status.setText('Preparando fila agrupada por personagem…')
         def run(progress=None, control=None, stage=None):
-            return generate_script_audio(script, profiles, script_path, control=control,
+            return generate_script_audio(generation_script, profiles, script_path, control=control,
                                          progress=progress, stage=stage)
         def ready(result):
-            from berofel.core.project import Clip
-            track = self.project.add_track(f'Diálogo · {result.title}', 0)
+            latest_data = next((item for item in self.project.narration_scripts
+                                if item.get('id') == result.id), None)
+            if latest_data is None:
+                raise RuntimeError('O roteiro foi removido enquanto a IA trabalhava. '
+                                   'Os WAVs já gerados permanecem no cache e não foram inseridos.')
+            latest_script = MultiVoiceScript.from_dict(latest_data)
+            if script_generation_fingerprint(latest_script) != generation_fingerprint:
+                raise RuntimeError('O roteiro ou as vozes mudaram durante a geração. '
+                                   'O resultado antigo não foi aplicado; revise e gere novamente.')
+            script_clips = [clip for clip in self.project.clips
+                            if clip.narration_script_id == result.id]
+            if any(not self.project.track_is_editable(clip.track_id)
+                   for clip in script_clips):
+                raise RuntimeError('Uma camada do roteiro foi bloqueada durante a geração. '
+                                   'Desbloqueie-a e tente inserir os WAVs concluídos.')
+            self.snapshot()
+            track_id = latest_script.track_id or (script_clips[0].track_id if script_clips else '')
+            track = self.project.track(track_id) if track_id else None
+            if track is None:
+                track = self.project.add_track(f'Diálogo · {result.title}', 0)
+            if track.locked:
+                raise RuntimeError('A camada do roteiro está bloqueada; os WAVs concluídos '
+                                    'foram mantidos, mas não inseridos na timeline.')
+            result.title = latest_script.title
+            result.voices = copy.deepcopy(latest_script.voices)
             result.track_id = track.id
-            result.track_id = track.id
+            result.timeline_start = latest_script.timeline_start
             cursor = result.timeline_start
             clips = []
             line_by_id = {line.id: line for line in result.lines}
             for line in sorted(result.lines, key=lambda item: item.number):
                 if line.status != 'generated' or not Path(line.audio_path).is_file():
                     continue
-                clip = Clip(source=line.audio_path, start=0.0, end=line.duration,
-                            title=f'{line.number:03d} · {line.character_name or line.voice_id}',
-                            track_id=track.id, timeline_start=cursor, kind='audio',
-                            include_audio=True, source_length=line.duration,
-                            narration_script_id=result.id, narration_line_id=line.id,
-                            narration_voice_id=line.voice_id)
+                existing = next((item for item in script_clips
+                                 if item.narration_line_id == line.id), None)
+                if existing:
+                    old_start = existing.timeline_start
+                    old_end = existing.timeline_end
+                    delta = line.duration - existing.duration
+                    if (abs(delta) > .001 and
+                            not self.project.reflow_narration_script_after_replacement(
+                                result.id, existing.id, old_start, old_end, delta)):
+                        raise RuntimeError('Não foi possível ajustar as falas seguintes com segurança.')
+                    insert_at = old_start
+                else:
+                    insert_at = cursor
+                    insertion_delta = line.duration + result.pause_ms / 1000.0
+                    if (insertion_delta > 0 and
+                            not self.project.reflow_narration_script_after_replacement(
+                                result.id, '', insert_at, insert_at, insertion_delta)):
+                        raise RuntimeError('Não foi possível abrir espaço para esta fala na timeline.')
+                clip, _created = self.project.upsert_narration_line_clip(
+                    script_id=result.id, line_id=line.id, source=line.audio_path,
+                    duration=line.duration,
+                    title=f'{line.number:03d} · {line.character_name or line.voice_id}',
+                    track_id=track.id, timeline_start=insert_at, voice_id=line.voice_id)
+                if clip is None:
+                    raise RuntimeError('A camada de uma fala foi bloqueada durante a inserção.')
                 line.clip_id = clip.id
-                self.project.add_clip(clip)
                 if line.audio_path not in self.project.media:
                     self.project.media.append(line.audio_path)
                 clips.append(clip)
@@ -3418,8 +3469,12 @@ class MainWindow(QMainWindow):
         def success(result):
             if self.active_task is task:
                 self.active_task=None
+            try:
+                on_success(result)
+            except Exception as exc:
+                error(f'{type(exc).__name__}: {exc}')
+                return
             self.process_panel.finish('concluido')
-            on_success(result)
 
         def error(message):
             if self.active_task is task:

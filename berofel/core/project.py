@@ -325,6 +325,37 @@ class Project:
                 clip.timeline_start = max(0.0, clip.timeline_start + delta)
         return True
 
+    def upsert_narration_line_clip(self, *, script_id: str, line_id: str,
+                                   source: str, duration: float, title: str,
+                                   track_id: str, timeline_start: float,
+                                   voice_id: str) -> tuple[Clip | None, bool]:
+        """Insert or refresh one generated dialogue clip without duplicating it.
+
+        Existing timeline position and clip-level DSP settings are preserved.
+        Returns ``(clip, created)``; a locked lane returns ``(None, False)``.
+        """
+        clip = next((item for item in self.clips
+                     if item.narration_script_id == script_id
+                     and item.narration_line_id == line_id), None)
+        target_track = clip.track_id if clip else track_id
+        if not self.track_is_editable(target_track):
+            return None, False
+        if clip is None:
+            clip = Clip(source=source, start=0.0, end=duration, title=title,
+                        track_id=target_track, timeline_start=max(0.0, timeline_start),
+                        kind='audio', include_audio=True, source_length=duration,
+                        narration_script_id=script_id, narration_line_id=line_id,
+                        narration_voice_id=voice_id)
+            self.add_clip(clip)
+            return clip, True
+        clip.source = source
+        clip.start = 0.0
+        clip.end = duration
+        clip.source_length = duration
+        clip.title = title
+        clip.narration_voice_id = voice_id
+        return clip, False
+
     def add_track(self, name: str = '', index: int = 0) -> Track:
         track = Track(name=name.strip() or f'Camada {len(self.tracks)+1}')
         self.tracks.insert(max(0, min(len(self.tracks), index)), track)
