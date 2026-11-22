@@ -338,7 +338,7 @@ def synthesis_cache_key(line: DialogueLine, profile: Mapping, engine_id: str,
                         voice_fingerprint: str = '') -> str:
     return digest({'schema': GENERATION_CACHE_SCHEMA, 'model': MODEL_ID,
                    'text': line.text, 'voice': voice_fingerprint or profile_fingerprint(profile),
-                   'voice_id': line.voice_id, 'engine': engine_id,
+                   'engine': engine_id,
                    'threads': int(thread_count), 'engine_fingerprint': engine_fingerprint,
                    'sampling': {'temperature': 0.5, 'top_k': 50, 'top_p': 1.0,
                                 'rep_penalty': 1.05}})
@@ -630,9 +630,29 @@ def generate_script_audio(script: MultiVoiceScript, profiles: Mapping[str, Mappi
             cache_key = synthesis_cache_key(line, profile, script.engine_id,
                                             thread_count or 6, engine_fingerprint,
                                             voice_fingerprints[assignment['profile_id']])
-            target = output_root / f'{line.id}_{cache_key[:16]}.wav'
+            target = output_root / f'{line.id}_{cache_key}.wav'
             duration, valid = _cached_wav_valid(target)
             line.cache_hit = valid
+            if not valid:
+                # Different character slots can intentionally share one saved
+                # voice. Reuse a matching synthesis, but copy it to this line's
+                # own WAV so timeline blocks remain independently addressable.
+                for cached_path in output_root.glob(f'*_{cache_key}.wav'):
+                    if cached_path == target:
+                        continue
+                    cached_duration, cached_valid = _cached_wav_valid(cached_path)
+                    if not cached_valid:
+                        continue
+                    temp = target.with_suffix('.pending.wav')
+                    try:
+                        shutil.copyfile(cached_path, temp)
+                        duration, valid = _cached_wav_valid(temp)
+                        if valid:
+                            os.replace(temp, target)
+                            line.cache_hit = True
+                            break
+                    finally:
+                        temp.unlink(missing_ok=True)
             if not valid:
                 target.unlink(missing_ok=True)
                 segments = split_dialogue_text(line.text)

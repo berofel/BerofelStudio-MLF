@@ -262,8 +262,11 @@ class MultiVoiceScriptTests(unittest.TestCase):
             profile = {'id': 'p1', 'sample_path': str(sample), 'reference_text': 'fala',
                        'authorized': True}
             line = parse_berofel_script('[001 | V1]\nUma frase')[0]
+            other_voice = parse_berofel_script('[001 | V2]\nUma frase')[0]
             original = synthesis_cache_key(line, profile, 'qwen3-tts-purec-int8', 6, 'engine-a')
             self.assertEqual(original, synthesis_cache_key(line, profile,
+                'qwen3-tts-purec-int8', 6, 'engine-a'))
+            self.assertEqual(original, synthesis_cache_key(other_voice, profile,
                 'qwen3-tts-purec-int8', 6, 'engine-a'))
             line.text = 'Outra frase'
             self.assertNotEqual(original, synthesis_cache_key(line, profile,
@@ -275,6 +278,36 @@ class MultiVoiceScriptTests(unittest.TestCase):
                 'qwen3-tts-purec-int8', 4, 'engine-a'))
             self.assertNotEqual(original, synthesis_cache_key(line, profile,
                 'qwen3-tts-purec-int8', 6, 'engine-b'))
+
+    def test_shared_profile_and_text_reuse_audio_but_keep_one_wav_per_line(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            reference = root / 'voice.wav'
+            _wav(reference)
+            profile = {'id': 'p1', 'sample_path': str(reference),
+                       'reference_text': 'fala', 'language': 'portuguese',
+                       'authorized': True}
+            script = create_script('[001 | V1]\nTexto repetido.\n'
+                                   '[002 | V2]\nTexto repetido.',
+                {'V1': {'profile_id': 'p1'}, 'V2': {'profile_id': 'p1'}},
+                'qwen3-tts-purec-int8')
+            calls = []
+
+            def fake_generate(_request, **_kwargs):
+                calls.append(1)
+                output = root / 'backend.wav'
+                _wav(output, frames=3600)
+                return {'path': str(output), 'duration': .15, 'cache_hit': False}
+
+            result = generate_script_audio(script, {'p1': profile},
+                str(root / 'episode.berofel.json'), generator=fake_generate)
+            self.assertEqual(len(calls), 1)
+            self.assertFalse(result.lines[0].cache_hit)
+            self.assertTrue(result.lines[1].cache_hit)
+            self.assertNotEqual(result.lines[0].audio_path, result.lines[1].audio_path)
+            self.assertTrue(all(Path(line.audio_path).is_file() for line in result.lines))
+            self.assertEqual(Path(result.lines[0].audio_path).read_bytes(),
+                             Path(result.lines[1].audio_path).read_bytes())
 
     def test_batch_generates_by_voice_then_restores_script_order_and_regenerates_one_line(self):
         with tempfile.TemporaryDirectory() as folder:
