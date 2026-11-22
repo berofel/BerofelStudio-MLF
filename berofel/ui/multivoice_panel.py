@@ -75,6 +75,11 @@ class MultiVoicePanel(QWidget):
         self.engine.currentIndexChanged.connect(self._save_engine)
         engine_row.addWidget(self.engine, 1)
         root.addWidget(engine_box)
+        self.engine_note = QLabel()
+        self.engine_note.setWordWrap(True)
+        self.engine_note.setStyleSheet('color:#e8b86a;font-size:11px;')
+        root.addWidget(self.engine_note)
+        self.engine.currentIndexChanged.connect(self._update_engine_note)
 
         self.pause = QSpinBox()
         self.pause.setRange(0, 60_000)
@@ -211,12 +216,32 @@ class MultiVoicePanel(QWidget):
                 combo.setCurrentIndex(old_index)
             layout.addWidget(combo, 1)
             self.assignments[voice_id] = combo
+            combo.currentIndexChanged.connect(self._update_engine_note)
             self.voice_layout.addWidget(row)
         self.profile_error = error
         if error and hasattr(self, 'status'):
             self.status.setText(f'Não foi possível carregar os perfis: {error}')
         elif hasattr(self, 'status') and not any(combo.count() > 1 for combo in self.assignments.values()):
             self.status.setText('Crie e autorize pelo menos um perfil em Uma voz antes de montar o roteiro.')
+        if hasattr(self, 'engine_note'):
+            self._update_engine_note()
+
+    def _update_engine_note(self, *_):
+        if not hasattr(self, 'engine_note'):
+            return
+        selected_profiles = {combo.currentData() for combo in self.assignments.values()
+                             if combo.currentData()}
+        engine_id = str(self.engine.currentData() or '')
+        if engine_id in ('qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8') and len(selected_profiles) > 1:
+            self.engine_note.setText(
+                'Atenção: o Pure C fixa uma voz clonada por servidor. Ao trocar entre perfis '
+                'diferentes, o Qwen reinicia e recarrega o modelo em cada lote de voz.')
+        elif engine_id in ('qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8'):
+            self.engine_note.setText(
+                'Pure C agrupa as falas pelo perfil e mantém o servidor aquecido enquanto usa '
+                'a mesma voz. Perfis clonados diferentes exigem recarga entre lotes.')
+        else:
+            self.engine_note.setText('')
 
     def import_script(self):
         path, _ = QFileDialog.getOpenFileName(

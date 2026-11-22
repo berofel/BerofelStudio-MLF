@@ -88,6 +88,25 @@ class MultiVoicePanelTests(unittest.TestCase):
         self.assertEqual(line.audio_path, 'old.wav')
         self.assertEqual(changed, [script.id])
 
+    def test_purec_warns_when_script_uses_distinct_profiles(self):
+        second_sample = Path(self.temp.name) / 'authorized-2.wav'
+        _wav(second_sample)
+        second = self.manager.create('Teste UI 2', second_sample, 'portuguese',
+                                     'outra referência', authorized=True)
+        self.panel.refresh_profiles()
+        self.panel.assignments['V1'].setCurrentIndex(
+            self.panel.assignments['V1'].findData(self.profile['id']))
+        self.panel.assignments['V2'].setCurrentIndex(
+            self.panel.assignments['V2'].findData(second['id']))
+        if self.panel.engine.findData('qwen3-tts-purec-int8') < 0:
+            self.panel.engine.addItem('Pure C INT8 test', 'qwen3-tts-purec-int8')
+        self.panel.engine.setCurrentIndex(
+            self.panel.engine.findData('qwen3-tts-purec-int8'))
+        self.assertIn('recarrega o modelo', self.panel.engine_note.text())
+        self.panel.assignments['V2'].setCurrentIndex(
+            self.panel.assignments['V2'].findData(self.profile['id']))
+        self.assertIn('mantém o servidor aquecido', self.panel.engine_note.text())
+
 
 if __name__ == '__main__':
     unittest.main()
