@@ -141,50 +141,53 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
                   'model': _model_key(exe, model), 'profile': 'xvector-1024-f32'})
     cache = _profile_cache_root()
     destination = cache / (key + '.bin')
-    if _valid_profile(destination):
-        with _LOCK:
-            _, model_load = _start_server(destination, control, engine, thread_count)
-        return {'path': str(destination), 'cache_hit': True,
-                'profile_prepare_seconds': 0.0, 'model_load_seconds': model_load,
-                'engine': engine}
     cache.mkdir(parents=True, exist_ok=True)
-    if stage:
-        stage('Pure C • preparando perfil vocal local reutilizável')
-    started = time.perf_counter()
-    with tempfile.TemporaryDirectory(prefix='bfs_purec_profile_') as work:
-        normalized = Path(work) / 'reference.wav'
-        pending = cache / (key + '.bin.part')
-        from .audio_reference import prepare_audio_prompt
-        prepare_audio_prompt(str(source), normalized)
-        command = [str(exe), '-d', str(model), '--ref-audio', str(normalized),
-                   '--xvector-only', '--save-voice', str(pending),
-                   '-j', str(threads_for_engine(thread_count))]
-        process = subprocess.Popen(command, cwd=str(exe.parent), env=_environment(exe, paths, thread_count),
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   creationflags=_process_flags())
-        timeout = max(30, min(900, float(os.environ.get('BEROFEL_QWEN3_PUREC_PROFILE_TIMEOUT', '300'))))
-        deadline = time.monotonic() + timeout
-        while process.poll() is None:
-            if control and control.cancelled:
-                process.kill(); process.communicate(timeout=5)
-                pending.unlink(missing_ok=True)
-                if control: control.checkpoint()
-            if time.monotonic() >= deadline:
-                process.kill(); out, err = process.communicate(timeout=5)
-                pending.unlink(missing_ok=True)
-                raise TimeoutError(f'Preparar referência Pure C excedeu {timeout:.0f}s: {(err or out)[-500:].decode("utf-8", "replace")}')
-            time.sleep(.1)
-        out, err = process.communicate()
-        if process.returncode or not _valid_profile(pending):
-            pending.unlink(missing_ok=True)
-            detail = (err or out)[-700:].decode('utf-8', 'replace').strip()
-            raise RuntimeError('Pure C não criou um perfil x-vector válido.' + (f' Detalhe: {detail}' if detail else ''))
-        if control: control.checkpoint()
-        os.replace(pending, destination)
-    elapsed = time.perf_counter() - started
-    # Keep the expensive model resident so the next voice generation can stream
-    # immediately. The server holds the selected profile until a profile switch.
+    # Profile extraction itself loads Qwen weights in a short-lived process.
+    # Keep it under the same lock as inference and evict a resident server first
+    # so a cache miss never has two 0.6B copies consuming RAM simultaneously.
     with _LOCK:
+        if _valid_profile(destination):
+            _, model_load = _start_server(destination, control, engine, thread_count)
+            return {'path': str(destination), 'cache_hit': True,
+                    'profile_prepare_seconds': 0.0, 'model_load_seconds': model_load,
+                    'engine': engine}
+        if stage:
+            stage('Pure C • preparando perfil vocal local reutilizável')
+        started = time.perf_counter()
+        _stop_server_locked()
+        with tempfile.TemporaryDirectory(prefix='bfs_purec_profile_') as work:
+            normalized = Path(work) / 'reference.wav'
+            pending = cache / (key + '.bin.part')
+            from .audio_reference import prepare_audio_prompt
+            prepare_audio_prompt(str(source), normalized)
+            command = [str(exe), '-d', str(model), '--ref-audio', str(normalized),
+                       '--xvector-only', '--save-voice', str(pending),
+                       '-j', str(threads_for_engine(thread_count))]
+            process = subprocess.Popen(command, cwd=str(exe.parent), env=_environment(exe, paths, thread_count),
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       creationflags=_process_flags())
+            timeout = max(30, min(900, float(os.environ.get('BEROFEL_QWEN3_PUREC_PROFILE_TIMEOUT', '300'))))
+            deadline = time.monotonic() + timeout
+            while process.poll() is None:
+                if control and control.cancelled:
+                    process.kill(); process.communicate(timeout=5)
+                    pending.unlink(missing_ok=True)
+                    if control: control.checkpoint()
+                if time.monotonic() >= deadline:
+                    process.kill(); out, err = process.communicate(timeout=5)
+                    pending.unlink(missing_ok=True)
+                    raise TimeoutError(f'Preparar referência Pure C excedeu {timeout:.0f}s: {(err or out)[-500:].decode("utf-8", "replace")}')
+                time.sleep(.1)
+            out, err = process.communicate()
+            if process.returncode or not _valid_profile(pending):
+                pending.unlink(missing_ok=True)
+                detail = (err or out)[-700:].decode('utf-8', 'replace').strip()
+                raise RuntimeError('Pure C não criou um perfil x-vector válido.' + (f' Detalhe: {detail}' if detail else ''))
+            if control: control.checkpoint()
+            os.replace(pending, destination)
+        elapsed = time.perf_counter() - started
+        # Keep the expensive model resident so the next voice generation can stream
+        # immediately. The server holds the selected profile until a profile switch.
         _, model_load = _start_server(destination, control, engine, thread_count)
     return {'path': str(destination), 'cache_hit': False,
             'profile_prepare_seconds': elapsed, 'model_load_seconds': model_load,

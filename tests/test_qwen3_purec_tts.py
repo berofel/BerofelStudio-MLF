@@ -13,6 +13,7 @@ from unittest.mock import patch
 import numpy as np
 import psutil
 
+from berofel.services import audio_reference
 from berofel.services import qwen3_purec_tts as purec
 from berofel.services.narration_service import NarrationRequest, generate_narration
 
@@ -57,6 +58,61 @@ class PureCTests(unittest.TestCase):
             self.assertFalse(purec._valid_profile(profile))
             profile.write_bytes(b'too short')
             self.assertFalse(purec._valid_profile(profile))
+
+    def test_profile_cache_miss_stops_resident_server_before_loading_model_for_extraction(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'reference.wav'
+            source.write_bytes(b'R' * 128)
+            exe = root / 'bin' / 'qwen_tts.exe'
+            exe.parent.mkdir()
+            runtime = root / 'runtime'
+            runtime.mkdir()
+            events = []
+            fake_process = unittest.mock.Mock()
+            fake_process.poll.return_value = 0
+            fake_process.returncode = 0
+            fake_process.communicate.return_value = (b'', b'')
+
+            def launch_profile_extractor(command, **_kwargs):
+                self.assertTrue(purec._LOCK._is_owned())
+                events.append('extract')
+                output = Path(command[command.index('--save-voice') + 1])
+                np.ones(1024, dtype='<f4').tofile(output)
+                return fake_process
+
+            def stop_server():
+                events.append('stop-server')
+
+            def start_server(*_args, **_kwargs):
+                events.append('start-server')
+                return 12345, 0.25
+
+            def write_normalized(_source, destination):
+                Path(destination).write_bytes(b'W' * 128)
+
+            with patch.dict(os.environ, {
+                'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': str(root / 'cache'),
+                'BEROFEL_QWEN3_PUREC_THREADS': '6',
+            }, clear=False), \
+                 patch.object(purec, '_PROCESS', None), \
+                 patch.object(purec, '_layout', return_value=(exe, root / 'model', [runtime])), \
+                 patch.object(purec, '_model_key', return_value='model-key'), \
+                 patch.object(purec, 'is_ready', return_value=True), \
+                 patch.object(purec, '_stop_server_locked', side_effect=stop_server), \
+                 patch.object(purec, '_start_server', side_effect=start_server), \
+                 patch.object(purec.subprocess, 'Popen', side_effect=launch_profile_extractor), \
+                 patch.object(audio_reference, 'prepare_audio_prompt',
+                              side_effect=write_normalized):
+                result = purec.prepare_voice_profile(str(source), consent=True)
+
+            self.assertEqual(events[0], 'stop-server')
+            self.assertEqual(len(events), 3)
+            self.assertEqual(events[1], 'extract')
+            self.assertEqual(events[2], 'start-server')
+            self.assertFalse(result['cache_hit'])
+            self.assertEqual(result['model_load_seconds'], 0.25)
+            self.assertTrue(Path(result['path']).is_file())
 
     def test_runtime_requires_base_weights_and_runtime_directories(self):
         with tempfile.TemporaryDirectory() as folder:

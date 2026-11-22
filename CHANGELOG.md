@@ -1,3 +1,9 @@
+## Pure C: serialização segura de preparação vocal
+
+- Ao preparar uma referência sem x-vector em cache, o adapter agora serializa a extração com a inferência e encerra o servidor Pure C residente antes de iniciar o extrator. Isso evita duas instâncias do Qwen 0.6B ocuparem RAM simultaneamente em trocas para novos perfis.
+- Após extrair e validar o vetor, o servidor do perfil selecionado é iniciado normalmente. Cache hit preserva o caminho aquecido já existente.
+- Teste verifica a sequência parar → extrair → iniciar; evidência e limite de troca por perfil descritos em `docs/NARRACAO_MULTIVOZES.md`.
+
 ## Diagnóstico de troca de perfis multivozes
 
 - Adicionado smoke offline que cria dois perfis temporários a partir de segmentos diferentes de uma gravação autorizada e mede troca real nos backends Pure C INT8 e Mixer, removendo os artefatos temporários ao final.
