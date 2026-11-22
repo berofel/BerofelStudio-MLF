@@ -34,6 +34,10 @@ Para um roteiro com perfis diferentes sem recarga entre personagens, o perfil **
 
 Uma tentativa real adicional do worker Original em duas IDs de perfil (mesma amostra autorizada, portanto sem alegação de timbres distintos) não gerou a primeira fala após vários minutos e foi interrompida para liberar o CPU. Ela não conta como teste de geração concluído. O script `scripts/validar_multivoice_original_real.py` reproduz essa verificação offline com timeout máximo de 10 minutos; o fluxo Original deve ser tratado como não validado para produção multivozes até terminar e produzir WAVs nesse ambiente.
 
+Na repetição diagnóstica, o worker reportou que PyTorch foi importado, mas não saiu da importação de `qwen_tts` em 90 segundos; nenhum WAV foi gerado. Os módulos Python `torch`, `torchaudio`, `qwen_tts` e `imageio_ffmpeg` estão presentes. O `stderr` mostrou também que o executável `sox` não está no PATH, mas não houve evidência de que esse aviso seja a causa da demora. O worker agora envia as fases de importação/carga para o painel e encaminha exceções de inicialização, permitindo distinguir importação lenta, leitura dos pesos e erro explícito.
+
+O import do pacote foi então repetido com uma camada local compatível com a API efetivamente usada pelo Qwen: caiu de mais de 90 s sem progresso para 6,42 s, e a matriz mel foi idêntica (`max_abs_diff=0`) à implementação `librosa` instalada para os quatro formatos de 80/128 bandas usados pelos encoders. Um smoke test offline pela interface, usando o perfil salvo e **Equilibrado — Pure C INT8**, gerou áudio de 4,32 s em 6,29 s do clique à inserção (RTF observado do fluxo da interface: 1,456), reproduziu/buscou no player e exportou WAV não silencioso e MP4 com áudio/vídeo. Esse ensaio comprova o perfil Pure C INT8, não a inicialização completa do backend Original. A geração Original continua não validada até a sessão carregar os pesos, atingir `ready` e produzir áudio.
+
 ### Validar duas referências autorizadas diferentes
 
 Quando houver pelo menos dois perfis locais autorizados, liste os IDs com `python scripts/validar_multivoice_distinct_profiles.py --list-profiles` e execute o smoke de backend offline:

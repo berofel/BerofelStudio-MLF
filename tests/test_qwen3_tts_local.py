@@ -12,6 +12,16 @@ from berofel.services import qwen3_tts_local as qwen
 
 
 class QwenLocalCloneTests(unittest.TestCase):
+    def test_worker_reader_reports_startup_progress_and_continues_to_ready(self):
+        import io
+        class FakeProcess:
+            stdout=io.StringIO('{"progress":"Importando Qwen3-TTS…"}\n{"ready":true}\n')
+            def poll(self):return None
+        stages=[]
+        response=qwen._read_worker_line(FakeProcess(),timeout=2,stage=stages.append)
+        self.assertTrue(response['ready'])
+        self.assertEqual(stages,['Qwen3-TTS Base • Importando Qwen3-TTS…'])
+
     def test_standard_installation_has_no_pocket_tts_backend_or_installer(self):
         root=Path(__file__).resolve().parents[1]
         for name in ('requirements.txt','requirements-core.txt','requirements-ai.txt'):
@@ -176,6 +186,114 @@ class QwenLocalCloneTests(unittest.TestCase):
             self.assertTrue(responses[3]['shutdown'])
             self.assertTrue((root/'out0.wav').is_file())
             self.assertTrue((root/'out1.wav').is_file())
+
+    def test_worker_model_loader_reports_real_startup_phases(self):
+        import sys
+        import types
+        from berofel.services import qwen3_tts_worker as worker
+        class FakeTorch:
+            float32='float32'
+            @staticmethod
+            def set_num_threads(_count):pass
+            @staticmethod
+            def set_num_interop_threads(_count):pass
+        class FakeModel:
+            @classmethod
+            def from_pretrained(cls,*_args,**_kwargs):return cls()
+        model=types.SimpleNamespace(Qwen3TTSModel=FakeModel)
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'config.json').touch();stages=[]
+            with patch.dict(sys.modules,{'torch':FakeTorch,'qwen_tts':model}), \
+                 patch.object(worker.os,'cpu_count',return_value=8), \
+                 patch.object(worker,'install_librosa_compat') as install_compat:
+                loaded=worker._load_model(root,progress=stages.append)
+        install_compat.assert_called_once()
+        self.assertIsInstance(loaded,FakeModel)
+        self.assertEqual(stages,[
+            'Importando PyTorch para CPU…',
+            'Importando Qwen3-TTS…',
+            'Lendo os pesos locais do Qwen3-TTS 0.6B…',
+            'Pesos carregados; preparando a sessão de narração…'])
+
+    def test_qwen_audio_compat_loads_local_audio_and_resamples_without_librosa(self):
+        import numpy as np
+        import sys
+        import types
+        from scipy.io import wavfile
+        from scipy.fft import rfft, rfftfreq
+        from berofel.services import qwen3_audio_compat as audio
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);sample=root/'stereo.wav';rate=24000
+            time_axis=np.arange(rate,dtype=np.float32)/rate
+            left=.3*np.sin(2*np.pi*440*time_axis)
+            right=.3*np.sin(2*np.pi*440*time_axis)
+            wavfile.write(sample,rate,(np.column_stack((left,right))*32767).astype(np.int16))
+            class FakeSoundFile:
+                def __init__(self,path):
+                    self.rate,self.data=wavfile.read(path);self.position=0
+                    self.samplerate=self.rate
+                def __enter__(self):return self
+                def __exit__(self,*_args):return False
+                def __len__(self):return len(self.data)
+                def seek(self,position):self.position=position
+                def read(self,frames=-1,dtype='float32',always_2d=True):
+                    end=len(self.data) if frames<0 else self.position+frames
+                    data=self.data[self.position:end].astype(np.float32)/32768.0
+                    return data if data.ndim>1 or not always_2d else data[:,None]
+            fake_soundfile=types.SimpleNamespace(SoundFile=FakeSoundFile)
+            with patch.dict(sys.modules,{'soundfile':fake_soundfile}):
+                mono,source_rate=audio.load(sample,sr=None,mono=True)
+        converted=audio.resample(mono,source_rate,16000)
+        spectrum=np.abs(rfft(converted))
+        peak_frequency=rfftfreq(converted.size,1/16000)[int(np.argmax(spectrum[1:])+1)]
+        self.assertEqual(source_rate,24000)
+        self.assertEqual(mono.shape,(24000,))
+        self.assertEqual(converted.shape,(16000,))
+        self.assertAlmostEqual(peak_frequency,440,delta=2)
+        self.assertLess(float(np.max(np.abs(converted))),.32)
+
+    def test_qwen_audio_compat_installs_audio_and_mel_apis_used_by_qwen(self):
+        import sys
+        from berofel.services import qwen3_audio_compat as audio
+        original=sys.modules.pop('librosa',None)
+        original_filters=sys.modules.pop('librosa.filters',None)
+        try:
+            audio.install_librosa_compat()
+            module=sys.modules['librosa']
+            self.assertEqual(module.__version__,'0.10.2')
+            self.assertIs(module.load,audio.load)
+            self.assertIs(module.resample,audio.resample)
+            self.assertTrue(hasattr(module,'filters'))
+            self.assertIs(module.filters.mel,audio.mel)
+            for sample_rate,fft_size,bands in ((24000,1024,80),(16000,400,128)):
+                matrix=module.filters.mel(sr=sample_rate,n_fft=fft_size,n_mels=bands)
+                self.assertEqual(matrix.shape,(bands,1+fft_size//2))
+                self.assertTrue((matrix>=0).all())
+                self.assertTrue((matrix.sum(axis=1)>0).all())
+                self.assertTrue(__import__('numpy').isfinite(matrix).all())
+        finally:
+            sys.modules.pop('librosa',None)
+            sys.modules.pop('librosa.filters',None)
+            if original is not None:
+                sys.modules['librosa']=original
+            if original_filters is not None:
+                sys.modules['librosa.filters']=original_filters
+
+    def test_worker_transmits_startup_error_before_exiting(self):
+        import io
+        import sys
+        from contextlib import redirect_stdout, redirect_stderr
+        from berofel.services import qwen3_tts_worker as worker
+        outgoing=io.StringIO()
+        with patch.object(worker,'_load_model',side_effect=RuntimeError('checkpoint inválido')), \
+             patch.object(sys,'stdin',io.StringIO('')), \
+             patch.object(sys,'stdout',outgoing), \
+             redirect_stdout(outgoing),redirect_stderr(io.StringIO()), \
+             self.assertRaisesRegex(RuntimeError,'checkpoint inválido'):
+            worker.serve('model')
+        response=json.loads(outgoing.getvalue().splitlines()[0])
+        self.assertEqual(response['startup_error'],'RuntimeError')
+        self.assertIn('checkpoint inválido',response['error'])
 
     def test_voice_prompt_cache_persists_safely_across_worker_restarts(self):
         import sys

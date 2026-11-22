@@ -112,37 +112,44 @@ def stop_local_worker():
 atexit.register(stop_local_worker)
 
 
-def _read_worker_line(process, timeout, control=None):
-    lines=queue.Queue(maxsize=1)
-    def read():
-        try:lines.put((True,process.stdout.readline()))
-        except Exception as exc:lines.put((False,exc))
-    threading.Thread(target=read,name='QwenWorkerReply',daemon=True).start()
+def _read_worker_line(process, timeout, control=None, stage=None):
     deadline=time.monotonic()+timeout
     while True:
-        if control and control.cancelled:
-            stop_local_worker();control.checkpoint()
-        remaining=deadline-time.monotonic()
-        if remaining<=0:
-            stop_local_worker()
-            raise TimeoutError(f'Qwen3-TTS excedeu o limite local de {timeout}s.')
-        try:ok,value=lines.get(timeout=min(.2,remaining))
-        except queue.Empty:
-            if process.poll() is not None:
+        lines=queue.Queue(maxsize=1)
+        def read():
+            try:lines.put((True,process.stdout.readline()))
+            except Exception as exc:lines.put((False,exc))
+        threading.Thread(target=read,name='QwenWorkerReply',daemon=True).start()
+        while True:
+            if control and control.cancelled:
+                stop_local_worker();control.checkpoint()
+            remaining=deadline-time.monotonic()
+            if remaining<=0:
                 stop_local_worker()
-                raise RuntimeError('O worker Qwen3 encerrou antes de responder.')
+                raise TimeoutError(f'Qwen3-TTS excedeu o limite local de {timeout}s.')
+            try:ok,value=lines.get(timeout=min(.2,remaining))
+            except queue.Empty:
+                if process.poll() is not None:
+                    stop_local_worker()
+                    raise RuntimeError('O worker Qwen3 encerrou antes de responder.')
+                continue
+            if not ok:raise RuntimeError(f'Falha lendo resposta do worker Qwen3: {value}')
+            if not value:
+                stop_local_worker()
+                raise RuntimeError('O worker Qwen3 fechou o canal de resposta.')
+            try:response=json.loads(value)
+            except ValueError as exc:
+                stop_local_worker()
+                raise RuntimeError('O worker Qwen3 retornou resposta inválida.') from exc
+            break
+        if isinstance(response,dict) and response.get('progress'):
+            if stage:
+                stage('Qwen3-TTS Base • ' + str(response['progress'])[:160])
             continue
-        if not ok:raise RuntimeError(f'Falha lendo resposta do worker Qwen3: {value}')
-        if not value:
-            stop_local_worker()
-            raise RuntimeError('O worker Qwen3 fechou o canal de resposta.')
-        try:return json.loads(value)
-        except ValueError as exc:
-            stop_local_worker()
-            raise RuntimeError('O worker Qwen3 retornou resposta inválida.') from exc
+        return response
 
 
-def _ensure_worker(model: Path, control=None):
+def _ensure_worker(model: Path, control=None, stage=None):
     global _WORKER_PROCESS,_WORKER_MODEL_KEY,_WORKER_LOAD_SECONDS
     model_key=digest(_model_fingerprint(model))
     if (_WORKER_PROCESS is not None and _WORKER_PROCESS.poll() is None and
@@ -159,7 +166,16 @@ def _ensure_worker(model: Path, control=None):
         stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,encoding='utf-8',
         errors='replace',bufsize=1,creationflags=_process_flags())
     _WORKER_PROCESS=process;_WORKER_MODEL_KEY=model_key
-    response=_read_worker_line(process,timeout=900,control=control)
+    response=_read_worker_line(process,timeout=900,control=control,stage=stage)
+    if response.get('startup_error'):
+        detail=str(response.get('error',''))
+        for secret_path in (str(model), str(Path.home()),
+                            os.environ.get('LOCALAPPDATA','')):
+            if secret_path:
+                detail=detail.replace(secret_path,'<dados locais>')
+                detail=detail.replace(secret_path.replace('\\','/'),'<dados locais>')
+        stop_local_worker()
+        raise RuntimeError(f"Falha ao iniciar Qwen3-TTS ({response['startup_error']}): {detail[:1000]}")
     if not response.get('ready'):
         stop_local_worker()
         raise RuntimeError('O worker Qwen3 não confirmou o carregamento do modelo Base.')
@@ -168,7 +184,7 @@ def _ensure_worker(model: Path, control=None):
     return process
 
 
-def _runtime_request(request_data: dict,model: Path,control=None) -> dict:
+def _runtime_request(request_data: dict,model: Path,control=None,stage=None) -> dict:
     global _WORKER_PROCESS
     timeout_value=os.environ.get('BEROFEL_QWEN3_REQUEST_TIMEOUT','1800')
     try:timeout=max(60,min(3600,int(timeout_value)))
@@ -177,14 +193,14 @@ def _runtime_request(request_data: dict,model: Path,control=None) -> dict:
         model_key=digest(_model_fingerprint(model))
         was_warm=(_WORKER_PROCESS is not None and _WORKER_PROCESS.poll() is None and
                   _WORKER_MODEL_KEY==model_key)
-        process=_ensure_worker(model,control)
+        process=_ensure_worker(model,control,stage)
         try:
             process.stdin.write(json.dumps(request_data,ensure_ascii=False)+'\n')
             process.stdin.flush()
         except (OSError,ValueError) as exc:
             stop_local_worker()
             raise RuntimeError('Não foi possível enviar a tarefa ao worker Qwen3 local.') from exc
-        response=_read_worker_line(process,timeout=timeout,control=control)
+        response=_read_worker_line(process,timeout=timeout,control=control,stage=stage)
         if not response.get('ok'):
             kind=str(response.get('error_type','RuntimeError'))
             detail=str(response.get('error','falha sem detalhe'))
@@ -213,7 +229,7 @@ def prepare_local_voice_prompt(reference: str,reference_text: str,*,
         'output':str(prompt_file.with_suffix('.wav'))}
     if stage:stage('Qwen3-TTS Base • preparando perfil de referência')
     if progress:progress(0,1)
-    response=_runtime_request(data,model,control)
+    response=_runtime_request(data,model,control,stage)
     if progress:progress(1,1)
     return {'prepared':True,'prompt_cache_hit':bool(response.get('prompt_cache_hit')),
             'worker_pid':response.get('worker_pid'),
@@ -298,7 +314,7 @@ def generate_local_clone(request: NarrationRequest, progress=None, runner=None,
             if runner is not None:runner(job,result_file)
             else:
                 response=_runtime_request(json.loads(job.read_text(encoding='utf-8')),
-                                          model,control)
+                                          model,control,stage)
                 write_json(result_file,response['result'])
             if not wav.is_file() or wav.stat().st_size<=44 or not result_file.is_file():
                 raise RuntimeError('Qwen3-TTS local não entregou um WAV válido.')

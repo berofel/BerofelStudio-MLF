@@ -13,16 +13,20 @@ import numpy as np
 from scipy.io import wavfile
 
 from .audio_reference import prepare_audio_prompt
+from .qwen3_audio_compat import install_librosa_compat
 
 PROMPT_SCHEMA=1
 _MAX_PROMPTS=64
 
 
-def _load_model(model_path: str | Path):
+def _load_model(model_path: str | Path, progress=None):
     model_path=Path(model_path)
     if not (model_path/'config.json').is_file():
         raise FileNotFoundError(f'Modelo Qwen3 local incompleto: {model_path}')
+    if progress: progress('Importando PyTorch para CPU…')
     import torch
+    if progress: progress('Importando Qwen3-TTS…')
+    install_librosa_compat()
     from qwen_tts import Qwen3TTSModel
     cpu_total=os.cpu_count() or 4
     configured=os.environ.get('BEROFEL_QWEN3_CPU_THREADS','')
@@ -34,8 +38,11 @@ def _load_model(model_path: str | Path):
     # oversubscribing the 8 physical cores while keeping inference parallel.
     try:torch.set_num_interop_threads(1)
     except RuntimeError:pass  # Torch may already have started an inter-op pool.
-    return Qwen3TTSModel.from_pretrained(str(model_path),device_map='cpu',
+    if progress: progress('Lendo os pesos locais do Qwen3-TTS 0.6B…')
+    model=Qwen3TTSModel.from_pretrained(str(model_path),device_map='cpu',
         dtype=torch.float32,attn_implementation='eager',local_files_only=True)
+    if progress: progress('Pesos carregados; preparando a sessão de narração…')
+    return model
 
 
 def _reference_identity(request: dict) -> str:
@@ -187,8 +194,18 @@ def serve(model_path: str):
     """JSON-lines protocol; keep the single CPU model and prompt cache warm."""
     protocol=sys.stdout
     model_started=time.perf_counter()
+    def report_progress(message):
+        protocol.write(json.dumps({'progress':str(message)},ensure_ascii=False)+'\n')
+        protocol.flush()
     with redirect_stdout(sys.stderr):
-        model=_load_model(model_path)
+        try:
+            model=_load_model(model_path,progress=report_progress)
+        except Exception as exc:
+            protocol.write(json.dumps({'startup_error':type(exc).__name__,
+                'error':str(exc).replace('\r',' ').replace('\n',' ')[:1200]},
+                ensure_ascii=False)+'\n')
+            protocol.flush()
+            raise
     model_load_seconds=time.perf_counter()-model_started
     prompts={}
     protocol.write(json.dumps({'ready':True,'model':'Qwen3-TTS-12Hz-0.6B-Base',

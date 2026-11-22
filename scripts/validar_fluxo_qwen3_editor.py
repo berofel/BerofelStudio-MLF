@@ -61,11 +61,21 @@ def main() -> int:
         parser.error('--persist-profile requer --configured-fast-profile')
     if args.native_engine and not (args.configured_fast_profile or args.saved_fast_profile):
         parser.error('--native-engine requer um perfil rápido configurado ou salvo')
-    sample=(Path(str(settings.value('narration/sample_path','') or '')).expanduser()
-            if not synthetic else None)
-    reference_text=(str(settings.value('narration/reference_text','') or '').strip()
-                    if not synthetic
-                    else ('referência sintética de validação' if args.synthetic_fast_profile else ''))
+    saved_profile=None
+    if args.saved_fast_profile:
+        from berofel.services.voice_profiles import VoiceProfileManager
+        profiles=VoiceProfileManager().list_profiles()
+        if len(profiles)!=1 or not profiles[0]['authorized']:
+            raise RuntimeError('O teste de reabertura requer exatamente um perfil local autorizado.')
+        saved_profile=profiles[0]
+        sample=Path(saved_profile['sample_path'])
+        reference_text=str(saved_profile['reference_text']).strip()
+    else:
+        sample=(Path(str(settings.value('narration/sample_path','') or '')).expanduser()
+                if not synthetic else None)
+        reference_text=(str(settings.value('narration/reference_text','') or '').strip()
+                        if not synthetic
+                        else ('referência sintética de validação' if args.synthetic_fast_profile else ''))
     if not synthetic and (not sample or not sample.is_file() or not reference_text):
         raise RuntimeError('Configure uma referência autorizada e sua transcrição exata no painel Narração.')
 
@@ -105,11 +115,7 @@ def main() -> int:
                 profile_name='Perfil local de validação'
             source_stat=sample.stat()
         elif args.saved_fast_profile:
-            from berofel.services.voice_profiles import VoiceProfileManager
-            profiles=VoiceProfileManager().list_profiles()
-            if len(profiles)!=1 or not profiles[0]['authorized']:
-                raise RuntimeError('O teste de reabertura requer exatamente um perfil local autorizado.')
-            profile=profiles[0]
+            profile=saved_profile
             source_stat=sample.stat()
         project=Project(width=320,height=180,fps=12)
         project_file=root/'qwen_flow.bfs';project.path=str(project_file)
@@ -173,6 +179,7 @@ def main() -> int:
             # Keep the smoke test silent while exercising the real Task signal
             # path from native inference into the preview's PCM callback.
             window.narration_stream.push=lambda data:streamed_chunks.append(bytes(data))
+        selected_engine=str(panel.clone_engine.currentData())
         # Exercise the same panel action used by the user, including request
         # validation and dispatch into the application's narration controller.
         started=time.perf_counter()
@@ -187,6 +194,7 @@ def main() -> int:
                         and clip.title=='Qwen local validation'),None)
         if narration is None or not Path(narration.source).is_file():
             raise RuntimeError('A interface não inseriu a narração Qwen na timeline.')
+        generation_seconds=time.perf_counter()-started
         if 'Reaproveitado do cache' in window.narration_panel.status.text():
             raise RuntimeError('A validação da interface esperava uma inferência Qwen nova, não um cache hit.')
         if args.synthetic_fast_profile or args.configured_fast_profile:
@@ -281,6 +289,10 @@ def main() -> int:
         print(f'[PASSOU] WAV exportado: {wav_rate} Hz; conteúdo não silencioso.')
         print(f'[PASSOU] MP4 exportado: vídeo+áudio, {duration:.2f}s.')
         print(f'[PASSOU] Projeto salvo e reaberto com o clipe de narração.')
+        print(f'Motor selecionado: {selected_engine}.')
+        print(f'Tempo de geração pela interface: {generation_seconds:.2f}s; '
+              f'duração de áudio: {narration.duration:.2f}s; '
+              f'RTF do fluxo medido: {generation_seconds/max(.001,narration.duration):.3f}.')
         print(f'Tempo do fluxo completo: {time.perf_counter()-started:.1f}s.')
         panel._player.stop();panel._player.setSource(QUrl())
         app.processEvents();time.sleep(.2);app.processEvents()
