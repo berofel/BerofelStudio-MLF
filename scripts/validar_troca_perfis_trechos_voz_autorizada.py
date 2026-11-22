@@ -28,7 +28,8 @@ from berofel.services.multivoice_narration import (
 from berofel.services.narration_service import generate_narration
 from berofel.services.voice_profiles import VoiceProfileManager
 
-ENGINES = ('qwen3-tts-purec-int8', 'qwen3-tts-purec-mixed', 'qwen3-tts-local')
+ENGINES = ('qwen3-tts-purec-int8', 'qwen3-tts-purec-mixed',
+           'qwen3-tts-native-q4', 'qwen3-tts-local')
 TEXTS = ('Primeira fala do diagnóstico local.',
          'Segunda fala do diagnóstico local.')
 
@@ -102,19 +103,34 @@ def main() -> int:
 
     env_keys = ('BEROFEL_VOICE_PROFILE_DIR', 'BEROFEL_AI_CACHE',
                 'BEROFEL_QWEN3_PROMPT_CACHE', 'BEROFEL_QWEN3_PUREC_PROFILE_CACHE',
+                'BEROFEL_QWEN3_NATIVE_HOME', 'BEROFEL_QWEN3_NATIVE_EXE',
+                'BEROFEL_QWEN3_NATIVE_MODEL', 'BEROFEL_QWEN3_NATIVE_TOKENIZER',
                 'HF_HUB_OFFLINE', 'TRANSFORMERS_OFFLINE', 'HF_HUB_DISABLE_TELEMETRY')
     previous = {key: os.environ.get(key) for key in env_keys}
+    native_layout = None
+    if 'qwen3-tts-native-q4' in engines:
+        from berofel.services.qwen3_native_tts import _layout
+        native_layout = _layout()
     try:
         with tempfile.TemporaryDirectory(prefix='bfs_voice_switch_diagnostic_') as temp:
             root = Path(temp)
-            os.environ.update({
+            temporary_environment = {
                 'BEROFEL_VOICE_PROFILE_DIR': str(root / 'profiles'),
                 'BEROFEL_AI_CACHE': str(root / 'ai-cache'),
                 'BEROFEL_QWEN3_PROMPT_CACHE': str(root / 'prompt-cache'),
                 'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': str(root / 'purec-profile-cache'),
                 'HF_HUB_OFFLINE': '1', 'TRANSFORMERS_OFFLINE': '1',
                 'HF_HUB_DISABLE_TELEMETRY': '1',
-            })
+            }
+            if native_layout:
+                exe, model, tokenizer = native_layout
+                temporary_environment.update({
+                    'BEROFEL_QWEN3_NATIVE_HOME': str(root / 'native-runtime'),
+                    'BEROFEL_QWEN3_NATIVE_EXE': str(exe),
+                    'BEROFEL_QWEN3_NATIVE_MODEL': str(model),
+                    'BEROFEL_QWEN3_NATIVE_TOKENIZER': str(tokenizer),
+                })
+            os.environ.update(temporary_environment)
             normalized = root / 'normalized.wav'
             prepare_audio_prompt(source_profile['sample_path'], normalized)
             sample_rate, pcm = wavfile.read(normalized)
@@ -143,6 +159,11 @@ def main() -> int:
                     if not is_ready():
                         raise RuntimeError('Qwen3 Original não está instalado localmente.')
                     stop_local_worker()
+                elif engine == 'qwen3-tts-native-q4':
+                    from berofel.services.qwen3_native_tts import is_ready, stop_native_worker
+                    if not is_ready():
+                        raise RuntimeError('Qwen3 Turbo Q4 nativo não está instalado localmente.')
+                    stop_native_worker()
                 else:
                     from berofel.services.qwen3_purec_tts import is_ready, stop_purec_worker
                     if not is_ready():
@@ -162,6 +183,10 @@ def main() -> int:
                         from berofel.services import qwen3_tts_local as backend
                         process = backend._WORKER_PROCESS
                         process_id = process.pid if process is not None else result.get('worker_pid')
+                    elif engine == 'qwen3-tts-native-q4':
+                        from berofel.services import qwen3_native_tts as backend
+                        process = backend._PROCESS
+                        process_id = process.pid if process is not None else None
                     else:
                         from berofel.services import qwen3_purec_tts as backend
                         process = backend._PROCESS
@@ -180,6 +205,12 @@ def main() -> int:
                 result = generate_script_audio(
                     script, profile_map, str(root / f'{engine}.berofel.json'),
                     generator=measured_generator)
+                if engine == 'qwen3-tts-native-q4':
+                    process_ids = {item['process_id'] for item in runs}
+                    if len(process_ids) != 1 or None in process_ids:
+                        raise RuntimeError('O servidor Native Q4 não permaneceu no mesmo processo entre V1 e V2.')
+                    if runs[1]['model_load_seconds'] != 0:
+                        raise RuntimeError('Native Q4 recarregou o modelo na troca de perfil vocal.')
                 grouped_order = [line.voice_id for _, lines in group_script_lines_by_profile(result)
                                  for line in lines]
                 if grouped_order != ['V1', 'V2']:
@@ -194,6 +225,9 @@ def main() -> int:
                 })
                 if engine == 'qwen3-tts-local':
                     stop_local_worker()
+                elif engine == 'qwen3-tts-native-q4':
+                    from berofel.services.qwen3_native_tts import stop_native_worker
+                    stop_native_worker()
                 else:
                     stop_purec_worker()
             report['temporary_profiles_audio_caches_removed'] = True
@@ -207,6 +241,11 @@ def main() -> int:
         try:
             from berofel.services.qwen3_purec_tts import stop_purec_worker
             stop_purec_worker()
+        except ImportError:
+            pass
+        try:
+            from berofel.services.qwen3_native_tts import stop_native_worker
+            stop_native_worker()
         except ImportError:
             pass
         for key, value in previous.items():

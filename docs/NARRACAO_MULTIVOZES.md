@@ -132,7 +132,7 @@ O fluxo real pela janela do editor foi executado em roteiro de 100 falas no Wind
 
 RTF é o tempo de inferência somado dividido pela duração de áudio; menor que 1 significa que, nesta execução, o motor gerou mais áudio do que o tempo gasto em inferência. O tempo até o primeiro WAV inclui a carga/preparação inicial observada pela aplicação. Esses resultados curtos e repetidos não garantem a mesma velocidade para outros textos, perfis ou computadores. Amostras e projetos temporários foram removidos após validação; nenhum áudio pessoal foi incluído no repositório.
 
-Também foram executados pela interface: três falas reais em cada perfil, exportação WAV nos dois e MP4 no Mixed; edição/regeneração de uma fala com preservação de hashes dos outros dois WAVs, preservação do antigo até validar o novo, e Undo/Redo. Os testes automatizados cobrem fila agrupada com dois perfis simulados, cache, checkpoint, parser de 100.000+ caracteres/1.000 falas, edição individual, WAV segmentado e integração Qt. A simulação testa a lógica da alternância; não substitui a medição de troca real entre perfis. Para certificar vozes distintas, repetir quando houver ao menos três perfis autorizados locais disponíveis e, para cumprir o requisito de manter uma única carga entre personagens, será necessário um runtime com condicionamento por requisição ou troca de x-vector em memória.
+Também foram executados pela interface: três falas reais em cada perfil Pure C, exportação WAV nos dois e MP4 no Mixed; edição/regeneração de uma fala com preservação de hashes dos outros dois WAVs, preservação do antigo até validar o novo, e Undo/Redo. Os testes automatizados cobrem fila agrupada com dois perfis simulados, cache, checkpoint, parser de 100.000+ caracteres/1.000 falas, edição individual, WAV segmentado e integração Qt. A simulação testa a lógica da alternância; não substitui a medição de troca real entre perfis. O Native Q4 foi agora validado com um único processo entre lotes, mas a certificação de identidades vocais distintas depende de gravações autorizadas de locutores diferentes; o perfil local disponível até esta execução continua sendo apenas um.
 
 ## Backup e restauração
 
@@ -169,3 +169,20 @@ Execução offline nesta máquina: INT8 terminou em 14,489 s e Mixer em 10,566 s
 ### Revalidação do worker Original para prompts vocais múltiplos — 2026-11-22
 
 Reexecutado `scripts/validar_multivoice_original_real.py --confirm-own-or-authorized-voice` com o único perfil local autorizado, duplicado sob dois IDs sintéticos para validar apenas o ciclo do worker/cache. O teste gerou duas falas WAV não vazias, com durações de 8,32 s e 8,16 s. Ambas usaram o mesmo PID e `model_load_count=1`; a segunda chamada teve carga incremental de modelo de 0 s e acerto no cache do prompt. A geração levou 42,708 s e 42,236 s, respectivamente. É uma validação funcional em uma máquina não identificada: não representa benchmark do Ryzen 7 5700G e não valida locutores distintos. Os artefatos temporários foram removidos ao final.
+
+### Perfil Native Q4 para alternância sem recarga do servidor — 2026-11-22
+
+O backend já existente `qwen3-tts-native-q4` aceita um embedding x-vector por solicitação e mantém um servidor/modelo residente, ao contrário do Pure C instalado, que fixa a voz no início do servidor. Atualizei o aviso da aba Várias vozes para explicar esse comportamento quando há perfis diferentes; os dois perfis Pure C continuam em destaque e continuam disponíveis. O Native Q4 permanece em “Outros perfis”, como alternativa para evitar a recarga entre personagens. Perfis ainda sem embedding em cache podem pagar a preparação inicial; embeddings são guardados em cache local por gravação/modelo.
+
+Smoke real offline com duas referências temporárias (segmentos diferentes da mesma gravação autorizada): o Native Q4 processou V1→V2 com o mesmo PID, 0,778 s de carga do servidor na primeira fala e 0 s na segunda. A preparação de embeddings foi 3,783/3,810 s porque o cache temporário iniciou vazio; a inferência levou 3,294/2,608 s. Os WAVs tinham 3,92/3,04 s e sinal não silencioso. O teste não compara timbres de locutores distintos.
+
+Reproduzir essa medição sem alterar os perfis persistentes, usando caches e referências efêmeros:
+
+```powershell
+& "$env:LOCALAPPDATA\BFS\venv\Scripts\python.exe" `
+  scripts/validar_troca_perfis_trechos_voz_autorizada.py `
+  --confirm-own-or-authorized-voice `
+  --engine qwen3-tts-native-q4
+```
+
+Também validei pela janela Qt real: geração com Native Q4, um WAV sintetizado e reaproveitado para duas falas idênticas do mesmo perfil, dois clips na timeline, pausa de 200 ms, salvar/reabrir o projeto e exportar WAV estéreo 48 kHz com 11,08 s sincronizados. Este smoke confirma integração do perfil Native Q4 com o editor e o exportador, mas não valida identidade vocal distinta, MP4 nesse backend, nem perfis separados no fluxo UI.

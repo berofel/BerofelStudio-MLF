@@ -22,7 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from berofel.services.voice_profiles import VoiceProfileManager
 
 
-ENGINES = ('qwen3-tts-purec-int8', 'qwen3-tts-purec-mixed')
+ENGINES = ('qwen3-tts-purec-int8', 'qwen3-tts-purec-mixed',
+           'qwen3-tts-native-q4')
 TEXT = 'Esta fala repetida será gerada uma vez e usada por dois personagens.'
 
 
@@ -113,19 +114,24 @@ def main() -> int:
     from PySide6.QtWidgets import QApplication, QFileDialog
     from unittest.mock import patch
     from berofel.services.project_recovery import load_project
-    from berofel.services.qwen3_purec_tts import is_ready, stop_purec_worker
+    from berofel.services.qwen3_purec_tts import is_ready as purec_ready, stop_purec_worker
+    from berofel.services.qwen3_native_tts import is_ready as native_ready, _layout as native_layout
     from berofel.ui.window import MainWindow
     from berofel.services.multivoice_narration import MultiVoiceScript
 
-    if not is_ready():
+    if (args.engine.startswith('qwen3-tts-purec-') and not purec_ready()) or (
+            args.engine == 'qwen3-tts-native-q4' and not native_ready()):
         raise SystemExit(f'O backend {args.engine} não está instalado localmente.')
+    native_paths = native_layout() if args.engine == 'qwen3-tts-native-q4' else None
 
     app = QApplication.instance() or QApplication([])
     old_format = QSettings.defaultFormat()
     previous_voice_dir = os.environ.get('BEROFEL_VOICE_PROFILE_DIR')
     env_keys = ('BEROFEL_AI_CACHE', 'BEROFEL_QWEN3_PROMPT_CACHE',
                 'BEROFEL_QWEN3_PUREC_PROFILE_CACHE', 'HF_HUB_OFFLINE',
-                'TRANSFORMERS_OFFLINE', 'HF_HUB_DISABLE_TELEMETRY')
+                'TRANSFORMERS_OFFLINE', 'HF_HUB_DISABLE_TELEMETRY',
+                'BEROFEL_QWEN3_NATIVE_HOME', 'BEROFEL_QWEN3_NATIVE_EXE',
+                'BEROFEL_QWEN3_NATIVE_MODEL', 'BEROFEL_QWEN3_NATIVE_TOKENIZER')
     previous = {key: os.environ.get(key) for key in env_keys}
     window = None
     try:
@@ -135,13 +141,22 @@ def main() -> int:
             QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope,
                               str(root / 'settings'))
             os.environ['BEROFEL_VOICE_PROFILE_DIR'] = str(manager.directory)
-            os.environ.update({
+            temporary_environment = {
                 'BEROFEL_AI_CACHE': str(root / 'ai-cache'),
                 'BEROFEL_QWEN3_PROMPT_CACHE': str(root / 'prompt-cache'),
                 'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': str(root / 'purec-profile-cache'),
                 'HF_HUB_OFFLINE': '1', 'TRANSFORMERS_OFFLINE': '1',
                 'HF_HUB_DISABLE_TELEMETRY': '1',
-            })
+            }
+            if native_paths:
+                exe, model, tokenizer = native_paths
+                temporary_environment.update({
+                    'BEROFEL_QWEN3_NATIVE_HOME': str(root / 'native-runtime'),
+                    'BEROFEL_QWEN3_NATIVE_EXE': str(exe),
+                    'BEROFEL_QWEN3_NATIVE_MODEL': str(model),
+                    'BEROFEL_QWEN3_NATIVE_TOKENIZER': str(tokenizer),
+                })
+            os.environ.update(temporary_environment)
             stop_purec_worker()
             project_path = root / 'ui_smoke.berofel.json'
             export_path = root / 'multivoice.wav'
@@ -227,6 +242,11 @@ def main() -> int:
             window.close()
         try:
             stop_purec_worker()
+        except Exception:
+            pass
+        try:
+            from berofel.services.qwen3_native_tts import stop_native_worker
+            stop_native_worker()
         except Exception:
             pass
         QSettings.setDefaultFormat(old_format)

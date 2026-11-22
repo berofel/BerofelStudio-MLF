@@ -5,7 +5,9 @@ from pathlib import Path
 
 import numpy as np
 
-from scripts.validar_troca_perfis_trechos_voz_autorizada import select_speech_segments
+from scripts.validar_troca_perfis_trechos_voz_autorizada import (
+    ENGINES as VOICE_SWITCH_ENGINES, select_speech_segments,
+)
 from scripts.validar_multivoice_distinct_profiles import (
     select_authorized_distinct_profiles,
 )
@@ -95,6 +97,9 @@ class DistinctProfileAcceptanceTests(unittest.TestCase):
             select_speech_segments(np.ones(rate * 3, dtype=np.int16), rate)
         with self.assertRaisesRegex(ValueError, 'pouco sinal'):
             select_speech_segments(np.zeros(rate * 6, dtype=np.int16), rate)
+
+    def test_voice_switch_diagnostic_offers_native_persistent_worker(self):
+        self.assertIn('qwen3-tts-native-q4', VOICE_SWITCH_ENGINES)
 
 
 if __name__ == '__main__':

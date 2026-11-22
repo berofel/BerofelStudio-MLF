@@ -142,6 +142,14 @@ class MultiVoicePanelTests(unittest.TestCase):
             self.panel.engine.addItem('Original test', 'qwen3-tts-local')
         self.panel.engine.setCurrentIndex(self.panel.engine.findData('qwen3-tts-local'))
         self.assertIn('um único Qwen carregado', self.panel.engine_note.text())
+        if self.panel.engine.findData('qwen3-tts-native-q4') < 0:
+            self.panel.engine.addItem('Native Q4 test', 'qwen3-tts-native-q4')
+        self.panel.engine.setCurrentIndex(
+            self.panel.engine.findData('qwen3-tts-native-q4'))
+        self.assertIn('um único worker/modelo carregado',
+                      self.panel.engine_note.text())
+        self.assertIn('embedding de cada personagem',
+                      self.panel.engine_note.text())
 
     def test_same_profile_for_multiple_characters_warns_they_sound_the_same(self):
         self.panel.assignments['V1'].setCurrentIndex(

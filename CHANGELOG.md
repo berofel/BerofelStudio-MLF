@@ -1,3 +1,10 @@
+## Alternância multivozes sem recarga no perfil Native Q4
+
+- O diagnóstico offline agora também mede `qwen3-tts-native-q4`, preservando executável e modelo instalados e isolando embeddings/cache temporários.
+- Validado mesmo PID entre V1/V2, carga de modelo apenas no primeiro lote e WAVs não silenciosos; resultado documentado sem alegar locutores distintos.
+- A aba Várias vozes explica que Pure C recarrega ao trocar perfil e que Native Q4 mantém o modelo residente, com preparação inicial de embeddings por perfil.
+- Smoke Qt real validou geração Native Q4, cache, clips, pausa, round-trip do projeto e WAV completo sincronizado.
+
 ## Revalidação real do worker Original em multivozes
 
 - Smoke offline gerou duas falas pelo Qwen3 Original usando um único PID e uma carga do modelo; o segundo prompt vocal foi servido sem recarregar pesos e teve acerto de cache.

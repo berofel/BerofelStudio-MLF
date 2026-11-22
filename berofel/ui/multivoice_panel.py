@@ -285,6 +285,11 @@ class MultiVoicePanel(QWidget):
             notes.append(
                 'Atenção: o Pure C fixa uma voz clonada por servidor. Ao trocar entre perfis '
                 'diferentes, o Qwen reinicia e recarrega o modelo em cada lote de voz.')
+        elif engine_id in ('qwen3-tts-native-q4', 'qwen3-tts-native-q4-balanced') and len(selected_profiles) > 1:
+            notes.append(
+                'Qwen Turbo Q4 mantém um único worker/modelo carregado e recebe o embedding '
+                'de cada personagem por fala. Perfis ainda não preparados podem exigir '
+                'preparação vocal inicial; os embeddings ficam em cache local.')
         elif engine_id == 'qwen3-tts-local' and len(selected_profiles) > 1:
             notes.append(
                 'Original mantém um único Qwen carregado e reutiliza o condicionamento de cada '
