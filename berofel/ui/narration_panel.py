@@ -9,7 +9,7 @@ from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QTextEdit,
                                QPushButton, QCheckBox, QFileDialog, QLineEdit, QHBoxLayout,
                                QMessageBox, QScrollArea, QInputDialog,
-                               QGroupBox, QSizePolicy, QBoxLayout)
+                               QGroupBox, QSizePolicy, QBoxLayout, QTabWidget)
 from .wheel_controls import (WheelGuardComboBox as QComboBox,
     WheelGuardDoubleSpinBox as QDoubleSpinBox, WheelGuardSlider as QSlider)
 
@@ -31,14 +31,19 @@ class NarrationPanel(QScrollArea):
         self.setVerticalScrollBarPolicy(self.verticalScrollBarPolicy())
         self.setHorizontalScrollBarPolicy(self.horizontalScrollBarPolicy())
         page = QWidget()
-        layout = QVBoxLayout(page)
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.mode_tabs = QTabWidget()
+        self.one_voice_page = QWidget()
+        outer.addWidget(self.mode_tabs)
+        layout = QVBoxLayout(self.one_voice_page)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(9)
         page.setMinimumWidth(0)
         page.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred)
-        self._content_page=page
+        self._content_page=self.one_voice_page
         self._compact=False
-        self._base_content_font=page.font()
+        self._base_content_font=self.one_voice_page.font()
         label = QLabel('🎙 NARRAÇÃO · VOZ LOCAL')
         label.setStyleSheet('color:#9cc7ff;font-weight:800;font-size:13px;')
         layout.addWidget(label)
@@ -119,28 +124,29 @@ class NarrationPanel(QScrollArea):
         self.activate_cloning = QPushButton('')
         self.activate_cloning.hide()
         self.clone_engine = QComboBox()
-        self.clone_engine.addItem('Original · Qwen3-TTS Base', 'qwen3-tts-local')
-        try:
-            from berofel.services.qwen3_native_tts import is_ready as native_qwen_ready
-            if native_qwen_ready():
-                self.clone_engine.addItem('Turbo · Q4 · 6 threads', 'qwen3-tts-native-q4')
-                self.clone_engine.addItem('Equilibrado · Q4 · 8 threads', 'qwen3-tts-native-q4-balanced')
-        except (OSError,ValueError,ImportError):
-            pass
         try:
             from berofel.services.qwen3_purec_tts import is_ready as purec_qwen_ready
             if purec_qwen_ready():
-                self.clone_engine.addItem('Turbo · Pure C mixed · 6 threads (experimental)',
-                                           'qwen3-tts-purec-mixed')
-                self.clone_engine.addItem('Equilibrado · Pure C INT8 · 6 threads (experimental)',
+                self.clone_engine.addItem('Equilibrado — Pure C INT8 · 6 threads',
                                            'qwen3-tts-purec-int8')
+                self.clone_engine.addItem('Turbo — Pure C Mixer · 6 threads',
+                                           'qwen3-tts-purec-mixed')
+                self.clone_engine.insertSeparator(self.clone_engine.count())
+            self.clone_engine.addItem('Outros perfis · Original Qwen3-TTS Base', 'qwen3-tts-local')
+        except (OSError,ValueError,ImportError):
+            self.clone_engine.addItem('Original · Qwen3-TTS Base', 'qwen3-tts-local')
+        try:
+            from berofel.services.qwen3_native_tts import is_ready as native_qwen_ready
+            if native_qwen_ready():
+                self.clone_engine.addItem('Outros perfis · Turbo Q4 · 6 threads', 'qwen3-tts-native-q4')
+                self.clone_engine.addItem('Outros perfis · Equilibrado Q4 · 8 threads', 'qwen3-tts-native-q4-balanced')
         except (OSError,ValueError,ImportError):
             pass
         self.clone_engine.setVisible(False)
         self.clone_engine.currentIndexChanged.connect(self._update_custom)
         self.clone_engine.activated.connect(self._prewarm_selected_fast_profile)
         layout.addWidget(self.clone_engine)
-        self.purec_thread_label=QLabel('Turbo mixed · threads da CPU (6 recomendado; 8 prioriza velocidade)')
+        self.purec_thread_label=QLabel('Turbo Pure C mixed · threads da CPU (6 recomendado)')
         self.purec_thread_label.setToolTip(
             'Mais threads podem acelerar uma geração isolada, mas deixam menos CPU livre. '
             'Se o servidor estiver aquecido, a próxima geração com outro valor reinicia o motor.')
@@ -346,6 +352,10 @@ class NarrationPanel(QScrollArea):
         if self._voice_profile_error:
             self.status.setText(self._voice_profile_error)
         layout.addStretch()
+        self.mode_tabs.addTab(self.one_voice_page, 'UMA VOZ')
+        from .multivoice_panel import MultiVoicePanel
+        self.multivoice_panel = MultiVoicePanel(self)
+        self.mode_tabs.addTab(self.multivoice_panel, 'VÁRIAS VOZES')
         self.setWidget(page)
         self._player = QMediaPlayer(self)
         self._audio = QAudioOutput(self)
@@ -663,8 +673,9 @@ class NarrationPanel(QScrollArea):
         if language_index>=0:self.language.setCurrentIndex(language_index)
         if not self._voice_profile_id(voice):
             self.sample_path.setText(str(settings.value('narration/sample_path','')))
-        engine=str(settings.value('narration/clone_engine','qwen3-tts-local'))
+        engine=str(settings.value('narration/clone_engine','qwen3-tts-purec-int8'))
         index=self.clone_engine.findData(engine)
+        if index<0:index=self.clone_engine.findData('qwen3-tts-purec-int8')
         if index<0:index=self.clone_engine.findData('qwen3-tts-local')
         if index>=0:self.clone_engine.setCurrentIndex(index)
         try:thread_count=int(settings.value('narration/purec_threads',6))
@@ -881,6 +892,7 @@ class NarrationPanel(QScrollArea):
                                                reference_text,authorized=True)
             data=f'voice-profile:{profile["id"]}'
             self._append_voice_profile_items(data)
+            self.multivoice_panel.refresh_profiles()
             self._update_custom()
             self.status.setText(f'Perfil “{profile["name"]}” salvo em pasta privada local. A amostra original foi preservada.')
             if self.on_prepare_voice:
@@ -914,6 +926,7 @@ class NarrationPanel(QScrollArea):
         try:
             renamed=self.voice_profiles.rename(profile_id,name)
             data=f'voice-profile:{profile_id}'
+            self.multivoice_panel.refresh_profiles()
             self._append_voice_profile_items(data)
             self._update_custom()
             self.status.setText(f'Perfil renomeado para “{renamed}”.')
@@ -934,6 +947,7 @@ class NarrationPanel(QScrollArea):
         if answer!=QMessageBox.StandardButton.Yes:return
         try:
             self.voice_profiles.delete(profile_id)
+            self.multivoice_panel.refresh_profiles()
             self._append_voice_profile_items('__custom__')
             self._update_custom()
             self.status.setText(f'Perfil “{profile["name"]}” excluído. O original permaneceu intacto.')

@@ -53,6 +53,7 @@ from berofel.ui.studio_header import StudioHeader
 from berofel.ui.library_panel import LibraryDock
 from berofel.ui.preview_transport import PreviewTransport
 from berofel.services.narration_service import NarrationRequest, generate_narration, validate_request
+from berofel.services.multivoice_narration import generate_script_audio
 from berofel.services.project_recovery import (newer_autosave_project, load_project,
     write_autosave_snapshot)
 
@@ -845,6 +846,10 @@ class MainWindow(QMainWindow):
         self.side_tabs.addTab(self.props_scroll, 'Propriedades')
         self.narration_panel=NarrationPanel(self)
         self.narration_panel.on_generate=self.generate_narration_ui
+        self.narration_panel.multivoice_panel.on_generate=self.generate_multivoice_ui
+        self.narration_panel.multivoice_panel.on_regenerate=self.regenerate_multivoice_line
+        self.narration_panel.multivoice_panel.on_script_changed=self.update_multivoice_script
+        self.narration_panel.multivoice_panel.on_export=self.export_multivoice_script
         self.narration_panel.on_prepare_voice=self.prepare_narration_voice
         self.narration_panel.on_use_transcript=self.use_selected_transcript
         self.narration_panel.on_voice_eq_begin=self.begin_voice_eq_edit
@@ -1380,7 +1385,7 @@ class MainWindow(QMainWindow):
         if streaming:self.narration_stream.begin()
         engine_label=({'qwen3-tts-native-q4':'Qwen Turbo Q4 · 6 threads experimental',
                        'qwen3-tts-native-q4-balanced':'Qwen Equilibrado Q4 · 8 threads experimental',
-                       'qwen3-tts-purec-mixed':f'Qwen Turbo Pure C mixed · {request.thread_count or 6} threads experimental',
+                       'qwen3-tts-purec-mixed':f'Qwen Turbo Pure C Mixer (mixed CPU) · {request.thread_count or 6} threads experimental',
                        'qwen3-tts-purec-int8':'Qwen Equilibrado Pure C INT8 · 6 threads experimental'}
                       .get(request.engine,'Qwen3-TTS Base local'))
         self.statusBar().showMessage(f'Batata Quente: {engine_label} gerando em processo isolado...')
@@ -1419,6 +1424,293 @@ class MainWindow(QMainWindow):
             self._ai_busy=False
             self.narration_panel.busy(False)
         task.signals.finished.connect(finish)
+
+    def generate_multivoice_ui(self, script):
+        """Queue one script serially by voice and place its WAVs in narrative order."""
+        panel = self.narration_panel.multivoice_panel
+        if not self.project.path:
+            self.save_project()
+            if not self.project.path:
+                return
+        if self._ai_busy or self.active_task is not None:
+            QMessageBox.information(self, 'Batata Quente',
+                                    'Aguarde o processo atual antes de gerar este roteiro.')
+            return
+        try:
+            profiles = {voice['profile_id']: panel.voice_profiles.get(voice['profile_id'])
+                        for voice in script.voices.values()}
+        except (OSError, ValueError, KeyError, PermissionError) as exc:
+            QMessageBox.warning(self, 'Perfis de voz', str(exc))
+            return
+        from dataclasses import replace
+        is_resume = any(item.get('id') == script.id for item in self.project.narration_scripts)
+        script.title = script.title or 'Roteiro multivozes'
+        if not is_resume:
+            script.timeline_start = max(0.0, float(self.timeline.view.cursor_time))
+        script_path = self.project.path
+        if script_path:
+            from berofel.services.narration_service import persistent_folder
+            script.checkpoint_path = str(persistent_folder(script_path) / 'roteiros' /
+                                         script.id / 'roteiro.json')
+        self.snapshot()
+        self.project.narration_scripts = [item for item in self.project.narration_scripts
+                                          if item.get('id') != script.id]
+        self.project.narration_scripts.append(script.to_dict())
+        if self.project.path:
+            self._save_at(self.project.path)
+        self._ai_busy = True
+        self.narration_panel.busy(True)
+        panel.set_busy(True)
+        panel.status.setText('Preparando fila agrupada por personagem…')
+        def run(progress=None, control=None, stage=None):
+            return generate_script_audio(script, profiles, script_path, control=control,
+                                         progress=progress, stage=stage)
+        def ready(result):
+            from berofel.core.project import Clip
+            track = self.project.add_track(f'Diálogo · {result.title}', 0)
+            result.track_id = track.id
+            result.track_id = track.id
+            cursor = result.timeline_start
+            clips = []
+            line_by_id = {line.id: line for line in result.lines}
+            for line in sorted(result.lines, key=lambda item: item.number):
+                if line.status != 'generated' or not Path(line.audio_path).is_file():
+                    continue
+                clip = Clip(source=line.audio_path, start=0.0, end=line.duration,
+                            title=f'{line.number:03d} · {line.character_name or line.voice_id}',
+                            track_id=track.id, timeline_start=cursor, kind='audio',
+                            include_audio=True, source_length=line.duration,
+                            narration_script_id=result.id, narration_line_id=line.id,
+                            narration_voice_id=line.voice_id)
+                line.clip_id = clip.id
+                self.project.add_clip(clip)
+                if line.audio_path not in self.project.media:
+                    self.project.media.append(line.audio_path)
+                clips.append(clip)
+                cursor += line.duration + result.pause_ms / 1000.0
+            result.lines = [line_by_id[line.id] for line in sorted(result.lines, key=lambda item:item.number)]
+            self.project.narration_scripts = [item for item in self.project.narration_scripts
+                                              if item.get('id') != result.id]
+            self.project.narration_scripts.append(result.to_dict())
+            self.refresh([clips[0].id] if clips else [])
+            if self.project.path:
+                self._save_at(self.project.path)
+            panel.set_active_script(result)
+            generated = [line for line in result.lines if not line.cache_hit]
+            generated_audio = sum(line.duration for line in generated)
+            inference_seconds = sum(line.generation_seconds for line in generated)
+            rtf = inference_seconds / generated_audio if generated_audio > 0 else 0.0
+            telemetry = (f' · RTF {rtf:.2f} · primeira fala disponível '
+                         f'{result.first_audio_ready_seconds:.1f}s · fila {result.total_seconds:.1f}s')
+            panel.status.setText(f'{len(clips)} falas geradas em {len(result.voices)} perfil(is). '
+                                 'Os WAVs estão separados e ordenados na timeline.' + telemetry)
+            self.statusBar().showMessage(f'Roteiro concluído: {len(clips)} falas em {track.name}.')
+        task = self._task(run, ready, label=f'Qwen3 · roteiro multivozes · {script.engine_id}')
+        if task is None:
+            self._ai_busy = False
+            self.narration_panel.busy(False)
+            panel.set_busy(False)
+            return
+        task.signals.progress.connect(lambda done, total: panel.show_progress(int(done), int(total)))
+        task.signals.stage.connect(lambda stage: panel.status.setText(str(stage)))
+        def finish():
+            self._ai_busy = False
+            self.narration_panel.busy(False)
+            panel.set_busy(False)
+        task.signals.finished.connect(finish)
+
+    def regenerate_multivoice_line(self, script, line_id: str, new_text: str):
+        panel = self.narration_panel.multivoice_panel
+        if self._ai_busy or self.active_task is not None:
+            QMessageBox.information(self, 'Batata Quente',
+                                    'Aguarde o processo atual antes de regenerar esta fala.')
+            return
+        current_data = next((item for item in self.project.narration_scripts
+                             if item.get('id') == script.id), None)
+        if not current_data:
+            QMessageBox.warning(self, 'Editar fala', 'O roteiro não está salvo neste projeto.')
+            return
+        from berofel.services.multivoice_narration import (
+            MultiVoiceScript, update_line_text, generate_script_audio,
+        )
+        from uuid import uuid4
+        import copy as _copy
+        current = MultiVoiceScript.from_dict(current_data)
+        original = next((line for line in current.lines if line.id == line_id), None)
+        clip = next((item for item in self.project.clips
+                     if item.narration_script_id == current.id and
+                     item.narration_line_id == line_id), None)
+        if original is None:
+            QMessageBox.warning(self, 'Editar fala',
+                                'Não encontrei essa fala no roteiro salvo.')
+            return
+        work = MultiVoiceScript.from_dict(current.to_dict())
+        line = next(item for item in work.lines if item.id == line_id)
+        update_line_text(work, line_id, new_text)
+        work.lines = [line]
+        # Isolate the checkpoint/output manifest; the approved WAV and full
+        # project script remain untouched until the replacement is validated.
+        work.id = uuid4().hex
+        profiles = {voice['profile_id']: panel.voice_profiles.get(voice['profile_id'])
+                    for voice in work.voices.values()}
+        panel.set_busy(True)
+        self._ai_busy = True
+        def run(progress=None, control=None, stage=None):
+            return generate_script_audio(work, profiles, self.project.path,
+                                         control=control, progress=progress, stage=stage)
+        def ready(result):
+            nonlocal clip
+            replacement = result.lines[0]
+            if replacement.status != 'generated' or not Path(replacement.audio_path).is_file():
+                raise RuntimeError('A nova fala não passou na validação; o áudio anterior foi mantido.')
+            self.snapshot()
+            old_start = clip.timeline_start if clip else self._multivoice_line_position(current, line_id)
+            old_end = clip.timeline_end if clip else old_start
+            old_duration = clip.duration if clip else 0.0
+            delta = replacement.duration - old_duration
+            if clip is None:
+                lane = self.project.track(current.track_id) if current.track_id else None
+                if lane is None:
+                    lane = self.project.add_track(f'Diálogo · {current.title}', 0)
+                    current.track_id = lane.id
+                clip = Clip(source=replacement.audio_path, start=0.0,
+                            end=replacement.duration, title=f'{original.number:03d} · {original.voice_id}',
+                            track_id=lane.id, timeline_start=old_start, kind='audio',
+                            include_audio=True, source_length=replacement.duration,
+                            narration_script_id=current.id, narration_line_id=line_id,
+                            narration_voice_id=original.voice_id)
+                self.project.add_clip(clip)
+                delta += current.pause_ms / 1000.0
+            clip.source = replacement.audio_path
+            clip.start = 0.0
+            clip.end = replacement.duration
+            clip.source_length = replacement.duration
+            for later in self.project.clips:
+                if (later.narration_script_id == current.id and later.id != clip.id and
+                        later.timeline_start >= old_end - .001 and later.timeline_start >= old_start):
+                    later.timeline_start = max(0.0, later.timeline_start + delta)
+            original.text = new_text.strip()
+            original.status = 'generated'
+            original.audio_path = replacement.audio_path
+            original.duration = replacement.duration
+            original.cache_key = replacement.cache_key
+            original.error = ''
+            original.clip_id = clip.id
+            original.generation_seconds = replacement.generation_seconds
+            original.model_load_seconds = replacement.model_load_seconds
+            original.profile_prepare_seconds = replacement.profile_prepare_seconds
+            original.first_audio_seconds = replacement.first_audio_seconds
+            original.cache_hit = replacement.cache_hit
+            current.total_seconds = result.total_seconds
+            current.first_audio_ready_seconds = result.first_audio_ready_seconds
+            current_data_index = self.project.narration_scripts.index(current_data)
+            self.project.narration_scripts[current_data_index] = current.to_dict()
+            if replacement.audio_path not in self.project.media:
+                self.project.media.append(replacement.audio_path)
+            self.refresh([clip.id])
+            panel.set_active_script(current, line_id)
+            panel.status.setText(f'Fala regenerada · {replacement.duration:.2f}s. '
+                                 'Os demais WAVs foram mantidos.')
+            if self.project.path:
+                self._save_at(self.project.path)
+        task = self._task(run, ready, label=f'Regenerar fala {original.number:03d}')
+        if task is None:
+            self._ai_busy = False
+            panel.set_busy(False)
+            return
+        task.signals.finished.connect(lambda: (setattr(self, '_ai_busy', False),
+                                               panel.set_busy(False)))
+
+    def _multivoice_line_position(self, script, line_id: str) -> float:
+        cursor = script.timeline_start
+        for line in sorted(script.lines, key=lambda item: item.number):
+            if line.id == line_id:
+                return cursor
+            clip = next((item for item in self.project.clips
+                         if item.narration_script_id == script.id and
+                         item.narration_line_id == line.id), None)
+            if clip:
+                cursor = clip.timeline_end + script.pause_ms / 1000.0
+            else:
+                cursor += script.pause_ms / 1000.0
+        return cursor
+
+    def export_multivoice_script(self, script):
+        if not script or not script.lines:
+            return
+        if any(line.status != 'generated' or not Path(line.audio_path).is_file()
+               for line in script.lines):
+            QMessageBox.information(self, 'Exportar roteiro',
+                                    'Gere ou regenere todas as falas antes de exportar o roteiro completo.')
+            return
+        clips = [clip for clip in self.project.clips
+                 if clip.narration_script_id == script.id]
+        if len(clips) != len(script.lines):
+            QMessageBox.warning(self, 'Exportar roteiro',
+                                'Nem todas as falas estão inseridas na timeline. Retome o roteiro primeiro.')
+            return
+        track = self.project.track(script.track_id)
+        if track is None:
+            QMessageBox.warning(self, 'Exportar roteiro', 'A camada do roteiro não foi encontrada.')
+            return
+        destination, _ = QFileDialog.getSaveFileName(
+            self, 'Exportar roteiro WAV', f'{script.title}.wav', 'WAV PCM (*.wav)')
+        if not destination:
+            return
+        if not destination.lower().endswith('.wav'):
+            destination += '.wav'
+        start = min(item.timeline_start for item in clips)
+        render_project = Project(name=script.title, media=list(self.project.media),
+                                 tracks=[copy.deepcopy(track)],
+                                 clips=copy.deepcopy(clips), width=self.project.width,
+                                 height=self.project.height, fps=self.project.fps)
+        for clip in render_project.clips:
+            clip.timeline_start = max(0.0, clip.timeline_start - start)
+        self._task(lambda progress=None, control=None, stage=None:
+                   export_audio_wav(render_project, destination, control=control, stage=stage),
+                   lambda path: self.statusBar().showMessage('WAV do roteiro exportado: '+str(path)),
+                   label='Exportar roteiro multivozes · WAV PCM 24-bit')
+
+    def update_multivoice_script(self, script):
+        """Persist visual edits and reflow only clips owned by that script."""
+        from berofel.services.multivoice_narration import MultiVoiceScript
+        if script is None:
+            return
+        self.snapshot()
+        existing = next((item for item in self.project.narration_scripts
+                         if item.get('id') == script.id), None)
+        old_ids = {line.get('id') for line in (existing or {}).get('lines', [])}
+        new_ids = {line.id for line in script.lines}
+        removed = old_ids - new_ids
+        self.project.clips = [clip for clip in self.project.clips
+                              if not (clip.narration_script_id == script.id and
+                                      clip.narration_line_id in removed)]
+        if not script.lines:
+            self.project.narration_scripts = [item for item in self.project.narration_scripts
+                                              if item.get('id') != script.id]
+            self.refresh(self.selected_ids)
+            if self.project.path:
+                self._save_at(self.project.path)
+            return
+        available = {clip.narration_line_id: clip for clip in self.project.clips
+                     if clip.narration_script_id == script.id}
+        for line in script.lines:
+            clip = available.get(line.id)
+            if clip:
+                clip.narration_voice_id = line.voice_id
+                clip.title = f'{line.number:03d} · {line.character_name or line.voice_id}'
+        if all(line.id in available for line in script.lines):
+            cursor = script.timeline_start
+            for line in sorted(script.lines, key=lambda item: item.number):
+                clip = available[line.id]
+                clip.timeline_start = cursor
+                cursor += clip.duration + script.pause_ms / 1000.0
+        self.project.narration_scripts = [item for item in self.project.narration_scripts
+                                          if item.get('id') != script.id]
+        self.project.narration_scripts.append(script.to_dict())
+        self.refresh(self.selected_ids)
+        if self.project.path:
+            self._save_at(self.project.path)
 
     def prepare_narration_voice(self,reference: str,reference_text: str,name: str='',
                                 thread_count: int | None = None):
@@ -1801,6 +2093,20 @@ class MainWindow(QMainWindow):
         if hasattr(self,'narration_panel'):
             lane=self.project.track(selected_clip.track_id) if selected_clip else None
             self.narration_panel.set_clip(selected_clip,editable=bool(lane and not lane.locked))
+            if selected_clip and selected_clip.narration_script_id:
+                self.side_tabs.setCurrentWidget(self.narration_panel)
+                self.narration_panel.mode_tabs.setCurrentWidget(
+                    self.narration_panel.multivoice_panel)
+                data=next((item for item in self.project.narration_scripts
+                           if item.get('id')==selected_clip.narration_script_id),None)
+                if data:
+                    from berofel.services.multivoice_narration import MultiVoiceScript
+                    try:
+                        script=MultiVoiceScript.from_dict(data)
+                        self.narration_panel.multivoice_panel.set_active_script(
+                            script,selected_clip.narration_line_id)
+                    except ValueError:
+                        pass
         if hasattr(self,'captions_panel'):
             self.captions_panel.set_context(self.project,ids)
         self._update_properties()
@@ -3923,6 +4229,8 @@ class MainWindow(QMainWindow):
                 self.active_clip_id=None
                 self.preview_image.pixmap=None
                 self.refresh([])
+                self.narration_panel.multivoice_panel.restore_project_scripts(
+                    self.project.narration_scripts, self.project.path)
                 if recover:self.statusBar().showMessage('Recuperação automática carregada; o arquivo original permanece preservado.')
             except Exception as ex:
                 QMessageBox.warning(self,'Abrir',str(ex))

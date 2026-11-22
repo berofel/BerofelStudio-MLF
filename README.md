@@ -12,6 +12,7 @@ O `ABRIR_BEROFELSTUDIO.bat` dentro desta pasta inicializa o código local, exibe
 
 ## Novidades
 
+- **Narração Uma voz / Várias vozes:** roteiro `Berofel Script V1`, até dez perfis salvos, síntese individual por fala agrupada por perfil, reordenação, edição/regeneração de uma fala, WAVs individuais, checkpoints para retomar e exportação WAV pelo grafo existente. Veja [NARRACAO_MULTIVOZES.md](docs/NARRACAO_MULTIVOZES.md). Limite atual: o Pure C reinicia o servidor ao trocar o x-vector entre personagens.
 - **Clipador Inteligente:** sugere trechos para clipes usando a transcrição salva e medidas reais de RMS/pico/clipping extraídas em PCM por streaming. Mostra evidências e alertas, permite pré-visualizar, ajustar os limites em palavras, marcar eventos acústicos e adicionar os trechos selecionados à timeline sem alterar a fonte. Não inicia Whisper/Qwen, não promete viralização e exige revisão/seleção manual. Veja [como usar e os limites](docs/CLIPADOR_INTELIGENTE.md).
 - **Roda sem alterações acidentais:** idioma, voz, propriedades, sliders e spins só mudam pela roda quando estão focados; ao percorrer painéis, a roda continua rolando a área. Perfis Qwen preparados guardam cache local de condicionamento para reutilização.
 - **Aprovação em massa em um clique:** `✂ Aprovar e aplicar TODOS` inclui também sugestões ocultas pelo filtro; alternativa individual, contador, `Aplicar apenas os marcados`, `Pular cortes`, `Cancelar` e Undo continuam disponíveis.

@@ -244,18 +244,19 @@ class ActionsUITests(unittest.TestCase):
             self.assertEqual(analyze.call_args.args[1],words)
             dialog.close();win.close()
 
-    def test_custom_voice_panel_keeps_original_default_and_offers_ready_turbo(self):
+    def test_custom_voice_panel_defaults_to_recommended_int8_and_keeps_other_profiles(self):
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True):
             panel=NarrationPanel()
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
-        self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
-        self.assertEqual(panel.clone_engine.itemData(1),'qwen3-tts-native-q4')
-        self.assertEqual(panel.clone_engine.itemData(2),'qwen3-tts-native-q4-balanced')
+        self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-purec-int8')
+        self.assertGreaterEqual(panel.clone_engine.findData('qwen3-tts-local'),0)
+        self.assertGreaterEqual(panel.clone_engine.findData('qwen3-tts-native-q4'),0)
+        self.assertGreaterEqual(panel.clone_engine.findData('qwen3-tts-native-q4-balanced'),0)
         self.assertFalse(panel.sample_path.isHidden())
         self.assertFalse(panel.validate_sample.isHidden())
         self.assertFalse(panel.clone_detail_title.isHidden())
         self.assertTrue(panel.activate_cloning.isHidden())
-        self.assertIn('Qwen3-TTS Base',panel.license_note.text())
+        self.assertIn('Qwen3',panel.license_note.text())
         self.assertFalse(panel.clone_engine.isVisible())
         panel.close()
 
@@ -264,6 +265,7 @@ class ActionsUITests(unittest.TestCase):
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True):
             panel=NarrationPanel()
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+        panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
         panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-native-q4'))
         sample=tempfile.NamedTemporaryFile(suffix='.wav',delete=False)
         sample.close()
@@ -330,6 +332,7 @@ class ActionsUITests(unittest.TestCase):
         settings_snapshot=_snapshot_narration_settings(panel._settings)
         original_threads=panel.purec_threads.currentIndex()
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+        panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
         panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-purec-mixed'))
         panel.purec_threads.setCurrentIndex(panel.purec_threads.findData(8))
         with tempfile.NamedTemporaryFile(suffix='.wav',delete=False) as sample:
@@ -396,6 +399,7 @@ class ActionsUITests(unittest.TestCase):
             sample=Path(folder)/'reference.wav';sample.write_bytes(b'RIFF'+b'valid reference'*10)
             panel=NarrationPanel()
             panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+            panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
             panel.sample_path.setText(str(sample))
             panel.authorized.setChecked(True)
             panel.reference_text.setText('Texto exato da referência gravada.')

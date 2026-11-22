@@ -1,3 +1,13 @@
+## Branch `feat/qwen3-multivoice-narration` — Uma voz / Várias vozes
+
+- A aba Narração agora separa os modos Uma voz e Várias vozes. Pure C INT8 e Pure C mixed são destacados com os identificadores instalados e seis threads; os modos Original e Q4 continuam em Outros perfis.
+- Adicionado parser determinístico Berofel Script V1, associação de até dez personagens a perfis locais autorizados, prévia em tabela e fila serial agrupada pelo perfil de voz. Cada fala gera WAV individual e a timeline recebe os blocos na ordem narrativa, com pausa configurável.
+- Adicionados IDs permanentes, JSON de roteiro no projeto, checkpoint incremental para retomada, cache por texto/perfil/backend/runtime e edição, reordenação, inserção, remoção e regeneração individual sem apagar a versão de áudio aprovada.
+- Adicionadas ações para salvar WAV individual e exportar o roteiro completo pelo grafo de áudio já usado pelo editor.
+- **Limite:** o servidor Pure C atual fixa o x-vector na inicialização; ao trocar de perfil, a fila serial reinicia esse único servidor/modelo. O carregamento único entre personagens exige suporte do runtime que não existe no binário instalado.
+- Validação real pela interface em roteiros de 100 falas nos perfis Pure C INT8 e Pure C Mixed: WAVs individuais, 100 clips em ordem, salvamento/reabertura, WAV completo e MP4 (Mixed). Resultados, limites de uma única voz autorizada disponível e métricas estão em `docs/NARRACAO_MULTIVOZES.md`.
+- Regeneração real de uma fala preservou os outros WAVs e suportou Undo/Redo. Adicionado teste de geração/união de fala segmentada. A troca real entre perfis de pessoas diferentes permanece sem validação porque havia apenas um perfil vocal autorizado no ambiente.
+
 ## Validação local Turbo sem proxy externo
 
 - Fluxo UI→Qwen Pure C mixed→timeline→WAV/MP4 repetido com proxy externo indisponível em `127.0.0.1:9`, loopback liberado e Hugging Face offline. Gerou clipe de 4,32 s em 9,869 s e exportou WAV/MP4 com áudio e vídeo. A sessão não tinha privilégio de administrador; portanto isso não substitui o teste com regra de firewall de saída.

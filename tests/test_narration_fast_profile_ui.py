@@ -70,6 +70,7 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                     index=panel.voice.findData(f'voice-profile:{profile["id"]}')
                     self.assertGreaterEqual(index,0)
                     panel.voice.setCurrentIndex(index)
+                    panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
                     panel.set_text('Uma frase nova para narrar rapidamente.')
                     self.assertTrue(panel.authorized.isChecked())
                     self.assertFalse(panel.authorized.isEnabled())
@@ -125,6 +126,7 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             panel=NarrationPanel()
             try:
                 panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+                panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
                 panel.sample_path.setText(str(sample))
                 panel.reference_text.clear()
                 panel.authorized.setChecked(True)
