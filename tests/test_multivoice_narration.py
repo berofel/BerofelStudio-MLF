@@ -1,4 +1,6 @@
+import hashlib
 import json
+import os
 import tempfile
 import unittest
 import wave
@@ -124,7 +126,7 @@ class MultiVoiceScriptTests(unittest.TestCase):
                 {'V1': {'profile_id': 'p1'}, 'V2': {'profile_id': 'unused-1'}},
                 'qwen3-tts-purec-int8')
             script.timeline_start = 2.0
-            save_script_checkpoint(script, str(project_path))
+            canonical_path = save_script_checkpoint(script, str(project_path))
             run_script = MultiVoiceScript.from_dict(script.to_dict())
             run_script.timeline_start = 8.0
             run_path = (persistent_folder(str(project_path)) / 'roteiros' / script.id /
@@ -140,6 +142,12 @@ class MultiVoiceScriptTests(unittest.TestCase):
             self.assertEqual(Path(generated.checkpoint_path), run_path)
             self.assertEqual(load_script_checkpoint(str(project_path), script.id).lines[0].status,
                              'pending')
+
+            # Force the timestamp tie possible on a Windows volume. The newer
+            # run checkpoint contains the valid audio and must win this tie.
+            tied_mtime = 1_800_000_000
+            os.utime(canonical_path, (tied_mtime, tied_mtime))
+            os.utime(run_path, (tied_mtime, tied_mtime))
 
             restored = load_script_checkpoint(str(project_path), script.id,
                                                expected_script=script)
@@ -407,6 +415,73 @@ class MultiVoiceScriptTests(unittest.TestCase):
             self.assertTrue(all(line.audio_path==prior_paths[line.id]
                                 for line in result.lines if line.id!=target.id))
             self.assertNotEqual(target.audio_path,prior_paths[target.id])
+
+    def test_100_line_queue_groups_70_20_10_and_regenerates_only_line_047(self):
+        """Exercise large queue/timeline persistence with a synthetic WAV backend.
+
+        This validates orchestration and file isolation, not Qwen audio quality.
+        The real two-speaker acceptance run is covered by the opt-in offline
+        integration script once a second authorized voice profile exists.
+        """
+        with tempfile.TemporaryDirectory(prefix='bfs_multivoice_100_') as folder:
+            root = Path(folder)
+            references = [root / f'voice{i}.wav' for i in range(1, 4)]
+            for reference in references:
+                _wav(reference)
+            profiles = {
+                f'p{i}': {'id': f'p{i}', 'sample_path': str(references[i - 1]),
+                          'reference_text': f'referência {i}', 'language': 'portuguese',
+                          'authorized': True}
+                for i in range(1, 4)
+            }
+            voice_cycle = ('V1', 'V1', 'V1', 'V2', 'V1',
+                           'V1', 'V3', 'V1', 'V2', 'V1')
+            ordered_voices = [voice_cycle[index % len(voice_cycle)] for index in range(100)]
+            script_text = '\n'.join(
+                f'[{index:03d} | {voice}]\nFala sintética de validação {index}.'
+                for index, voice in enumerate(ordered_voices, 1))
+            script = create_script(
+                script_text,
+                {f'V{i}': {'profile_id': f'p{i}'} for i in range(1, 4)},
+                'qwen3-tts-purec-int8', title='Fila multivozes 100 falas')
+            calls = []
+
+            def synthetic_generator(request, **_kwargs):
+                calls.append(request.voice)
+                output = root / 'backend' / f'{len(calls):04d}.wav'
+                _wav(output, frames=1200 + len(calls))
+                return {'path': str(output), 'duration': (1200 + len(calls)) / 24000,
+                        'cache_hit': False, 'generation_seconds': .001}
+
+            project = str(root / 'episode.berofel.json')
+            result = generate_script_audio(
+                script, profiles, project, generator=synthetic_generator,
+                engine_fingerprint='synthetic-test')
+            grouped_paths = ([str(references[0])] * 70 +
+                             [str(references[1])] * 20 +
+                             [str(references[2])] * 10)
+            self.assertEqual(calls, grouped_paths)
+            self.assertEqual(len(result.lines), 100)
+            self.assertEqual(len({line.audio_path for line in result.lines}), 100)
+            self.assertEqual([line.number for line in result.lines], list(range(1, 101)))
+            self.assertTrue(all(line.status == 'generated' and
+                                Path(line.audio_path).is_file() for line in result.lines))
+            prior_audio = {line.id: hashlib.sha256(
+                Path(line.audio_path).read_bytes()).hexdigest() for line in result.lines}
+
+            target = next(line for line in result.lines if line.number == 47)
+            update_line_text(result, target.id, 'Somente a fala 047 foi corrigida.')
+            before_regeneration = len(calls)
+            result = generate_script_audio(
+                result, profiles, project, generator=synthetic_generator,
+                engine_fingerprint='synthetic-test')
+            self.assertEqual(len(calls) - before_regeneration, 1)
+            unchanged = [line for line in result.lines if line.id != target.id]
+            self.assertTrue(all(hashlib.sha256(Path(line.audio_path).read_bytes()).hexdigest()
+                                == prior_audio[line.id] for line in unchanged))
+            self.assertNotEqual(hashlib.sha256(Path(target.audio_path).read_bytes()).hexdigest(),
+                                prior_audio[target.id])
+            self.assertTrue(Path(result.checkpoint_path).is_file())
 
     def test_cancel_during_single_line_regeneration_preserves_approved_audio_and_checkpoint(self):
         from berofel.services.process_control import ProcessCancelled

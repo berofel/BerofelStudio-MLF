@@ -534,7 +534,13 @@ def load_script_checkpoint(project_path: str, script_id: str,
                 line.error = 'O WAV salvo não existe ou está inválido; gere esta fala novamente.'
     if not valid:
         return restored
-    _modified, path, checkpoint = max(valid, key=lambda item: item[0])
+    # Windows filesystems can give the canonical checkpoint and a just-written
+    # run checkpoint the same mtime (timestamp resolution varies by volume).
+    # In that tie, retain more completed line states so a fresh generation is
+    # not silently hidden by the older pending canonical snapshot.
+    _modified, path, checkpoint = max(
+        valid, key=lambda item: (item[0], sum(line.status == 'generated'
+                                             for line in item[2].lines)))
     if expected_script is not None:
         saved_lines = {line.id: line for line in checkpoint.lines}
         for line in restored.lines:
