@@ -6,6 +6,13 @@
 - Edições manuais atualizam o checkpoint canônico. WAVs concluídos de uma execução antiga continuam reaproveitáveis pelo cache, mas seus textos não substituem o roteiro atualizado.
 - Teste cobre checkpoint de execução desatualizado, edição concorrente e recuperação do progresso quando os dados de síntese ainda coincidem.
 
+## Multivozes: regeneração individual reaproveita a pasta de cache
+
+- Regenerar uma fala mantém o ID do roteiro e escreve apenas seu progresso em checkpoint próprio; a nova síntese usa o cache persistente do roteiro, sem alterar o checkpoint canônico até a fala validar.
+- A regeneração carrega somente o perfil associado à fala selecionada, mesmo se outros slots configurados tiverem perfis removidos ou indisponíveis.
+- Após a troca validada, o checkpoint completo do roteiro é atualizado; os WAVs das demais falas continuam associados ao projeto.
+- Teste Qt verifica o ID/pasta preservados, o perfil usado e a integridade dos demais WAVs.
+
 ## Multivozes: inserção idempotente após geração em lote
 
 - A conclusão de uma fila agora atualiza o bloco existente da fala, preserva posição manual e ajustes DSP e não cria duplicatas ao gerar novamente um roteiro.

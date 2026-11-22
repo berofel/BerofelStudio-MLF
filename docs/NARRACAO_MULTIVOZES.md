@@ -30,6 +30,8 @@ Somente perfis ligados a vozes efetivamente usadas no roteiro são carregados. S
 
 O checkpoint canônico acompanha o roteiro salvo no projeto. Cada inferência em segundo plano escreve em `roteiros/<id>/runs/` e não pode sobrescrever esse arquivo. Na reabertura, o editor só aplica estado de geração de um checkpoint cujo fingerprint ainda corresponda aos textos/vozes/backend atuais; detalhes de timeline e perfis não usados continuam vindo do projeto. A retomada também valida cada WAV; arquivo ausente, truncado ou silencioso não aparece como fala pronta e pode ser regenerado. Se uma edição invalidar um checkpoint, os WAVs continuam no cache e são reaproveitados ao gerar o roteiro corrigido.
 
+Na regeneração individual, a fala usa o mesmo ID/pasta persistente do roteiro, mas grava o estado temporário em `runs/`. Assim, repetir uma correção pode reaproveitar o cache da fala sem substituir o checkpoint canônico antes da validação; apenas o perfil realmente associado à fala é carregado. Depois da substituição validada, o checkpoint completo é atualizado, preservando as demais falas.
+
 ## Persistência e retomada
 
 O projeto guarda os metadados do roteiro em JSON versionado. Áudios e checkpoint incremental ficam junto dos arquivos do projeto, em `*_arquivos/narracoes/roteiros/<id>/`. Em cancelamento, os WAVs já concluídos ficam preservados; se a regeneração individual for cancelada, o áudio aprovado anteriormente continua byte a byte intacto e associado à fala pendente. Ao reabrir o projeto, use **Retomar roteiro salvo**. O cache de cada fala considera texto, hash da referência autorizada, perfil, backend, threads e fingerprint do runtime/modelo; mudar só a posição não sintetiza novamente. A origem da voz permanece na pasta privada local de perfis.

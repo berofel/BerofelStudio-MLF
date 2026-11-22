@@ -1227,6 +1227,83 @@ class ActionsUITests(unittest.TestCase):
             finally:
                 win.close()
 
+    def test_multivoice_single_line_regeneration_keeps_script_cache_and_ignores_unused_profiles(self):
+        from berofel.services.multivoice_narration import create_script, MultiVoiceScript
+        from berofel.services.voice_profiles import VoiceProfileManager
+        import wave
+        with tempfile.TemporaryDirectory(prefix='bfs_multivoice_regenerate_') as folder, \
+                patch.dict(os.environ, {'BEROFEL_VOICE_PROFILE_DIR':str(Path(folder)/'profiles')}):
+            reference=Path(folder)/'reference.wav'
+            old_audio=Path(folder)/'approved.wav'
+            new_audio=Path(folder)/'replacement.wav'
+            for path, frames in ((reference,24000),(old_audio,4800)):
+                with wave.open(str(path),'wb') as output:
+                    output.setnchannels(1);output.setsampwidth(2);output.setframerate(24000)
+                    output.writeframes(b'\x20\x01'*frames)
+            win=MainWindow()
+            try:
+                profile=VoiceProfileManager().create(
+                    'Voz autorizada',reference,'portuguese','referência',authorized=True)
+                panel=win.narration_panel.multivoice_panel
+                script=create_script('[001 | V1]\nTexto antigo.\n[002 | V1]\nOutra fala.',
+                    {'V1':{'profile_id':profile['id']},
+                     'V2':{'profile_id':'perfil-removido-e-nao-usado'}},
+                    'qwen3-tts-purec-int8')
+                track=win.project.tracks[0]
+                script.track_id=track.id
+                first,second=script.lines
+                first.status='generated';first.audio_path=str(old_audio);first.duration=.2
+                second.status='generated';second.audio_path=str(old_audio);second.duration=.2
+                win.project.path=str(Path(folder)/'episode.bfsproj')
+                win.project.narration_scripts=[script.to_dict()]
+                clip=Clip(source=str(old_audio),start=0,end=.2,track_id=track.id,
+                    timeline_start=0,source_length=.2,kind='audio',
+                    narration_script_id=script.id,narration_line_id=first.id,
+                    narration_voice_id='V1')
+                win.project.add_clip(clip)
+                first.clip_id=clip.id
+                win.project.narration_scripts[0]=script.to_dict()
+                panel.set_active_script(script,first.id)
+                captured={}
+
+                def fake_generate(work, profiles, project_path, **kwargs):
+                    captured.update({'script_id':work.id,'line_count':len(work.lines),
+                        'profile_ids':set(profiles), 'run_checkpoint':Path(kwargs['checkpoint_path']),
+                        'project_path':project_path})
+                    line=work.lines[0]
+                    with wave.open(str(new_audio),'wb') as output:
+                        output.setnchannels(1);output.setsampwidth(2);output.setframerate(24000)
+                        output.writeframes(b'\x40\x02'*7200)
+                    line.status='generated';line.audio_path=str(new_audio)
+                    line.duration=.3;line.cache_key='replacement-cache-key'
+                    return work
+
+                with patch('berofel.services.multivoice_narration.generate_script_audio',
+                           side_effect=fake_generate), \
+                        patch('berofel.ui.window.make_processing_error_dialog',
+                              return_value=MagicMock()) as error_dialog:
+                    win.regenerate_multivoice_line(script,first.id,'Texto corrigido.')
+                    task=win.active_task
+                    self.assertIsNotNone(task)
+                    loop=QEventLoop();task.signals.finished.connect(loop.quit)
+                    QTimer.singleShot(8000,loop.quit);loop.exec();self.app.processEvents()
+                    self.assertFalse(error_dialog.called, error_dialog.call_args)
+                self.assertEqual(captured['script_id'],script.id)
+                self.assertEqual(captured['line_count'],1)
+                self.assertEqual(captured['profile_ids'],{profile['id']})
+                expected_root=Path(win.project.path).parent/(Path(win.project.path).stem+'_arquivos')
+                expected_run_root=expected_root/'narracoes'/'roteiros'/script.id/'runs'
+                self.assertEqual(captured['run_checkpoint'].parent,expected_run_root)
+                self.assertEqual(captured['project_path'],win.project.path)
+                saved=MultiVoiceScript.from_dict(win.project.narration_scripts[0])
+                self.assertEqual(saved.lines[0].text,'Texto corrigido.')
+                self.assertEqual(saved.lines[0].audio_path,str(new_audio))
+                self.assertEqual(saved.lines[1].audio_path,str(old_audio))
+                self.assertEqual(win.project.clip(clip.id).source,str(new_audio))
+                self.assertIsNone(win.active_task)
+            finally:
+                win.close()
+
     def test_slip_tool_moves_source_and_linked_audio_with_undo(self):
         win=MainWindow()
         project=Project()

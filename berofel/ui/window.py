@@ -1602,7 +1602,9 @@ class MainWindow(QMainWindow):
             return
         from berofel.services.multivoice_narration import (
             MultiVoiceScript, update_line_text, generate_script_audio,
+            save_script_checkpoint,
         )
+        from berofel.services.narration_service import persistent_folder
         from uuid import uuid4
         import copy as _copy
         current = MultiVoiceScript.from_dict(current_data)
@@ -1632,16 +1634,18 @@ class MainWindow(QMainWindow):
         line = next(item for item in work.lines if item.id == line_id)
         update_line_text(work, line_id, new_text)
         work.lines = [line]
-        # Isolate the checkpoint/output manifest; the approved WAV and full
-        # project script remain untouched until the replacement is validated.
-        work.id = uuid4().hex
-        profiles = {voice['profile_id']: panel.voice_profiles.get(voice['profile_id'])
-                    for voice in work.voices.values()}
+        # Isolate only this run's checkpoint. Keep the script ID so synthesis
+        # cache entries stay in the canonical script folder and can be reused.
+        run_root = persistent_folder(self.project.path) / 'roteiros' / current.id / 'runs'
+        run_checkpoint = run_root / f'regenerate_{line_id}_{uuid4().hex}.json'
+        profile_id = work.voices[line.voice_id]['profile_id']
+        profiles = {profile_id: panel.voice_profiles.get(profile_id)}
         panel.set_busy(True)
         self._ai_busy = True
         def run(progress=None, control=None, stage=None):
             return generate_script_audio(work, profiles, self.project.path,
-                                         control=control, progress=progress, stage=stage)
+                                         control=control, progress=progress, stage=stage,
+                                         checkpoint_path=str(run_checkpoint))
         def ready(result):
             nonlocal clip, current, current_data, original
             replacement = result.lines[0]
@@ -1717,14 +1721,23 @@ class MainWindow(QMainWindow):
             current.first_audio_ready_seconds = result.first_audio_ready_seconds
             current_data_index = self.project.narration_scripts.index(current_data)
             self.project.narration_scripts[current_data_index] = current.to_dict()
+            checkpoint_warning = ''
+            try:
+                save_script_checkpoint(current, self.project.path)
+            except OSError as exc:
+                checkpoint_warning = f' O checkpoint de retomada não foi atualizado: {exc}'
             if replacement.audio_path not in self.project.media:
                 self.project.media.append(replacement.audio_path)
             self.refresh([clip.id])
             panel.set_active_script(current, line_id)
             panel.status.setText(f'Fala regenerada · {replacement.duration:.2f}s. '
-                                 'Os demais WAVs foram mantidos.')
+                                 'Os demais WAVs foram mantidos.' + checkpoint_warning)
             if self.project.path:
                 self._save_at(self.project.path)
+            try:
+                run_checkpoint.unlink(missing_ok=True)
+            except OSError:
+                pass
         task = self._task(run, ready, label=f'Regenerar fala {original.number:03d}')
         if task is None:
             self._ai_busy = False
