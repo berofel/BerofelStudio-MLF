@@ -52,6 +52,16 @@ class MultiVoicePanelTests(unittest.TestCase):
             'qwen3-tts-purec-int8', 'qwen3-tts-purec-mixed',
             'qwen3-tts-native-q4', 'qwen3-tts-native-q4-balanced', 'qwen3-tts-local'})
 
+    def test_ui_exposes_all_ten_voice_slots_and_builds_v10_script(self):
+        self.assertEqual(set(self.panel.assignments), {f'V{i}' for i in range(1, 11)})
+        combo = self.panel.assignments['V10']
+        combo.setCurrentIndex(combo.findData(self.profile['id']))
+        self.panel.script_text.setPlainText('[001 | V10 | Personagem dez]\nFala da décima voz.')
+        script = self.panel.build_script()
+        self.assertEqual(script.voices['V10']['profile_id'], self.profile['id'])
+        self.assertEqual(script.lines[0].voice_id, 'V10')
+        self.assertEqual(script.lines[0].character_name, 'Personagem dez')
+
     def test_selected_speech_edit_requests_only_its_stable_line_id(self):
         self.panel.assignments['V1'].setCurrentIndex(
             self.panel.assignments['V1'].findData(self.profile['id']))
