@@ -245,6 +245,8 @@ def main() -> int:
                             '-ar', '24000', '-c:a', 'pcm_s16le', str(decoded_audio)],
                            check=True, capture_output=True, timeout=120)
             mp4_audio_metrics = _measure_wav(decoded_audio)
+            fresh_synthesis_audio_seconds = sum(
+                line.duration for line in result.lines if not line.cache_hit)
             report = {
                 'offline': True,
                 'through_editor_ui': True,
@@ -256,6 +258,11 @@ def main() -> int:
                 'timeline_clips': len(clips),
                 'timeline_pause_ms_preserved': result.pause_ms,
                 'timeline_order_and_spacing_verified': True,
+                'script_wall_seconds': round(result.total_seconds, 3),
+                'generated_audio_seconds': round(sum(line.duration for line in result.lines), 3),
+                'fresh_synthesis_audio_seconds': round(fresh_synthesis_audio_seconds, 3),
+                'fresh_synthesis_end_to_end_rtf': round(
+                    result.total_seconds / max(.001, fresh_synthesis_audio_seconds), 3),
                 'profile_preparation_seconds': round(result.profile_preparation_seconds, 3),
                 'model_load_seconds': round(result.model_load_seconds, 3),
                 'project_reopen_preserved_script_and_clips': True,
