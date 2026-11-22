@@ -22,6 +22,8 @@ Ouvi sim! Parece que veio da floresta.
 
 Cabeçalhos repetidos, número duplicado, voz fora de V1–V10, texto sem cabeçalho e falas vazias são rejeitados antes de iniciar a IA. IDs das falas são independentes da numeração e persistem ao reorganizar. O parser foi exercitado com mais de 100 mil caracteres, 1.000 falas e 10 vozes. Uma fala muito longa é dividida em segmentos de até 800 caracteres nos limites de sentença/palavra e remontada em um WAV lógico; sem um espaço seguro para dividir, a fala falha explicitamente em vez de cortar uma palavra.
 
+Ao substituir uma fala por outra de duração diferente, somente as falas seguintes do mesmo roteiro são deslocadas. Música, clipes independentes e outros roteiros na mesma camada não se movem. Se o clipe ou uma fala seguinte estiver numa camada bloqueada, a regeneração é recusada antes da síntese; o estado é verificado novamente ao concluir para proteger alterações feitas enquanto o Qwen trabalha.
+
 ## Persistência e retomada
 
 O projeto guarda os metadados do roteiro em JSON versionado. Áudios e checkpoint incremental ficam junto dos arquivos do projeto, em `*_arquivos/narracoes/roteiros/<id>/`. Em cancelamento, os WAVs já concluídos ficam preservados; se a regeneração individual for cancelada, o áudio aprovado anteriormente continua byte a byte intacto e associado à fala pendente. Ao reabrir o projeto, use **Retomar roteiro salvo**. O cache de cada fala considera texto, hash da referência autorizada, perfil, backend, threads e fingerprint do runtime/modelo; mudar só a posição não sintetiza novamente. A origem da voz permanece na pasta privada local de perfis.

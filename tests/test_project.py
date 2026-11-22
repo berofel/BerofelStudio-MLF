@@ -14,6 +14,39 @@ class ProjectTests(unittest.TestCase):
         p.clips.extend(clips)
         return p
 
+    def test_multivoice_replacement_reflows_only_following_script_clips(self):
+        p=Project();lane=p.tracks[0]
+        target=Clip('one.wav',0,1,kind='audio',track_id=lane.id,
+                    timeline_start=5,narration_script_id='script-a',
+                    narration_line_id='line-1')
+        later=Clip('two.wav',0,1,kind='audio',track_id=lane.id,
+                   timeline_start=6.2,narration_script_id='script-a',
+                   narration_line_id='line-2')
+        other_script=Clip('other.wav',0,1,kind='audio',track_id=lane.id,
+                          timeline_start=6.2,narration_script_id='script-b')
+        unrelated=Clip('music.wav',0,1,kind='audio',track_id=lane.id,
+                       timeline_start=6.2)
+        p.clips.extend([target,later,other_script,unrelated])
+
+        self.assertTrue(p.reflow_narration_script_after_replacement(
+            'script-a',target.id,5,6,.5))
+        self.assertEqual(target.timeline_start,5)
+        self.assertAlmostEqual(later.timeline_start,6.7)
+        self.assertEqual(other_script.timeline_start,6.2)
+        self.assertEqual(unrelated.timeline_start,6.2)
+
+    def test_multivoice_reflow_rejects_locked_following_lane_atomically(self):
+        p=Project();editable=p.tracks[0];locked=p.tracks[1]
+        target=Clip('one.wav',0,1,kind='audio',track_id=editable.id,
+                    timeline_start=0,narration_script_id='script-a')
+        later=Clip('two.wav',0,1,kind='audio',track_id=locked.id,
+                   timeline_start=1.2,narration_script_id='script-a')
+        p.clips.extend([target,later]);locked.locked=True
+
+        self.assertFalse(p.reflow_narration_script_after_replacement(
+            'script-a',target.id,0,1,.5))
+        self.assertEqual((target.timeline_start,later.timeline_start),(0,1.2))
+
     def test_middle_selected_only(self):
         p=self.make_project()
         l,m,r=(c.id for c in p.clips)

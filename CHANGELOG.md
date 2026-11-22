@@ -1,3 +1,9 @@
+## Multivozes: ripple seguro ao regenerar uma fala
+
+- A regeneração individual agora desloca apenas os clipes posteriores pertencentes ao mesmo roteiro, sem mover mídia independente nem outros roteiros na mesma camada.
+- A operação é recusada quando o clipe-alvo ou uma fala seguinte está em camada bloqueada; isso evita reposicionamento parcial. A verificação é repetida quando o WAV novo fica pronto, caso o estado da timeline mude durante a síntese.
+- Testes cobrem preservação de mídia alheia e bloqueio atômico do ripple.
+
 ## Multivozes: cancelamento seguro da regeneração individual
 
 - Adicionado teste de regressão que cancela uma síntese no meio da regeneração e verifica que o WAV aprovado continua byte a byte intacto, ligado à fala e presente no checkpoint recuperável.

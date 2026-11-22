@@ -1546,6 +1546,20 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, 'Editar fala',
                                 'Não encontrei essa fala no roteiro salvo.')
             return
+        anchor_start = (clip.timeline_start if clip else
+                        self._multivoice_line_position(current, line_id))
+        old_end = clip.timeline_end if clip else anchor_start
+        if (clip and not self.project.track_is_editable(clip.track_id)) or (
+                not clip and current.track_id and
+                not self.project.track_is_editable(current.track_id)):
+            QMessageBox.information(self, 'Editar fala',
+                                    'A camada desta fala está bloqueada. Desbloqueie-a para regenerar.')
+            return
+        if not self.project.can_reflow_narration_script(
+                current.id, clip.id if clip else '', anchor_start, old_end):
+            QMessageBox.information(self, 'Editar fala',
+                                    'Uma fala seguinte está em camada bloqueada; desbloqueie as camadas do roteiro para manter a sequência.')
+            return
         work = MultiVoiceScript.from_dict(current.to_dict())
         line = next(item for item in work.lines if item.id == line_id)
         update_line_text(work, line_id, new_text)
@@ -1561,15 +1575,44 @@ class MainWindow(QMainWindow):
             return generate_script_audio(work, profiles, self.project.path,
                                          control=control, progress=progress, stage=stage)
         def ready(result):
-            nonlocal clip
+            nonlocal clip, current, current_data, original
             replacement = result.lines[0]
             if replacement.status != 'generated' or not Path(replacement.audio_path).is_file():
                 raise RuntimeError('A nova fala não passou na validação; o áudio anterior foi mantido.')
-            self.snapshot()
-            old_start = clip.timeline_start if clip else self._multivoice_line_position(current, line_id)
+            current_data = next((item for item in self.project.narration_scripts
+                                 if item.get('id') == current.id), None)
+            if not current_data:
+                raise RuntimeError('O roteiro foi removido enquanto a fala era gerada; '
+                                   'o áudio aprovado foi mantido.')
+            latest = MultiVoiceScript.from_dict(current_data)
+            latest_line = next((item for item in latest.lines if item.id == line_id), None)
+            if (latest_line is None or latest_line.text != original.text
+                    or latest_line.voice_id != original.voice_id
+                    or latest.engine_id != work.engine_id
+                    or latest.voices.get(latest_line.voice_id, {}).get('profile_id')
+                    != work.voices.get(latest_line.voice_id, {}).get('profile_id')):
+                raise RuntimeError('O texto, a voz ou o perfil mudou durante a geração. '
+                                   'O resultado antigo não foi aplicado; gere novamente com os dados atuais.')
+            current = latest
+            original = latest_line
+            clip = next((item for item in self.project.clips
+                         if item.narration_script_id == current.id
+                         and item.narration_line_id == line_id), None)
+            old_start = clip.timeline_start if clip else anchor_start
+            if not clip:
+                old_start = self._multivoice_line_position(current, line_id)
             old_end = clip.timeline_end if clip else old_start
             old_duration = clip.duration if clip else 0.0
             delta = replacement.duration - old_duration
+            if not self.project.can_reflow_narration_script(
+                    current.id, clip.id if clip else '', old_start, old_end):
+                raise RuntimeError('A sequência do roteiro foi bloqueada durante a geração. '
+                                    'Desbloqueie as camadas e tente novamente; o áudio anterior foi mantido.')
+            if (clip is None and current.track_id
+                    and not self.project.track_is_editable(current.track_id)):
+                raise RuntimeError('A camada do roteiro foi bloqueada durante a geração. '
+                                    'Desbloqueie-a e tente novamente; o áudio anterior foi mantido.')
+            self.snapshot()
             if clip is None:
                 lane = self.project.track(current.track_id) if current.track_id else None
                 if lane is None:
@@ -1587,10 +1630,9 @@ class MainWindow(QMainWindow):
             clip.start = 0.0
             clip.end = replacement.duration
             clip.source_length = replacement.duration
-            for later in self.project.clips:
-                if (later.narration_script_id == current.id and later.id != clip.id and
-                        later.timeline_start >= old_end - .001 and later.timeline_start >= old_start):
-                    later.timeline_start = max(0.0, later.timeline_start + delta)
+            if not self.project.reflow_narration_script_after_replacement(
+                    current.id, clip.id, old_start, old_end, delta):
+                raise RuntimeError('Não foi possível reposicionar as falas seguintes com segurança.')
             original.text = new_text.strip()
             original.status = 'generated'
             original.audio_path = replacement.audio_path

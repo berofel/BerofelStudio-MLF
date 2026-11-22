@@ -279,6 +279,46 @@ class Project:
         track = self.track(track_id)
         return bool(track and not track.locked)
 
+    def can_reflow_narration_script(self, script_id: str, line_clip_id: str,
+                                    anchor_start: float, old_end: float) -> bool:
+        """Return whether replacing a dialogue line may ripple its script lane.
+
+        Only clips owned by the same narration script participate. Locked tracks
+        follow the editor's normal edit policy and prevent a partial ripple.
+        """
+        script_clips = [clip for clip in self.clips
+                        if clip.narration_script_id == script_id]
+        target = next((clip for clip in script_clips if clip.id == line_clip_id), None)
+        if target is not None and not self.track_is_editable(target.track_id):
+            return False
+        if target is None:
+            script_tracks = {clip.track_id for clip in script_clips}
+            if script_tracks and any(not self.track_is_editable(track_id)
+                                     for track_id in script_tracks):
+                return False
+        return all(
+            self.track_is_editable(clip.track_id)
+            for clip in script_clips
+            if clip.id != line_clip_id
+            and clip.timeline_start >= old_end - .001
+            and clip.timeline_start >= anchor_start
+        )
+
+    def reflow_narration_script_after_replacement(
+            self, script_id: str, line_clip_id: str, anchor_start: float,
+            old_end: float, delta: float) -> bool:
+        """Shift following clips of one script, leaving all other media intact."""
+        if not self.can_reflow_narration_script(
+                script_id, line_clip_id, anchor_start, old_end):
+            return False
+        for clip in self.clips:
+            if (clip.narration_script_id == script_id
+                    and clip.id != line_clip_id
+                    and clip.timeline_start >= old_end - .001
+                    and clip.timeline_start >= anchor_start):
+                clip.timeline_start = max(0.0, clip.timeline_start + delta)
+        return True
+
     def add_track(self, name: str = '', index: int = 0) -> Track:
         track = Track(name=name.strip() or f'Camada {len(self.tracks)+1}')
         self.tracks.insert(max(0, min(len(self.tracks), index)), track)
