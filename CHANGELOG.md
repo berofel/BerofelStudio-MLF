@@ -17,6 +17,11 @@
 - Adicionado `scripts/validar_cache_voz_multivozes_real.py`, que exige confirmação da referência local, executa offline, valida um WAV próprio por alias e verifica uma única inferência para falas idênticas no mesmo perfil.
 - Executado em Pure C INT8 e Pure C Mixer: `cache_hit=false/true`, arquivos separados com hashes iguais e sinais PCM não silenciosos. Métricas completas documentadas; a referência é da mesma pessoa, portanto não comprova identidades vocais diferentes.
 
+## Smoke Qt real de multivozes e exportação WAV
+
+- Adicionado `scripts/validar_multivoice_ui_cache_real.py` para gerar roteiro duplicado pela janela Qt real, conferir dois clips, salvar/reabrir projeto e exportar WAV do roteiro offline.
+- INT8 e Mixer passaram com uma inferência, WAVs separados por fala e exportação estéreo 48 kHz não silenciosa. V1/V2 usam intencionalmente o mesmo perfil autorizado; o smoke não valida vozes de locutores diferentes.
+
 ## Multivozes: cache compartilha síntese idêntica entre personagens da mesma voz
 
 - A chave de síntese usa conteúdo e identidade/perfil vocal, sem depender do alias V1–V10.
