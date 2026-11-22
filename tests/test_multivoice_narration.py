@@ -102,6 +102,27 @@ class MultiVoiceScriptTests(unittest.TestCase):
         self.assertEqual([profile for profile, _ in groups], ['p1', 'p2'])
         self.assertEqual([line.number for line in groups[0][1]], [1, 2, 4])
 
+    def test_unused_configured_voice_does_not_block_generation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            reference = root / 'voice.wav'
+            _wav(reference)
+            active = {'id': 'p1', 'sample_path': str(reference),
+                      'reference_text': 'fala', 'authorized': True}
+            script = create_script('[001 | V1]\nFala ativa.',
+                {'V1': {'profile_id': 'p1'}, 'V2': {'profile_id': 'deleted-unused-profile'}},
+                'qwen3-tts-purec-int8')
+
+            def fake_generate(request, **_kwargs):
+                output = root / 'generated.wav'
+                _wav(output)
+                return {'path': str(output), 'duration': .1}
+
+            generated = generate_script_audio(script, {'p1': active},
+                str(root / 'project.berofel.json'), generator=fake_generate)
+            self.assertEqual(generated.lines[0].status, 'generated')
+            self.assertIn('V2', generated.voices)
+
     def test_cache_key_invalidates_only_text_voice_engine_threads_or_version(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder); sample = root / 'voice.wav'; _wav(sample)

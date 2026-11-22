@@ -115,6 +115,7 @@ class MultiVoicePanel(QWidget):
             f'{SCRIPT_FORMAT}\n[001 | V1]\nPrimeira fala.\n[002 | V2]\nSegunda fala.')
         self.script_text.setMinimumHeight(170)
         root.addWidget(self.script_text, 2)
+        self.script_text.textChanged.connect(self._update_engine_note)
         self.lines = QTableWidget(0, 4)
         self.lines.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.lines.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -230,12 +231,24 @@ class MultiVoicePanel(QWidget):
         if not hasattr(self, 'engine_note'):
             return
         if self.active_script:
-            selected_profiles = {str(voice.get('profile_id', ''))
-                                 for voice in self.active_script.voices.values()
-                                 if voice.get('profile_id')}
+            used_voices = {line.voice_id for line in self.active_script.lines}
+            selected_profiles = {
+                str(self.active_script.voices[voice_id].get('profile_id', ''))
+                for voice_id in used_voices
+                if voice_id in self.active_script.voices and
+                self.active_script.voices[voice_id].get('profile_id')}
         else:
-            selected_profiles = {combo.currentData() for combo in self.assignments.values()
-                                 if combo.currentData()}
+            try:
+                used_voices = ({line.voice_id for line in
+                                parse_berofel_script(self.script_text.toPlainText())}
+                               if hasattr(self, 'script_text') else set())
+            except ScriptValidationError:
+                used_voices = set()
+            selected_profiles = {
+                self.assignments[voice_id].currentData()
+                for voice_id in used_voices
+                if voice_id in self.assignments and
+                self.assignments[voice_id].currentData()}
         engine_id = str(self.engine.currentData() or '')
         if engine_id in ('qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8') and len(selected_profiles) > 1:
             self.engine_note.setText(
@@ -285,13 +298,11 @@ class MultiVoicePanel(QWidget):
                                           sorted(voice_totals.items(), key=lambda item: int(item[0][1:]))))
 
     def build_script(self, title: str = 'Roteiro multivozes', timeline_start: float = 0.0):
-        lines = parse_berofel_script(self.script_text.toPlainText())
-        needed = {line.voice_id for line in lines}
         assignments = {}
-        for voice_id in needed:
-            profile_id = self.assignments[voice_id].currentData()
+        for voice_id, combo in self.assignments.items():
+            profile_id = combo.currentData()
             if not profile_id:
-                raise ScriptValidationError(f'Selecione o perfil salvo para {voice_id}.')
+                continue
             profile = self.voice_profiles.get(profile_id)
             assignments[voice_id] = {'profile_id': profile_id, 'display_name': profile['name']}
         return create_script(self.script_text.toPlainText(), assignments,
@@ -360,6 +371,7 @@ class MultiVoicePanel(QWidget):
         line.error = ''
         if self.on_script_changed:
             self.on_script_changed(self.active_script)
+        self._update_engine_note()
 
     def _capture_edited_texts(self):
         if not self.active_script:
@@ -482,6 +494,7 @@ class MultiVoicePanel(QWidget):
         self.resume_button.setEnabled(can_resume)
         self.export_script_button.setEnabled(self._script_audio_complete())
         self._selection_state()
+        self._update_engine_note()
         for button in (self.add_line_button, self.remove_line_button,
                        self.move_up_button, self.move_down_button):
             button.setEnabled(True)

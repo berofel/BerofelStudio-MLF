@@ -88,6 +88,31 @@ class MultiVoicePanelTests(unittest.TestCase):
         self.assertEqual(line.audio_path, 'old.wav')
         self.assertEqual(changed, [script.id])
 
+    def test_line_can_switch_to_a_configured_voice_unused_in_imported_text(self):
+        second_sample = Path(self.temp.name) / 'authorized-2.wav'
+        _wav(second_sample)
+        second = self.manager.create('Teste UI 2', second_sample, 'portuguese',
+                                     'outra referência', authorized=True)
+        self.panel.refresh_profiles()
+        for voice_id, profile in (('V1', self.profile), ('V2', second)):
+            self.panel.assignments[voice_id].setCurrentIndex(
+                self.panel.assignments[voice_id].findData(profile['id']))
+        if self.panel.engine.findData('qwen3-tts-purec-int8') < 0:
+            self.panel.engine.addItem('Pure C INT8 test', 'qwen3-tts-purec-int8')
+        self.panel.engine.setCurrentIndex(
+            self.panel.engine.findData('qwen3-tts-purec-int8'))
+        self.panel.script_text.setPlainText(
+            '[001 | V1]\nPrimeira fala.\n[002 | V1]\nSegunda fala.')
+        script = self.panel.build_script()
+        self.assertIn('V2', script.voices)
+        self.panel.set_active_script(script)
+        self.assertIn('mantém o servidor aquecido', self.panel.engine_note.text())
+        combo = self.panel.lines.cellWidget(0, 1)
+        self.assertGreaterEqual(combo.findData('V2'), 0)
+        combo.setCurrentIndex(combo.findData('V2'))
+        self.assertEqual(script.lines[0].voice_id, 'V2')
+        self.assertIn('recarrega o modelo', self.panel.engine_note.text())
+
     def test_purec_warns_when_script_uses_distinct_profiles(self):
         second_sample = Path(self.temp.name) / 'authorized-2.wav'
         _wav(second_sample)
@@ -102,6 +127,11 @@ class MultiVoicePanelTests(unittest.TestCase):
             self.panel.engine.addItem('Pure C INT8 test', 'qwen3-tts-purec-int8')
         self.panel.engine.setCurrentIndex(
             self.panel.engine.findData('qwen3-tts-purec-int8'))
+        self.assertNotIn('recarrega o modelo', self.panel.engine_note.text())
+        self.panel.script_text.setPlainText('[001 | V1]\nUma voz.')
+        self.assertIn('mantém o servidor aquecido', self.panel.engine_note.text())
+        self.panel.script_text.setPlainText(
+            '[001 | V1]\nPrimeira voz.\n[002 | V2]\nSegunda voz.')
         self.assertIn('recarrega o modelo', self.panel.engine_note.text())
         self.panel.assignments['V2'].setCurrentIndex(
             self.panel.assignments['V2'].findData(self.profile['id']))

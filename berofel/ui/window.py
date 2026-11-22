@@ -1500,9 +1500,11 @@ class MainWindow(QMainWindow):
             generated_audio = sum(line.duration for line in generated)
             inference_seconds = sum(line.generation_seconds for line in generated)
             rtf = inference_seconds / generated_audio if generated_audio > 0 else 0.0
+            used_profiles = {result.voices[line.voice_id]['profile_id']
+                             for line in result.lines if line.voice_id in result.voices}
             telemetry = (f' · RTF {rtf:.2f} · primeira fala disponível '
                          f'{result.first_audio_ready_seconds:.1f}s · fila {result.total_seconds:.1f}s')
-            panel.status.setText(f'{len(clips)} falas geradas em {len(result.voices)} perfil(is). '
+            panel.status.setText(f'{len(clips)} falas geradas em {len(used_profiles)} perfil(is). '
                                  'Os WAVs estão separados e ordenados na timeline.' + telemetry)
             self.statusBar().showMessage(f'Roteiro concluído: {len(clips)} falas em {track.name}.')
         task = self._task(run, ready, label=f'Qwen3 · roteiro multivozes · {script.engine_id}')

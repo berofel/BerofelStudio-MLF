@@ -479,7 +479,10 @@ def generate_script_audio(script: MultiVoiceScript, profiles: Mapping[str, Mappi
     """
     validate_script(script)
     configured: dict[str, Mapping] = {}
+    used_voice_ids = {line.voice_id for line in script.lines}
     for voice_id, assignment in script.voices.items():
+        if voice_id not in used_voice_ids:
+            continue
         profile = profiles.get(assignment['profile_id'])
         if profile is None:
             raise ScriptValidationError(f'O perfil associado a {voice_id} não está disponível.')

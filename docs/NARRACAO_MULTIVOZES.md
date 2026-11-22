@@ -3,7 +3,7 @@
 ## Usar Várias vozes
 
 1. Abra **Narração → Várias vozes**.
-2. Confirme em **Uma voz** que cada perfil local foi criado e autorizado. Os perfis aparecem nas caixas V1–V10.
+2. Confirme em **Uma voz** que cada perfil local foi criado e autorizado. Os perfis aparecem nas caixas V1–V10; a tabela de falas permite escolher qualquer personagem configurado, mesmo se ele não aparecia no texto importado. Perfis configurados mas não usados não são carregados nem bloqueiam a geração.
 3. Selecione **Equilibrado — Pure C INT8 · 6 threads** ou **Turbo — Pure C Mixer · 6 threads**. O nome técnico do perfil Turbo no código instalado é `qwen3-tts-purec-mixed`, ativado por `--quant-mixed-cpu` (Talker INT8 + Code Predictor INT4). O Equilibrado é `qwen3-tts-purec-int8`, ativado por `--int8`.
 4. Cole ou importe um arquivo UTF-8 no formato `Berofel Script V1`, associe somente as vozes utilizadas e clique **Validar e visualizar**.
 5. Clique **Gerar roteiro e inserir na timeline**. Se o projeto ainda não tiver caminho, salve-o quando solicitado. Os WAVs são criados um por fala, primeiro agrupados pelo perfil vocal e depois posicionados na ordem numerada com a pausa configurada (200 ms por padrão).
