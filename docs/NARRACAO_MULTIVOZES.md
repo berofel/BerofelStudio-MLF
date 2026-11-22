@@ -60,6 +60,24 @@ python scripts/validar_multivoice_distinct_profiles.py `
 
 Use `qwen3-tts-purec-mixed` para o Turbo Pure C Mixer ou `qwen3-tts-local` para o Original. O script rejeita IDs iguais, referências duplicadas ou perfis sem autorização; mantém WAVs e caches em diretório temporário e retorna métricas sem nomes ou caminhos pessoais. Esse teste ainda não foi executado porque este ambiente contém somente uma referência autorizada.
 
+### Diagnosticar troca Pure C sem usar gravações pessoais
+
+O smoke `scripts/validar_troca_perfil_multivozes_sintetico.py` cria duas referências artificiais localmente, gera uma fala por personagem, troca o perfil entre lotes e apaga WAVs/caches temporários. Ele mede a implementação do servidor, não a qualidade da clonagem. Foi executado uma vez por perfil nesta sessão, em seis threads, sem downloads:
+
+| Perfil | Tempo total | Duração WAV V1/V2 | Preparação V1/V2 | Carga servidor V1/V2 | Geração V1/V2 | Primeiro áudio V1/V2 |
+|---|---:|---:|---:|---:|---:|---:|
+| Pure C INT8 | 15,588 s | 4,56 / 4,96 s | 1,456 / 1,559 s | 2,460 / 2,061 s | 3,725 / 4,042 s | 0,493 / 0,487 s |
+| Pure C Mixer | 14,464 s | 4,48 / 4,80 s | 1,456 / 1,559 s | 2,150 / 1,969 s | 3,389 / 3,663 s | 0,462 / 0,490 s |
+
+Os dois WAVs passaram pela validação de sinal não silencioso e a fila processou V1 antes de V2. As medições mostram que o servidor Pure C é reiniciado/recarregado ao mudar de perfil; o tempo total inclui esse custo. Uma execução curta e sintética não permite concluir fidelidade, naturalidade, português falado com qualidade nem desempenho no Ryzen 7 5700G. Para validar identidade vocal, use o smoke de duas referências autorizadas acima.
+
+Reprodução:
+
+```powershell
+python scripts/validar_troca_perfil_multivozes_sintetico.py --engine qwen3-tts-purec-int8
+python scripts/validar_troca_perfil_multivozes_sintetico.py --engine qwen3-tts-purec-mixed
+```
+
 ## Validação
 
 O fluxo real pela janela do editor foi executado em roteiro de 100 falas no Windows, separadamente com `qwen3-tts-purec-int8` e `qwen3-tts-purec-mixed`, seis threads, saída WAV independente, inserção na timeline, salvamento/reabertura do projeto e exportação WAV. A exportação MP4 também foi validada no projeto de 100 falas Mixed. Os textos de benchmark foram `Fala NNN.` e as V1/V2/V3 foram associadas ao mesmo perfil vocal local autorizado disponível no computador de teste. Por isso, as execuções validam síntese em lote, arquivos, ordem, projeto e exportação, mas **não validam identidade de três vozes diferentes nem troca/reload do modelo entre perfis**. O computador não permitiu ler o modelo da CPU via CIM; os valores abaixo não são atribuídos ao Ryzen 7 5700G.
