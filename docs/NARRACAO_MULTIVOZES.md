@@ -22,7 +22,7 @@ Ouvi sim! Parece que veio da floresta.
 
 Cabeçalhos repetidos, número duplicado, voz fora de V1–V10, texto sem cabeçalho e falas vazias são rejeitados antes de iniciar a IA. IDs das falas são independentes da numeração e persistem ao reorganizar. O parser foi exercitado com mais de 100 mil caracteres, 1.000 falas e 10 vozes. Uma fala muito longa é dividida em segmentos de até 800 caracteres nos limites de sentença/palavra e remontada em um WAV lógico; sem um espaço seguro para dividir, a fala falha explicitamente em vez de cortar uma palavra.
 
-Ao substituir uma fala por outra de duração diferente, somente as falas seguintes do mesmo roteiro são deslocadas. Música, clipes independentes e outros roteiros na mesma camada não se movem. Se o clipe ou uma fala seguinte estiver numa camada bloqueada, a regeneração é recusada antes da síntese; o estado é verificado novamente ao concluir para proteger alterações feitas enquanto o Qwen trabalha.
+Ao substituir uma fala por outra de duração diferente, somente as falas seguintes do mesmo roteiro são deslocadas. Música, clipes independentes e outros roteiros na mesma camada não se movem. Se o clipe ou uma fala seguinte estiver numa camada bloqueada, a regeneração é recusada antes da síntese; o estado é verificado novamente ao concluir para proteger alterações feitas enquanto o Qwen trabalha. Edição, remoção ou reordenação do roteiro também é recusada quando uma camada dele estiver bloqueada, e a tabela volta ao último estado salvo.
 
 ## Persistência e retomada
 

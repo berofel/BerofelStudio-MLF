@@ -304,6 +304,12 @@ class Project:
             and clip.timeline_start >= anchor_start
         )
 
+    def narration_script_is_editable(self, script_id: str) -> bool:
+        """Whether every clip owned by a narration script can be edited."""
+        return all(self.track_is_editable(clip.track_id)
+                   for clip in self.clips
+                   if clip.narration_script_id == script_id)
+
     def reflow_narration_script_after_replacement(
             self, script_id: str, line_clip_id: str, anchor_start: float,
             old_end: float, delta: float) -> bool:

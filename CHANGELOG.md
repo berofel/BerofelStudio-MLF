@@ -2,6 +2,7 @@
 
 - A regeneração individual agora desloca apenas os clipes posteriores pertencentes ao mesmo roteiro, sem mover mídia independente nem outros roteiros na mesma camada.
 - A operação é recusada quando o clipe-alvo ou uma fala seguinte está em camada bloqueada; isso evita reposicionamento parcial. A verificação é repetida quando o WAV novo fica pronto, caso o estado da timeline mude durante a síntese.
+- Edição, remoção e reordenação de falas também respeitam camadas bloqueadas e restauram a lista salva sem aplicar uma alteração parcial.
 - Testes cobrem preservação de mídia alheia e bloqueio atômico do ripple.
 
 ## Multivozes: cancelamento seguro da regeneração individual

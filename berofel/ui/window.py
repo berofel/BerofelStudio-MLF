@@ -1720,9 +1720,17 @@ class MainWindow(QMainWindow):
         from berofel.services.multivoice_narration import MultiVoiceScript
         if script is None:
             return
-        self.snapshot()
         existing = next((item for item in self.project.narration_scripts
                          if item.get('id') == script.id), None)
+        if not self.project.narration_script_is_editable(script.id):
+            QMessageBox.information(self, 'Editar roteiro',
+                                    'Uma camada deste roteiro está bloqueada. '
+                                    'Desbloqueie-a para editar ou reorganizar as falas.')
+            if existing:
+                self.narration_panel.multivoice_panel.set_active_script(
+                    MultiVoiceScript.from_dict(existing))
+            return
+        self.snapshot()
         old_ids = {line.get('id') for line in (existing or {}).get('lines', [])}
         new_ids = {line.id for line in script.lines}
         removed = old_ids - new_ids

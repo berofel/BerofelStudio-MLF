@@ -43,6 +43,7 @@ class ProjectTests(unittest.TestCase):
                    timeline_start=1.2,narration_script_id='script-a')
         p.clips.extend([target,later]);locked.locked=True
 
+        self.assertFalse(p.narration_script_is_editable('script-a'))
         self.assertFalse(p.reflow_narration_script_after_replacement(
             'script-a',target.id,0,1,.5))
         self.assertEqual((target.timeline_start,later.timeline_start),(0,1.2))
