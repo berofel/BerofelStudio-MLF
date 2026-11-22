@@ -1,3 +1,8 @@
+## Revalidação real do worker Original em multivozes
+
+- Smoke offline gerou duas falas pelo Qwen3 Original usando um único PID e uma carga do modelo; o segundo prompt vocal foi servido sem recarregar pesos e teve acerto de cache.
+- Métricas e limites documentados em `docs/NARRACAO_MULTIVOZES.md`. Foi usada a mesma gravação autorizada com dois IDs de teste; isso não comprova duas identidades vocais distintas.
+
 ## Multivozes: checkpoints isolados por execução e recuperação sem sobrescrever edições
 
 - Cada fila em segundo plano agora escreve progresso em checkpoint próprio, sem competir com o checkpoint canônico editado pelo usuário.
