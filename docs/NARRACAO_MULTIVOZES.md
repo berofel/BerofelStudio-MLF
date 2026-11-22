@@ -34,6 +34,20 @@ Para um roteiro com perfis diferentes sem recarga entre personagens, o perfil **
 
 Uma tentativa real adicional do worker Original em duas IDs de perfil (mesma amostra autorizada, portanto sem alegação de timbres distintos) não gerou a primeira fala após vários minutos e foi interrompida para liberar o CPU. Ela não conta como teste de geração concluído. O script `scripts/validar_multivoice_original_real.py` reproduz essa verificação offline com timeout máximo de 10 minutos; o fluxo Original deve ser tratado como não validado para produção multivozes até terminar e produzir WAVs nesse ambiente.
 
+### Validar duas referências autorizadas diferentes
+
+Quando houver pelo menos dois perfis locais autorizados, liste os IDs com `python scripts/validar_multivoice_distinct_profiles.py --list-profiles` e execute o smoke de backend offline:
+
+```powershell
+python scripts/validar_multivoice_distinct_profiles.py `
+  --confirm-own-or-authorized-voice `
+  --profile-v1 ID_DO_PERFIL_V1 `
+  --profile-v2 ID_DO_PERFIL_V2 `
+  --engine qwen3-tts-purec-int8
+```
+
+Use `qwen3-tts-purec-mixed` para o Turbo Pure C Mixer ou `qwen3-tts-local` para o Original. O script rejeita IDs iguais, referências duplicadas ou perfis sem autorização; mantém WAVs e caches em diretório temporário e retorna métricas sem nomes ou caminhos pessoais. Esse teste ainda não foi executado porque este ambiente contém somente uma referência autorizada.
+
 ## Validação
 
 O fluxo real pela janela do editor foi executado em roteiro de 100 falas no Windows, separadamente com `qwen3-tts-purec-int8` e `qwen3-tts-purec-mixed`, seis threads, saída WAV independente, inserção na timeline, salvamento/reabertura do projeto e exportação WAV. A exportação MP4 também foi validada no projeto de 100 falas Mixed. Os textos de benchmark foram `Fala NNN.` e as V1/V2/V3 foram associadas ao mesmo perfil vocal local autorizado disponível no computador de teste. Por isso, as execuções validam síntese em lote, arquivos, ordem, projeto e exportação, mas **não validam identidade de três vozes diferentes nem troca/reload do modelo entre perfis**. O computador não permitiu ler o modelo da CPU via CIM; os valores abaixo não são atribuídos ao Ryzen 7 5700G.
