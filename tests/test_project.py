@@ -344,6 +344,23 @@ class ProjectTests(unittest.TestCase):
             self.assertEqual(q.review_title,p.review_title)
             self.assertEqual(q.clips[1].timeline_start,10)
 
+    def test_v3_persists_multivoice_scripts_and_reads_v2_without_them(self):
+        project=self.make_project()
+        project.narration_scripts=[{'schema_version':1,'id':'script-1',
+                                    'lines':[{'id':'line-1','voice_id':'V1'}]}]
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'dialogue.berofel.json'
+            project.save(str(path))
+            payload=json.loads(path.read_text(encoding='utf-8'))
+            self.assertEqual(payload['version'],3)
+            loaded=Project.load(str(path))
+            self.assertEqual(loaded.narration_scripts,project.narration_scripts)
+            payload['version']=2
+            payload.pop('narration_scripts')
+            path.write_text(json.dumps(payload),encoding='utf-8')
+            migrated=Project.load(str(path))
+            self.assertEqual(migrated.narration_scripts,[])
+
     def test_load_v2_without_review_fields_keeps_backward_compatibility(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'legacy.json'

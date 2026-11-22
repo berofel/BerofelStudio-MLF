@@ -86,6 +86,9 @@ class Clip:
     caption_source_end: float | None = None
     caption_words: list[dict] = field(default_factory=list)
     caption_generated_text: str = ''
+    narration_script_id: str = ''
+    narration_line_id: str = ''
+    narration_voice_id: str = ''
 
     @property
     def duration(self) -> float:
@@ -116,6 +119,7 @@ class Project:
     fps: int = 30
     review_queue: list[dict] = field(default_factory=list)
     review_title: str = ''
+    narration_scripts: list[dict] = field(default_factory=list)
 
     @property
     def duration(self) -> float:
@@ -851,9 +855,10 @@ class Project:
 
     def save(self, path: str):
         p = Path(path).resolve()
-        data = dict(version=2, name=self.name, media=self.media, transcripts=self.transcripts,
+        data = dict(version=3, name=self.name, media=self.media, transcripts=self.transcripts,
                     markers=self.markers,ai_coverage=self.ai_coverage,
                     review_queue=self.review_queue,review_title=self.review_title,
+                    narration_scripts=self.narration_scripts,
                     width=self.width, height=self.height, fps=self.fps,
                     tracks=[asdict(t) for t in self.tracks],
                     clips=[c.as_dict() for c in self.clips])
@@ -878,7 +883,7 @@ class Project:
                 project.clips.append(clip)
                 position += clip.duration
             return project
-        if version != 2:
+        if version not in (2, 3):
             raise ValueError(f'Versao de projeto nao suportada: {version}')
         tracks = [Track(**t) for t in data.get('tracks', [])]
         if not tracks:
@@ -892,4 +897,5 @@ class Project:
                    path=str(p), tracks=tracks, width=data.get('width',1280),
                    height=data.get('height',720), fps=data.get('fps',30),
                    review_queue=data.get('review_queue',[]),
-                   review_title=data.get('review_title',''))
+                   review_title=data.get('review_title',''),
+                   narration_scripts=data.get('narration_scripts',[]))
