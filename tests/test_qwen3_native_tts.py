@@ -179,30 +179,38 @@ class NativeQwenRealIntegrationTests(unittest.TestCase):
         from berofel.services.voice_profiles import VoiceProfileManager
         profiles=VoiceProfileManager().list_profiles()
         profile=next(item for item in profiles if item.get('authorized') and item.get('reference_text'))
-        for engine in native.ENGINE_IDS:
-            with self.subTest(engine=engine):
-                chunks=[]
-                result=generate_narration(NarrationRequest(
-                    text='O Berofel Studio está testando a narração rápida do Qwen em português brasileiro. Código '+uuid.uuid4().hex[:8],
-                    voice=profile['sample_path'],reference_text=profile['reference_text'],
-                    language='portuguese',consent=True,engine=engine,
-                    project_path=os.environ.get('BEROFEL_QWEN_TURBO_TEST_PROJECT','')),
-                    audio_chunk=chunks.append if engine==native.ENGINE_ID else None)
-                path=Path(result['path'])
-                self.assertTrue(path.is_file())
-                duration,rate,frames=native._wav_info(path)
-                self.assertGreater(duration,1.0);self.assertEqual(rate,24000);self.assertGreater(frames,24000)
-                self.assertEqual(result['engine'],engine)
-                self.assertEqual(result['threads'],native.threads_for_engine(engine))
-                if engine==native.ENGINE_ID:
-                    self.assertTrue(chunks,'O servidor nativo não entregou chunks durante a geração.')
-                    self.assertEqual(sum(len(chunk) for chunk in chunks),frames*4)
-                    self.assertIsNotNone(result['first_audio_chunk_seconds'])
-                    self.assertIsNotNone(result['first_audio_request_seconds'])
-                    self.assertGreaterEqual(result['first_audio_request_seconds'],
-                                            result['first_audio_chunk_seconds'])
-                    self.assertGreater(result['streamed_pcm_bytes'],0)
-                    self.assertGreater(result['streamed_chunk_count'],0)
+        # Real integration runs must never write inference/cache output into
+        # the user's persistent cache or narration folder.
+        with tempfile.TemporaryDirectory(prefix='bfs_native_real_test_') as work, \
+             patch.dict(os.environ, {
+                 'BEROFEL_AI_CACHE': str(Path(work) / 'ai-cache'),
+                 'BEROFEL_QWEN3_PROMPT_CACHE': str(Path(work) / 'prompt-cache'),
+                 'BEROFEL_QWEN_TURBO_TEST_PROJECT': str(Path(work) / 'project.bfsproj'),
+             }, clear=False):
+            for engine in native.ENGINE_IDS:
+                with self.subTest(engine=engine):
+                    chunks=[]
+                    result=generate_narration(NarrationRequest(
+                        text='O Berofel Studio está testando a narração rápida do Qwen em português brasileiro. Código '+uuid.uuid4().hex[:8],
+                        voice=profile['sample_path'],reference_text=profile['reference_text'],
+                        language='portuguese',consent=True,engine=engine,
+                        project_path=os.environ['BEROFEL_QWEN_TURBO_TEST_PROJECT']),
+                        audio_chunk=chunks.append if engine==native.ENGINE_ID else None)
+                    path=Path(result['path'])
+                    self.assertTrue(path.is_file())
+                    duration,rate,frames=native._wav_info(path)
+                    self.assertGreater(duration,1.0);self.assertEqual(rate,24000);self.assertGreater(frames,24000)
+                    self.assertEqual(result['engine'],engine)
+                    self.assertEqual(result['threads'],native.threads_for_engine(engine))
+                    if engine==native.ENGINE_ID:
+                        self.assertTrue(chunks,'O servidor nativo não entregou chunks durante a geração.')
+                        self.assertEqual(sum(len(chunk) for chunk in chunks),frames*4)
+                        self.assertIsNotNone(result['first_audio_chunk_seconds'])
+                        self.assertIsNotNone(result['first_audio_request_seconds'])
+                        self.assertGreaterEqual(result['first_audio_request_seconds'],
+                                                result['first_audio_chunk_seconds'])
+                        self.assertGreater(result['streamed_pcm_bytes'],0)
+                        self.assertGreater(result['streamed_chunk_count'],0)
 
 
 if __name__=='__main__':
