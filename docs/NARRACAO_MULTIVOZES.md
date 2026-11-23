@@ -119,6 +119,20 @@ O validador também aceita `--profile-v3` para montar o roteiro V1/V2/V3 com 100
 
 O modo verifica lotes na ordem V1 (70), V2 (20), V3 (10), um WAV audível e independente por fala e métricas de preparo/carga. Os WAVs, projeto e caches ficam temporários. Essa execução Qwen de 100 falas ainda não foi realizada com três referências autorizadas distintas: há apenas uma gravação autorizada diferente no computador. O teste unitário do cronograma e a fila de 100 falas com gerador WAV sintético validam orquestração, agrupamento, cache e regeneração; não substituem inferência Qwen nem avaliação auditiva.
 
+Para validar pelo painel Qt do próprio editor, use `scripts/validar_multivoice_ui_cache_real.py`. Com `--profile-v1` e `--profile-v2`, ele gera uma fala de cada perfil e confere os clips, espaçamento, persistência e exportações. Acrescente `--profile-v3` para executar as 100 falas (70/20/10); nesse caso, são obrigatórios três perfis autorizados com referências distintas. O editor e o backend trabalham offline, e os artefatos do smoke são temporários:
+
+```powershell
+& "$env:LOCALAPPDATA\BFS\venv\Scripts\python.exe" `
+  scripts/validar_multivoice_ui_cache_real.py `
+  --confirm-own-or-authorized-voice `
+  --profile-v1 ID_DO_PERFIL_V1 `
+  --profile-v2 ID_DO_PERFIL_V2 `
+  --profile-v3 ID_DO_PERFIL_V3 `
+  --engine qwen3-tts-purec-int8
+```
+
+Sem `--profile-v2`/`--profile-v3`, o smoke mantém o caso de uma referência associada a dois slots e verifica o cache de fala repetida. Esse caminho não deve ser reportado como validação de locutores distintos.
+
 ### Diagnosticar troca Pure C sem usar gravações pessoais
 
 O smoke `scripts/validar_troca_perfil_multivozes_sintetico.py` cria duas referências artificiais localmente, gera uma fala por personagem, troca o perfil entre lotes e apaga WAVs/caches temporários. Ele mede a implementação do servidor, não a qualidade da clonagem. Foi executado uma vez por perfil nesta sessão, em seis threads, sem downloads:
