@@ -133,6 +133,17 @@ Para validar pelo painel Qt do próprio editor, use `scripts/validar_multivoice_
 
 Sem `--profile-v2`/`--profile-v3`, o smoke mantém o caso de uma referência associada a dois slots e verifica o cache de fala repetida. Esse caminho não deve ser reportado como validação de locutores distintos.
 
+#### Smoke Qt atualizado com os dois perfis Pure C
+
+Em 2026-11-22, rodei o validador Qt acima nos perfis Pure C INT8 e Pure C Mixer, offline, com a única referência autorizada disponível mapeada aos slots V1 e V2. Em ambos, a primeira fala foi sintetizada e a segunda reutilizou o cache (`cache_hit=false/true`); os WAVs são endereços independentes com o mesmo hash por serem a mesma frase/voz. A interface inseriu os dois clips, preservou roteiro e IDs ao salvar/reabrir, exportou WAV não silencioso e MP4 com áudio/vídeo. As pastas e os arquivos temporários foram removidos.
+
+| Perfil | Tempo do roteiro | Duração da síntese inédita | Preparo da referência | Carga do servidor | RTF de ponta a ponta da tarefa |
+|---|---:|---:|---:|---:|---:|
+| Pure C INT8 | 10,019 s | 6,08 s | 2,119 s | 2,974 s | 1,648 |
+| Pure C Mixer | 8,207 s | 4,72 s | 2,133 s | 2,427 s | 1,739 |
+
+Esses tempos são de uma execução curta por modo, incluem o fluxo do smoke e não estão atribuídos ao Ryzen 7 5700G. Como ambos usam o mesmo perfil e texto repetido, esta medição não verifica troca de locutor, estabilidade de timbre nem a fila real de 100 falas com três identidades.
+
 ### Diagnosticar troca Pure C sem usar gravações pessoais
 
 O smoke `scripts/validar_troca_perfil_multivozes_sintetico.py` cria duas referências artificiais localmente, gera uma fala por personagem, troca o perfil entre lotes e apaga WAVs/caches temporários. Ele mede a implementação do servidor, não a qualidade da clonagem. Foi executado uma vez por perfil nesta sessão, em seis threads, sem downloads:
