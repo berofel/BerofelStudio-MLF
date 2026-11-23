@@ -192,6 +192,9 @@ def main() -> int:
     parser.add_argument('--profile-v3', help='ID distinto para V3; ativa o roteiro Qt de 100 falas.')
     parser.add_argument('--one-voice-lines', type=int,
                         help='Gera N textos inéditos em V1 para testar reuso do worker (1–1.000).')
+    parser.add_argument('--verify-individual-regeneration', action='store_true',
+                        help='No smoke de uma voz (2+ falas), edita e regenera uma fala pela UI; '
+                             'verifica que os outros WAVs permanecem idênticos.')
     parser.add_argument('--confirm-distinct-speakers', action='store_true',
                         help='Confirma que os perfis selecionados representam pessoas diferentes.')
     parser.add_argument('--engine', choices=ENGINES, required=True)
@@ -202,6 +205,9 @@ def main() -> int:
         parser.error('--profile-v3 exige também um perfil distinto em --profile-v2.')
     if args.one_voice_lines is not None and (args.profile_v2 or args.profile_v3):
         parser.error('--one-voice-lines não pode ser combinado com perfis V2/V3.')
+    if args.verify_individual_regeneration and (
+            args.one_voice_lines is None or args.one_voice_lines < 2):
+        parser.error('--verify-individual-regeneration exige --one-voice-lines com 2 ou mais falas.')
     if args.one_voice_lines is not None and not 1 <= args.one_voice_lines <= 1000:
         parser.error('--one-voice-lines aceita entre 1 e 1.000 falas.')
     try:
@@ -229,7 +235,7 @@ def main() -> int:
         profiles_by_voice = {'V1': profiles[0], 'V2': profiles[0]}
 
     os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-    from PySide6.QtCore import QSettings
+    from PySide6.QtCore import QSettings, Qt
     from PySide6.QtMultimedia import QMediaPlayer
     from PySide6.QtWidgets import QApplication, QFileDialog
     from unittest.mock import patch
@@ -351,6 +357,55 @@ def main() -> int:
                     window.narration_panel._player.playbackState() != stopped):
                 raise RuntimeError('A geração multivozes iniciou reprodução sem comando do usuário.')
 
+            regeneration_result = None
+            if args.verify_individual_regeneration:
+                before_data = next((item for item in window.project.narration_scripts
+                                    if item.get('id') == script.id), None)
+                if before_data is None:
+                    raise RuntimeError('O roteiro não foi persistido antes da regeneração de teste.')
+                before_script = MultiVoiceScript.from_dict(before_data)
+                target = before_script.lines[-1]
+                untouched_hashes = {
+                    line.id: _sha256(line.audio_path)
+                    for line in before_script.lines if line.id != target.id
+                }
+                old_target_path = target.audio_path
+                corrected_text = target.text + ' Esta frase foi regenerada individualmente.'
+                panel.select_line(target.id)
+                selected_row = next((row for row in range(panel.lines.rowCount())
+                                     if panel.lines.item(row, 2) and
+                                     panel.lines.item(row, 2).data(
+                                         Qt.ItemDataRole.UserRole
+                                     ) == target.id), None)
+                if selected_row is None:
+                    raise RuntimeError('A fala de teste não está selecionável na tabela da interface.')
+                panel.lines.item(selected_row, 2).setText(corrected_text)
+                panel.regenerate_line.click()
+                _wait_task(window, app)
+                after_data = next((item for item in window.project.narration_scripts
+                                   if item.get('id') == script.id), None)
+                if after_data is None:
+                    raise RuntimeError('O editor não persistiu o roteiro após regenerar a fala.')
+                after_script = MultiVoiceScript.from_dict(after_data)
+                updated = next(line for line in after_script.lines if line.id == target.id)
+                if (updated.text != corrected_text or updated.audio_path == old_target_path or
+                        updated.status != 'generated' or not Path(updated.audio_path).is_file()):
+                    raise RuntimeError('A fala selecionada não foi substituída por um WAV válido.')
+                for line in after_script.lines:
+                    if line.id == target.id:
+                        continue
+                    if _sha256(line.audio_path) != untouched_hashes[line.id]:
+                        raise RuntimeError(f'A regeneração alterou o WAV não selecionado ({line.number:03d}).')
+                if (window.live.active or window.player.playbackState() != stopped or
+                        window.narration_panel._player.playbackState() != stopped):
+                    raise RuntimeError('Regenerar uma fala iniciou reprodução sem comando do usuário.')
+                regeneration_result = {
+                    'verified': True,
+                    'line_number': updated.number,
+                    'other_wav_hashes_unchanged': len(untouched_hashes),
+                    'replacement_wav': _measure_wav(updated.audio_path),
+                }
+
             saved_data = next((item for item in window.project.narration_scripts
                                if item.get('id') == script.id), None)
             if saved_data is None:
@@ -441,6 +496,7 @@ def main() -> int:
                 'offline': True,
                 'through_editor_ui': True,
                 'automatic_playback_started': False,
+                'individual_regeneration': regeneration_result,
                 'engine': args.engine,
                 'model': 'Qwen/Qwen3-TTS-12Hz-0.6B-Base',
                 'distinct_reference_audio_files': bool(args.profile_v2),
