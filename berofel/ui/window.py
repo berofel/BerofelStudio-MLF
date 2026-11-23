@@ -3894,7 +3894,7 @@ class MainWindow(QMainWindow):
             if not srt_path:return
             if not srt_path.lower().endswith('.srt'):srt_path+='.srt'
         originals=copy.deepcopy({t.original_id:self.project.clip(t.original_id) for t in targets})
-        opts=AIOptions()
+        opts=AIOptions(whisper_hotwords=project_hotwords(self.project.transcripts))
         known={c.id:words_in_clip(self.project,c) for c in selected
                if has_coverage(self.project,c,opts.whisper_model,opts.language)}
         seconds=sum(t.playback_seconds for t in targets)
@@ -4129,7 +4129,7 @@ class MainWindow(QMainWindow):
                 return
         captured=copy.deepcopy({t.original_id:self.project.clip(t.original_id) for t in targets})
         count,seconds=scope_summary(targets)
-        opts=AIOptions()
+        opts=AIOptions(whisper_hotwords=project_hotwords(self.project.transcripts))
         # Snapshot das palavras para que a thread não consulte um projeto mutável.
         known={c.id:words_in_clip(self.project,c) for c in selected
                if has_coverage(self.project,c,opts.whisper_model,opts.language)
@@ -4239,7 +4239,8 @@ class MainWindow(QMainWindow):
                                         'Instale o modelo e o executável via INSTALAR_QWEN_OPCIONAL.bat. '
                                         'Faster-Whisper e Silero continuam disponíveis sem Qwen.')
                 return
-        opts=AIOptions(enable_qwen=semantic)
+        opts=AIOptions(enable_qwen=semantic,
+                       whisper_hotwords=project_hotwords(self.project.transcripts))
         self.statusBar().showMessage(f'Batata Quente: processando {len(selected)} bloco(s) selecionado(s)...')
         def worker(progress,control=None,stage=None):
             return run_analysis(selected, options=opts, progress=progress,

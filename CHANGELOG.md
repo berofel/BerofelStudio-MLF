@@ -7,6 +7,7 @@
 - Marcadores de autocorreção podem reconhecer correções explícitas de números e negação apenas quando a nova oração mantém evidências do mesmo tópico; mudanças de ação ou entidades distintas continuam protegidas.
 - A limpeza pode fornecer vocabulário local do produto ao Faster-Whisper somente quando precisa criar uma transcrição. A dica é incluída na chave do cache, não altera o texto/timestamps e não ativa Qwen/LLM.
 - O vocabulário de transcrição agora também aproveita, com limites, termos recorrentes ou reconhecidos com alta confiança em transcrições já salvas no projeto; palavras comuns e itens de baixa confiança são filtrados.
+- As rotas Uma voz/legendas/transcrição da fila e Batata Quente usam a mesma dica contextual, com cache segregado pelas opções de reconhecimento.
 - Normalização controlada de formas coloquiais/sem acento serve somente para comparação; o texto original permanece intacto.
 - Cobertura adicionada para correções, continuidade, equivalências protegidas, normalização e passagem/cache de hotwords. A precisão editorial ainda precisa de um corpus de voz PT-BR anotado por humanos.
 

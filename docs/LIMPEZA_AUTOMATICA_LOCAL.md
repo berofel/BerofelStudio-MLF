@@ -32,13 +32,15 @@ Faster-Whisper quando a limpeza precisa criar uma transcrição; ela participa d
 chave de cache e não reescreve palavras nem seus timestamps. Uma transcrição já
 existente continua sendo reutilizada sem executar Whisper.
 
-Essa lista inclui termos frequentes/confiança alta de transcrições já salvas no
-projeto, além dos nomes fixos dos motores e recursos do editor. A coleta roda
-localmente, ignora palavras comuns e itens de baixa confiança, e tem limite de
-quantidade/tamanho. Os termos não são enviados a serviços externos. Como o
-Whisper trata hotwords como dicas de decodificação, elas podem favorecer uma
-palavra esperada e também enviesar o resultado; por isso não substituem a
-revisão nem são usadas como correção ortográfica confirmada.
+Essa lista também é usada pelas rotas de transcrição e legendas iniciadas pelo
+editor, não apenas pela limpeza. Inclui termos frequentes/confiança alta de
+transcrições já salvas no projeto, além dos nomes fixos dos motores e recursos
+do editor. A coleta roda localmente, ignora palavras comuns e itens de baixa
+confiança, e tem limite de quantidade/tamanho. Os termos não são enviados a
+serviços externos. Como o Whisper trata hotwords como dicas de decodificação,
+elas podem favorecer uma palavra esperada e também enviesar o resultado; por
+isso não substituem a revisão nem são usadas como correção ortográfica
+confirmada.
 
 Autocorreções explícitas como “na verdade”, “quer dizer” e “ou melhor” recebem
 tratamento direcional. Uma mudança de número ou negação só pode passar pela
