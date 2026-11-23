@@ -1,7 +1,7 @@
 """Inspector de legendas editáveis da timeline."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal, QSignalBlocker
+from PySide6.QtCore import Qt, Signal, QSignalBlocker, QThreadPool
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QColorDialog, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
@@ -11,6 +11,17 @@ from PySide6.QtWidgets import (
 from .wheel_controls import WheelGuardSpinBox as QSpinBox
 from .wheel_controls import WheelGuardComboBox
 from PySide6.QtWidgets import QTextEdit
+
+from berofel.services.transcript_proofing import (apply_suggestion,
+    load_pt_br_dictionary, spelling_suggestions)
+from berofel.services.tasks import Task
+
+
+def _proofread_text(text):
+    dictionary = load_pt_br_dictionary()
+    if dictionary is None:
+        return text, None
+    return text, spelling_suggestions(text, dictionary=dictionary)
 
 
 class CaptionPanel(QWidget):
@@ -62,6 +73,27 @@ class CaptionPanel(QWidget):
         self.apply_button.clicked.connect(self._apply_text)
         actions.addWidget(self.apply_button)
         root.addLayout(actions)
+
+        self.proofread_button = QPushButton('Revisar ortografia')
+        self.proofread_button.setObjectName('proofreadCaptionButton')
+        self.proofread_button.clicked.connect(self._proofread)
+        root.addWidget(self.proofread_button)
+        self.spelling_list = QListWidget()
+        self.spelling_list.setObjectName('captionSpellingSuggestions')
+        self.spelling_list.setMaximumHeight(112)
+        self.spelling_list.setToolTip('Sugestões locais. Confira antes de aplicar.')
+        root.addWidget(self.spelling_list)
+        self.apply_spelling_button = QPushButton('Aplicar sugestão selecionada')
+        self.apply_spelling_button.setObjectName('applySpellingSuggestionButton')
+        self.apply_spelling_button.clicked.connect(self._apply_spelling_suggestion)
+        self.apply_spelling_button.setEnabled(False)
+        self.spelling_list.currentRowChanged.connect(
+            lambda row: self.apply_spelling_button.setEnabled(row >= 0))
+        root.addWidget(self.apply_spelling_button)
+        self._spelling_issues = ()
+        self._proofread_task = None
+        self._proofread_request = 0
+        self._proofread_pending = None
 
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
@@ -145,9 +177,13 @@ class CaptionPanel(QWidget):
         self._load_clip(clip_id)
 
     def _load_clip(self, clip_id):
+        self._proofread_request += 1
         self._current_id = str(clip_id or '')
         clip = self._project.clip(self._current_id) if self._project and self._current_id else None
         self._set_controls_enabled(bool(clip and clip.kind == 'text'))
+        self.spelling_list.clear()
+        self._spelling_issues = ()
+        self.apply_spelling_button.setEnabled(False)
         with QSignalBlocker(self.text_edit):
             self.text_edit.setPlainText(clip.text if clip else '')
         if clip:
@@ -184,6 +220,91 @@ class CaptionPanel(QWidget):
     def _apply_text(self):
         if self._current_id:
             self.apply_text_requested.emit(self._current_id, self.text_edit.toPlainText())
+
+    def _proofread(self):
+        self.spelling_list.clear()
+        self._spelling_issues = ()
+        if not self._current_id:
+            self.state_label.setText('Selecione uma legenda antes da revisão ortográfica.')
+            return
+        if self._proofread_task is not None:
+            return
+        text = self.text_edit.toPlainText()
+        self._proofread_request += 1
+        request = self._proofread_request
+        clip_id = self._current_id
+        self._proofread_pending = (request, clip_id, text)
+        self.proofread_button.setEnabled(False)
+        self.state_label.setText('Verificando ortografia localmente…')
+        task = Task(_proofread_text, text)
+        self._proofread_task = task
+        task.signals.success.connect(self._proofread_success)
+        task.signals.error.connect(self._proofread_error)
+        task.signals.finished.connect(self._proofread_finished)
+        QThreadPool.globalInstance().start(task)
+
+    def _proofread_finished(self):
+        self._proofread_task = None
+        self._proofread_pending = None
+        self.proofread_button.setEnabled(bool(self._current_id))
+
+    def _proofread_success(self, result):
+        if self._proofread_pending is None:
+            return
+        request, clip_id, _text = self._proofread_pending
+        self._proofread_complete(request, clip_id, result)
+
+    def _proofread_error(self, error):
+        if self._proofread_pending is None:
+            return
+        request, clip_id, text = self._proofread_pending
+        self._proofread_complete(request, clip_id, (text, RuntimeError(error)))
+
+    def _proofread_complete(self, request, clip_id, result):
+        if request != self._proofread_request or clip_id != self._current_id:
+            return
+        text, issues = result
+        if isinstance(issues, Exception):
+            self.state_label.setText(f'Falha na revisão ortográfica local: {issues}')
+            return
+        if issues is None:
+            self.state_label.setText(
+                'Dicionário pt-BR indisponível. Configure VERO/Hunspell e Spylls; '
+                'a revisão funciona localmente e só sugere alterações.')
+            return
+        if self.text_edit.toPlainText() != text:
+            self.state_label.setText('O texto mudou durante a revisão. Revise novamente.')
+            return
+        self._spelling_issues = issues
+        if not self._spelling_issues:
+            self.state_label.setText('Nenhum possível erro ortográfico encontrado.')
+            return
+        for issue_index, issue in enumerate(self._spelling_issues):
+            for suggestion in issue.suggestions:
+                item = QListWidgetItem(
+                    f'{issue.word} → {suggestion}  ·  posição {issue.start + 1}')
+                item.setData(Qt.ItemDataRole.UserRole, (issue_index, suggestion))
+                self.spelling_list.addItem(item)
+        self.state_label.setText(
+            f'{len(self._spelling_issues)} palavra(s) para conferir. '
+            'Selecione uma sugestão e aplique; o texto só é salvo ao usar Aplicar texto.')
+
+    def _apply_spelling_suggestion(self):
+        row = self.spelling_list.currentItem()
+        if not row:
+            return
+        issue_index, replacement = row.data(Qt.ItemDataRole.UserRole)
+        if not 0 <= int(issue_index) < len(self._spelling_issues):
+            return
+        try:
+            corrected = apply_suggestion(self.text_edit.toPlainText(),
+                                         self._spelling_issues[int(issue_index)],
+                                         str(replacement))
+        except ValueError as exc:
+            self.state_label.setText(str(exc) + ' Execute a revisão novamente.')
+            return
+        self.text_edit.setPlainText(corrected)
+        self._proofread()
 
     def _apply_preset(self, index):
         if index:

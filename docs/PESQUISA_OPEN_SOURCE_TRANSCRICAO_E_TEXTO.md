@@ -17,8 +17,8 @@ modelo de fala, servidor de linguagem ou chamada de rede ao fluxo normal.
 | [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | Alternativa C/C++ CPU com quantização e otimizações de hardware | Candidato a comparação experimental futura; trocar agora duplicaria o ASR e exige avaliar PT-BR, timestamps e qualidade no mesmo áudio. |
 | [Vosk](https://github.com/alphacep/vosk-api) | ASR offline com modelos pequenos e vocabulário adaptável em alguns modelos | Alternativa de baixa memória a medir, mas não substitui Faster-Whisper sem teste de qualidade PT-BR, palavras/timestamps e compatibilidade do pipeline. |
 | [WordCraft](https://github.com/storytold/wordcraft) | Modelo de produto para localizar dicionários por idioma e explicitar a origem do corretor | Não é motor de transcrição; serve como referência de organização. Manter dados linguísticos separados do código e sem downloads silenciosos. |
-| [LibreOffice VERO / dicionários](https://github.com/LibreOffice/dictionaries) | Fonte candidata para dicionário pt-BR Hunspell e vocabulário ortográfico | Ainda não integrado. Conferir licença e atribuição dos arquivos específicos antes de distribuí-los. |
-| [Spylls](https://github.com/zverok/spylls) | Port Python quase completo do Hunspell | Avaliar como componente opcional para sugestões ortográficas; não usar para cortes de áudio nem corrigir transcrição automaticamente. |
+| [LibreOffice VERO / dicionários](https://github.com/LibreOffice/dictionaries) | Dicionário pt-BR Hunspell de uso local | Instalador opcional baixa `.aff/.dic` de commit fixo, valida os Git blob SHA-1 upstream e grava a licença/atribuição ao lado dos arquivos. VERO informa LGPLv3 e MPL. |
+| [Spylls](https://github.com/zverok/spylls) | Port Python do Hunspell, lookup e sugestões | Adicionado ao conjunto opcional de dependências de IA (MPL 2.0); carregado somente ao pedir revisão ortográfica. Não participa de cortes nem corrige transcrição automaticamente. |
 | Word e Google Docs | Referência documentada para ditado, pontuação e edição por voz | São referências de interação. Seus algoritmos internos não são open source e não são tratados como código ou modelo reutilizável. |
 
 ## Alteração implementada
@@ -35,14 +35,23 @@ Essa proteção só influencia novas transcrições. Não altera transcrições 
 salvas, não muda timestamps e não aprova cortes. As legendas automáticas sem
 edição não são consideradas confirmação.
 
+O painel de legendas também ganhou **Revisar ortografia**. O Spylls e o
+dicionário VERO são carregados somente sob demanda; os itens são sugestões
+locais, selecionáveis uma a uma, e o texto do projeto só muda ao confirmar e
+usar o botão já existente **Aplicar texto**. Cada sugestão guarda seu intervalo
+de caracteres e é recusada se o texto mudou desde a análise. Isso corrige a
+legenda para revisão humana; não reescreve palavras transcritas nem seus
+timestamps. Se não houver dicionário local, a UI informa como prepará-lo.
+
 ## Recursos não adicionados
 
-- Nenhum modelo ASR adicional ou dicionário foi baixado.
-- Não adicionamos spaCy, LanguageTool, Hunspell ou Spylls como dependência
-  obrigatória. No ambiente auditado não havia esses componentes/dicionários.
-- Uma checagem ortográfica futura deve gerar sugestões revisáveis e nunca
-  substituir palavras temporizadas silenciosamente; um corretor de texto não
-  pode inventar os tempos de fala.
+- Nenhum modelo ASR adicional foi baixado. O dicionário VERO pt-BR foi obtido separadamente pelo instalador explícito, com revisão fixada e hashes validados, em `%LOCALAPPDATA%\BFS`; não é versionado no Git.
+- Não adicionamos spaCy, LanguageTool ou Hunspell nativo. Spylls é uma
+  dependência pequena do conjunto opcional de IA; VERO só é baixado pelo
+  instalador explícito e idempotente.
+- O corretor ortográfico instalado gera sugestões revisáveis e nunca substitui
+  palavras temporizadas silenciosamente; correção de texto não inventa tempos
+  de fala.
 - “Append and correct” em áudio ao vivo pode repetir inferência sobre janelas
   sobrepostas. É inadequado como otimização automática para a edição de vídeo
   sem benchmark local e controle de custo.
@@ -75,4 +84,5 @@ dados não foram enviados para fora do computador.
 - WordCraft: [dicionários de ortografia](https://github.com/storytold/wordcraft/blob/main/docs/spelling-dictionaries.md)
 - Spylls: [port Python do Hunspell](https://github.com/zverok/spylls)
 - LibreOffice: [repositório de dicionários](https://github.com/LibreOffice/dictionaries)
+- Spylls: [API Dictionary.from_files/suggest](https://spylls.readthedocs.io/en/latest/hunspell/dictionary.html)
 - Ditado: [Microsoft Word](https://support.microsoft.com/en-gb/word/dictate-your-documents-in-word-for-the-web?redirectsourcepath=%2Farticle%2Fdictate-with-your-voice-in-office-d4fd296e-8f15-4168-afec-1f95b13a6408), [Google Docs](https://support.google.com/docs/answer/4492226?hl=en-PE)

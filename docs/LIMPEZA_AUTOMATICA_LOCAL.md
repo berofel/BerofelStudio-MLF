@@ -69,6 +69,27 @@ Pesquisa adicional de projetos de texto open source, dicionários locais,
 decisões de dependências e benchmark da coleta: [Pesquisa open source de
 transcrição e texto](PESQUISA_OPEN_SOURCE_TRANSCRICAO_E_TEXTO.md).
 
+## Revisão ortográfica local
+
+No painel direito **Legendas**, selecione uma legenda e use **Revisar
+ortografia**. O painel mostra sugestões do Spylls com o dicionário Hunspell
+VERO pt-BR. O carregamento e a revisão rodam em segundo plano; a primeira
+abertura do dicionário leva alguns segundos, e as próximas usam o cache da
+sessão. A revisão funciona sem rede depois da instalação. Selecione uma sugestão e aplique; depois
+use **Aplicar texto** para salvar a alteração no clip. O intervalo original da
+palavra é validado antes de substituir, então sugestões antigas não sobrescrevem
+texto modificado.
+
+Para instalar o dicionário uma vez, execute `scripts/instalar_corretor_pt_br.py`
+com o Python do ambiente BFS. O script baixa apenas os dois arquivos VERO da
+revisão fixa `1e848fbddd7fd8e03fb696ecc03ee1068fab141c`, verifica os Git blob
+SHA-1 antes de instalar em `%LOCALAPPDATA%\BFS\dictionaries`, registra a licença
+e instala `spylls==0.1.7` somente se estiver ausente. O fluxo de instalação
+opcional da IA também tenta preparar o dicionário; se a rede falhar, a instalação
+do Whisper permanece válida e a ortografia pode ser preparada depois. O VERO é
+licenciado pelo upstream sob LGPLv3/MPL. A revisão não muda transcrição nem
+timestamps e não utiliza modelos generativos.
+
 O fallback linguístico é Python padrão, sem spaCy nem downloads em tempo de uso.
 Se `rapidfuzz` já estiver instalado, a razão textual o usa opcionalmente; sem
 ele, `SequenceMatcher` permanece funcional. Tempos de VAD, transcrição, cache e

@@ -1,5 +1,12 @@
 # Limpeza automática modular local
 
+## Revisão ortográfica local pt-BR — 23/11/2026
+
+- Adicionado botão **Revisar ortografia** no painel de legendas, com sugestões pontuais e aplicação individual; o usuário confirma no campo e salva com **Aplicar texto**.
+- Integrado Spylls como dependência pequena do conjunto opcional de IA e criado instalador idempotente para VERO/Hunspell pt-BR em pasta BFS versionada, com verificação de integridade upstream e aviso de licença.
+- O corretor não reescreve transcrições, palavras temporizadas ou arquivos de origem; não usa LLM e funciona offline depois de instalado.
+- Adicionados testes de spans, sugestões, texto obsoleto, descoberta da pasta versionada e aplicação pelo painel Qt. Neste ambiente, Spylls 0.1.7 e o VERO pt-BR foram instalados localmente, os checksums foram validados e uma palavra com erro produziu uma sugestão real.
+
 ## Pesquisa open source e ASR local — 23/11/2026
 
 - Reduzida a coleta de hotwords de projeto: processamento incremental evita cópias e ordenação de todos os tokens; microbenchmark sintético de 50 mil palavras caiu de 0,1556 s para 0,1462 s e de 19,36 MiB para 0,035 MiB de alocação temporária medida.
