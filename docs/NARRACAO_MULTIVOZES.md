@@ -128,10 +128,11 @@ Para validar pelo painel Qt do próprio editor, use `scripts/validar_multivoice_
   --profile-v1 ID_DO_PERFIL_V1 `
   --profile-v2 ID_DO_PERFIL_V2 `
   --profile-v3 ID_DO_PERFIL_V3 `
+  --confirm-distinct-speakers `
   --engine qwen3-tts-purec-int8
 ```
 
-Sem `--profile-v2`/`--profile-v3`, o smoke mantém o caso de uma referência associada a dois slots e verifica o cache de fala repetida. Esse caminho não deve ser reportado como validação de locutores distintos.
+Com perfis diferentes, `--confirm-distinct-speakers` é obrigatório: arquivos de referência diferentes podem ser recortes do mesmo locutor. O relatório separa a checagem objetiva de arquivos distintos da confirmação humana das identidades. Sem `--profile-v2`/`--profile-v3`, o smoke mantém o caso de uma referência associada a dois slots e verifica o cache de fala repetida; esse caminho não valida locutores distintos.
 
 #### Smoke Qt atualizado com os dois perfis Pure C
 

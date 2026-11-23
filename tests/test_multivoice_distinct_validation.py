@@ -12,6 +12,7 @@ from scripts.validar_multivoice_distinct_profiles import (
     ACCEPTANCE_VOICE_ORDER, build_100_line_acceptance_script,
     select_authorized_distinct_profiles,
 )
+from scripts.validar_multivoice_ui_cache_real import validate_distinct_speaker_claim
 from berofel.services.multivoice_narration import parse_berofel_script
 from berofel.services.voice_profiles import VoiceProfileManager
 
@@ -33,6 +34,12 @@ class DistinctProfileAcceptanceTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_distinct_speaker_report_requires_explicit_confirmation(self):
+        validate_distinct_speaker_claim(None, False)
+        validate_distinct_speaker_claim('profile-v2', True)
+        with self.assertRaisesRegex(ValueError, 'arquivos diferentes'):
+            validate_distinct_speaker_claim('profile-v2', False)
 
     def _profile(self, name: str, source: Path, authorized: bool):
         return self.manager.create(name, source, 'portuguese', 'fala de teste',

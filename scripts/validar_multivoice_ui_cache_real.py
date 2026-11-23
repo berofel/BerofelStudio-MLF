@@ -31,6 +31,14 @@ ENGINES = ('qwen3-tts-purec-int8', 'qwen3-tts-purec-mixed',
 TEXT = 'Esta fala repetida será gerada uma vez e usada por dois personagens.'
 
 
+def validate_distinct_speaker_claim(profile_v2: str | None,
+                                    confirmed_distinct_speakers: bool) -> None:
+    """Do not equate different reference files with different people."""
+    if profile_v2 and not confirmed_distinct_speakers:
+        raise ValueError('Confirme que V1/V2/V3 representam locutores distintos; '
+                         'arquivos diferentes podem ser trechos da mesma pessoa.')
+
+
 def _sha256(path: str | Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open('rb') as source:
@@ -100,12 +108,18 @@ def main() -> int:
                         help='ID do perfil V1; obrigatório quando há vários autorizados.')
     parser.add_argument('--profile-v2', help='ID distinto para V2; ativa validação de duas vozes.')
     parser.add_argument('--profile-v3', help='ID distinto para V3; ativa o roteiro Qt de 100 falas.')
+    parser.add_argument('--confirm-distinct-speakers', action='store_true',
+                        help='Confirma que os perfis selecionados representam pessoas diferentes.')
     parser.add_argument('--engine', choices=ENGINES, required=True)
     args = parser.parse_args()
     if not args.confirm_own_or_authorized_voice:
         parser.error('confirme autorização para usar a referência vocal local.')
     if args.profile_v3 and not args.profile_v2:
         parser.error('--profile-v3 exige também um perfil distinto em --profile-v2.')
+    try:
+        validate_distinct_speaker_claim(args.profile_v2, args.confirm_distinct_speakers)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     manager = VoiceProfileManager()
     profiles = [item for item in manager.list_profiles()
@@ -295,7 +309,9 @@ def main() -> int:
                 'through_editor_ui': True,
                 'engine': args.engine,
                 'model': 'Qwen/Qwen3-TTS-12Hz-0.6B-Base',
-                'speaker_identity_distinct': bool(args.profile_v2),
+                'distinct_reference_audio_files': bool(args.profile_v2),
+                'distinct_speakers_confirmed_by_user': bool(
+                    args.profile_v2 and args.confirm_distinct_speakers),
                 'voice_profile_ids': {voice_id: item['id']
                                       for voice_id, item in profiles_by_voice.items()},
                 'voice_line_counts': voice_counts,
