@@ -374,8 +374,10 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                     self.assertEqual(generated_results[0]['profile_prepare_seconds'],0.0)
                     self.assertEqual(generated_results[0]['model_load_seconds'],0.0)
                     self.assertEqual(purec._PROCESS.pid, server_pid)
-                    self.assertIsNotNone(window.narration_stream.first_chunk_latency_seconds,
-                        'Pure C PCM chunks must reach the editor preview player.')
+                    self.assertFalse(window.live.active,
+                        'Pré-aquecimento e geração não podem iniciar Play na timeline.')
+                    self.assertEqual(window.player.playbackState(),
+                        window.player.PlaybackState.StoppedState)
                     print('PUREC_PREWARM_GUI_RESULT ' + json.dumps({
                         key: generated_results[0].get(key) for key in (
                             'engine','duration','generation_seconds',
@@ -439,8 +441,13 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                 self.assertTrue(Path(clips[0].source).is_file())
                 if test_engine == purec.ENGINE_ID:
                     self.assertIn('6 threads',panel.audio_history[-1][1])
-                    self.assertIsNotNone(window.narration_stream.first_chunk_latency_seconds,
-                        'Pure C PCM chunks must reach the editor preview player.')
+                self.assertFalse(window.live.active,
+                    'Gerar e inserir um WAV não pode iniciar Play na timeline.')
+                self.assertEqual(window.player.playbackState(),
+                    window.player.PlaybackState.StoppedState)
+                self.assertEqual(panel._player.playbackState(),
+                    panel._player.PlaybackState.StoppedState,
+                    'Gerar narração não pode iniciar o player manual do painel.')
                 self.assertGreater(clips[0].duration, 1.0)
                 self.assertIn(clips[0].source, window.project.media)
                 from berofel.core.project import Clip

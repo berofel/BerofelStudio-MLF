@@ -383,15 +383,18 @@ class ActionsUITests(unittest.TestCase):
             self.assertIn('Turbo',panel.audio_history[0][1])
             self.assertIn('Equilibrado',panel.audio_history[1][1])
             class FakePlayer:
+                def __init__(self): self.play_count=0
                 def setSource(self,url): self._source=url
                 def source(self): return self._source
                 def stop(self): pass
-                def play(self): pass
+                def play(self): self.play_count+=1
             panel._player=FakePlayer()
-            panel._listen_previous()
+            panel.listen_previous.click()
             self.assertEqual(Path(panel._player.source().toLocalFile()),samples[0])
-            panel._listen()
+            self.assertEqual(panel._player.play_count,1)
+            panel.listen.click()
             self.assertEqual(Path(panel._player.source().toLocalFile()),samples[1])
+            self.assertEqual(panel._player.play_count,2)
             panel.close()
 
     def test_new_custom_voice_uses_qwen_and_requires_reference_audio(self):

@@ -230,6 +230,7 @@ def main() -> int:
 
     os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
     from PySide6.QtCore import QSettings
+    from PySide6.QtMultimedia import QMediaPlayer
     from PySide6.QtWidgets import QApplication, QFileDialog
     from unittest.mock import patch
     from berofel.services.project_recovery import load_project
@@ -345,6 +346,11 @@ def main() -> int:
                 window.generate_multivoice_ui(script)
                 _wait_task(window, app, max(180_000, len(script.lines) * 12_000))
 
+            stopped = QMediaPlayer.PlaybackState.StoppedState
+            if (window.live.active or window.player.playbackState() != stopped or
+                    window.narration_panel._player.playbackState() != stopped):
+                raise RuntimeError('A geração multivozes iniciou reprodução sem comando do usuário.')
+
             saved_data = next((item for item in window.project.narration_scripts
                                if item.get('id') == script.id), None)
             if saved_data is None:
@@ -434,6 +440,7 @@ def main() -> int:
             report = {
                 'offline': True,
                 'through_editor_ui': True,
+                'automatic_playback_started': False,
                 'engine': args.engine,
                 'model': 'Qwen/Qwen3-TTS-12Hz-0.6B-Base',
                 'distinct_reference_audio_files': bool(args.profile_v2),

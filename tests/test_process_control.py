@@ -16,6 +16,24 @@ from berofel.core.project import Clip
 
 
 class ControlTests(unittest.TestCase):
+    def test_task_does_not_deliver_audio_chunks_unless_explicitly_enabled(self):
+        def synthesize(audio_chunk=None):
+            if audio_chunk is not None:
+                audio_chunk(b'pcm')
+            return audio_chunk is not None
+
+        default_chunks = []
+        default_task = Task(synthesize)
+        default_task.signals.audio_chunk.connect(default_chunks.append)
+        default_task.run()
+        self.assertEqual(default_chunks, [])
+
+        streamed_chunks = []
+        streamed_task = Task(synthesize, stream_audio=True)
+        streamed_task.signals.audio_chunk.connect(streamed_chunks.append)
+        streamed_task.run()
+        self.assertEqual(streamed_chunks, [b'pcm'])
+
     def test_cancel_after_task_result_cleans_nested_temporary_directory(self):
         with tempfile.TemporaryDirectory() as folder:
             task_ref={}
