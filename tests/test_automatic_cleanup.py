@@ -147,6 +147,21 @@ class AutomaticCleanupTests(unittest.TestCase):
         self.assertEqual(candidates,[])
         self.assertIn('repetição integral pode ser intencional',protected)
 
+    def test_context_does_not_erase_repeated_emphasis_from_an_earlier_take(self):
+        first=words('Esse recurso é muito, muito importante.',1.)
+        second=words('Esse recurso é muito importante.',8.)
+        candidates,protected=_context_candidates(
+            clip(),{'words':first+second},[(4.,7.8)])
+        self.assertEqual(candidates,[])
+        self.assertIn('ênfase repetida preservada',protected)
+
+    def test_written_number_forms_do_not_hide_quantity_changes(self):
+        first=words('O editor processa cinquenta arquivos.',1.)
+        second=words('O editor processa cento e cinquenta arquivos.',8.)
+        candidates,_=_context_candidates(
+            clip(),{'words':first+second},[(4.,7.8)])
+        self.assertEqual(candidates,[])
+
     def test_long_complete_repetition_is_not_cut_via_a_shorter_suffix(self):
         sentence='Hoje nós vamos mostrar como configurar o programa e adicionar legendas automaticamente no vídeo.'
         sequence=words(sentence,1.)+words(sentence,8.)
@@ -240,6 +255,14 @@ class AutomaticCleanupTests(unittest.TestCase):
             words_all=words(left,1.)+words(right,8.)
             candidates,_=_context_candidates(clip(),{'words':words_all},[(4.,7.8)])
             self.assertEqual(candidates,[],(left,right))
+
+    def test_additive_detail_inside_a_later_phrase_is_preserved(self):
+        first=words('Hoje vamos editar o vídeo no Berofel Studio.',1.)
+        second=words('Hoje também vamos editar as legendas no Berofel Studio.',8.)
+        candidates,protected=_context_candidates(
+            clip(),{'words':first+second},[(4.,7.8)])
+        self.assertEqual(candidates,[])
+        self.assertIn('continuidade ou complemento da fala',protected)
 
     def test_context_aliases_are_comparison_only_and_transcript_untouched(self):
         raw='Hoje iremos instalar o programa no computador.'

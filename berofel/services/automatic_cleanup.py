@@ -278,6 +278,15 @@ def _number_concepts(numbers: set[str] | frozenset[str]) -> set[str]:
     return {'numero:'+value for value in numbers}
 
 
+def _repeated_emphasis(tokens: list[str]) -> Counter[str]:
+    """Count adjacent emphasis words so Context cannot erase spoken emphasis."""
+    repeated=Counter()
+    for left,right in zip(tokens,tokens[1:]):
+        if left==right and left in _EMPHASIS_WORDS:
+            repeated[left]+=1
+    return repeated
+
+
 @lru_cache(maxsize=8192)
 def _phrase_signature(text: str) -> PhraseSignature:
     tokens=_token_cache(text)
@@ -601,6 +610,11 @@ def _context_candidates(clip, report: dict, pause_spans: list[tuple[float, float
                 if len(ot)<3: continue
                 old_signature=_phrase_signature(old_text)
                 old_lemmas,new_lemmas={_lemma(t) for t in ot},{_lemma(t) for t in nt}
+                old_emphasis=_repeated_emphasis(ot)
+                new_emphasis=_repeated_emphasis(nt)
+                if any(count>new_emphasis[word] for word,count in old_emphasis.items()):
+                    protected.append('ênfase repetida preservada')
+                    continue
                 critical=[]
                 if old_signature.negation!=new_signature.negation: critical.append('negação')
                 if old_signature.numbers and new_signature.numbers and old_signature.numbers!=new_signature.numbers: critical.append('números')
@@ -625,7 +639,7 @@ def _context_candidates(clip, report: dict, pause_spans: list[tuple[float, float
                     protected.append('divergência crítica: '+', '.join(critical)); continue
                 if critical and repair and not repair_targeted:
                     protected.append('correção explícita sem alvo temático seguro'); continue
-                if nt and (nt[0] in _CONTINUATION or nt[0] in _ADDITIVE):
+                if (nt and nt[0] in _CONTINUATION) or any(token in _ADDITIVE for token in nt):
                     protected.append('continuidade ou complemento da fala'); continue
                 overlap=_weighted_overlap(ot,nt)
                 left,right=_sequence_tokens(ot),_sequence_tokens(nt)

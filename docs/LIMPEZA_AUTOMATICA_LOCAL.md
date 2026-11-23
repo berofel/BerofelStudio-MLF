@@ -198,3 +198,29 @@ como otimização de desempenho. O conjunto repetitivo tampouco mede
 precisão/cobertura de fala.
 Não foram medidos ASR, VAD, interface ou exportação, nem usada gravação humana
 anotada. O modelo exato de CPU deste ambiente não foi confirmado.
+
+## Avaliação do pacote Upgrade Global Python V3
+
+O ZIP foi executado como referência isolada: 46 testes passaram. O benchmark
+sintético do pacote processou 17.500 palavras; V2 mediu 1,223 s e pico Python
+rastreado de 2,6 MiB, enquanto V3 mediu 1,213 s e 2,0 MiB. Ele não inclui
+áudio, ASR, VAD, Qt ou timeline e, portanto, não demonstra ganho no editor.
+
+A branch já continha as funções principais da proposta V3: busca reversa de
+até cinco tentativas, ponte por comandos de regravação, cobertura direcional,
+normalização controlada, proteção de dados críticos e revisão não destrutiva.
+O protótipo independente não foi instalado como um segundo motor. Em uma
+comparação determinística de dez pares de frases (três candidatos esperados e
+sete casos que deveriam ser preservados), o detector integrado identificou
+3/3 candidatos sem falsos positivos após estas proteções; o protótipo V3
+produziu 3/3 candidatos e dois falsos positivos: mudança de 50 para 150
+arquivos e uma frase que acrescentava “também” no meio do enunciado. São
+fixtures textuais, não acurácia em fala humana.
+
+Foram adicionadas duas verificações ao motor integrado: preservar ênfase por
+repetição adjacente (por exemplo, “muito, muito importante”) quando uma versão
+posterior a reduz, e preservar complementos marcados por palavras aditivas em
+qualquer posição da frase. O conjunto direcionado de limpeza passou com 33
+testes após essas alterações. A validação completa com gravações PT-BR
+anotadas continua pendente; propostas contextuais seguem obrigatoriamente na
+fila de revisão.
