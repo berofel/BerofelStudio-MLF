@@ -1,10 +1,11 @@
 # Limpeza automática local
 
 A área de edição automática oferece três seleções independentes: **Remover
-silêncios**, **Vícios de linguagem** e **Contexto**. A fila usa o Silero e o
-Faster-Whisper já integrados ao editor; a análise lexical/contextual é feita
-com regras Python determinísticas. Nenhuma dessas três opções inicia Qwen,
-LLM, API ou download de modelos.
+silêncios**, **Vícios de linguagem** e **Contexto**. O Silero existente detecta
+fala e pausas. A transcrição existente usa Faster-Whisper por padrão; Parakeet
+Ultra Q8 via transcribe.cpp é um backend local opcional. A análise
+lexical/contextual é feita com regras Python determinísticas. Nenhuma dessas
+três opções inicia Qwen, LLM, API ou download de modelos.
 
 | Seleção | Serviços usados | Resultado |
 | --- | --- | --- |
@@ -74,17 +75,9 @@ O refino de borda por energia RMS do pacote V2 não foi conectado: os relatório
 do pipeline atual não entregam um buffer PCM original em memória ao planejador.
 O código não reabre nem renderiza o áudio apenas para refinar um corte; os
 limites atuais continuam usando timestamps de palavra e as margens já presentes
-na aplicação da timeline.
-
-Como proteção distinta do refino de borda, a etapa VAD agora mede energia RMS
-em janelas de 20 ms no PCM que ela já carregou para o Silero. Regiões audíveis
-sustentadas (limiar interno inicial -44 dBFS; lacunas até 40 ms agrupadas;
-spikes isolados descartados) são adicionadas somente à máscara que protege
-candidatos de silêncio. Elas não são chamadas de fala, não viram palavras e não
-alteram os tempos do Whisper. Assim, efeitos de jogo/música audíveis podem
-dividir uma pausa candidata; o limiar é conservador e pode preservar ruído de
-fundo. A versão dos parâmetros mudou na chave do cache para invalidar VAD antigo.
-Isso não substitui a revisão humana.
+na aplicação da timeline. A remoção de silêncio considera intervalos sem fala
+marcados pelo Silero. Música e efeitos de jogo dentro desses intervalos não são
+uma proteção automática contra corte; revise a sugestão antes de aplicá-la.
 
 ## Reconhecimento de fala e comandos de voz
 
@@ -158,12 +151,10 @@ amostrado de 398 MiB. Como o sinal era silêncio sintético, esses smokes valida
 os caminhos reais dos motores e não medem precisão editorial em voz humana nem
 representam benchmark de outra configuração de hardware.
 
-Após adicionar proteção RMS, um smoke real com áudio falado FLEURS PT-BR
-(17,76 s, licença CC-BY-4.0) percorreu FFmpeg → Silero/RMS em 0,87 s, com três
-regiões de fala, 15,35 s detectados como fala, duas propostas de pausa e dois
-misses de cache. A ação chamou somente extração e VAD, sem Faster-Whisper. Este
-único clipe verifica integração/caminho de dados, não é corpus de retakes nem
-valida precisão editorial; o WAV ficou na pasta temporária e não entrou no Git.
+Um smoke real com áudio falado FLEURS PT-BR (17,76 s, licença CC-BY-4.0)
+percorreu FFmpeg e Silero. Esse único clipe verifica integração/caminho de dados,
+não é corpus de retakes nem valida precisão editorial; o WAV ficou na pasta
+temporária e não entrou no Git.
 
 Para validar: abra **Assistente IA**, escolha o alcance, marque qualquer
 combinação dos três controles e use **Aplicar edição**. Cada sugestão começa
@@ -172,7 +163,7 @@ remoção de silêncio, marque somente **Contexto**.
 
 Os testes determinísticos da integração ficam em
 `tests/test_automatic_cleanup.py`. A suíte principal foi executada por um venv
-temporário com as dependências declaradas e SciPy auxiliar: 452 passaram e 5
+temporário com as dependências declaradas e SciPy auxiliar: 456 passaram e 5
 foram ignorados. A suíte independente do ZIP V3 passou com 46/46 testes,
 incluindo os testes opcionais de refino RMS, no ambiente temporário com NumPy.
 

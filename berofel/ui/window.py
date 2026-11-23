@@ -29,7 +29,8 @@ from berofel.services.ffmpeg import media_info, supports_filter
 from berofel.services.export_multitrack import export_audio_wav
 from berofel.services.proxies import create_proxy, find_proxy
 from berofel.services.analysis import analyze_clips, repetitions_clips
-from berofel.services.ai_pipeline import AIOptions, run_analysis, default_llama_cli, default_qwen_model
+from berofel.services.ai_pipeline import (AIOptions, run_analysis, default_llama_cli,
+    default_qwen_model, transcript_model_identity)
 from berofel.services.batch_editing import plan_actions, run_edit_queue, apply_reviewed_cuts
 from berofel.services.automatic_cleanup import EditOptions, analyze_automatic_cleanup
 from berofel.services.subtitles import merge_reports, export_srt, timeline_words
@@ -3630,7 +3631,7 @@ class MainWindow(QMainWindow):
         if not usable:
             QMessageBox.information(self,'Transcrição necessária',
                 'O Clipador reutiliza as palavras já salvas e não inicia uma retranscrição. '
-                'Marque “Transcrever · Faster-Whisper” na aba Ações IA para estes blocos e tente novamente.')
+                'Marque “Transcrever · somente ASR local” na aba Ações IA para estes blocos e tente novamente.')
             self.open_actions()
             return
         source_paths={str(Path(clip.source).resolve()) for clip in usable}
@@ -3780,8 +3781,12 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f'{len(marks)} evento(s) acústico(s) marcado(s) na timeline. Ctrl+Z desfaz os marcadores.')
 
+    def _ai_options(self, **values):
+        backend,device=self.actions_panel.asr_selection()
+        return AIOptions(asr_backend=backend,asr_device=device,**values)
+
     def execute_automatic_cleanup(self, actions):
-        """Local automatic cleanup: Silero/Whisper only when selected, then Python rules."""
+        """Limpeza local: Silero/ASR somente quando selecionados, depois regras Python."""
         if self._ai_busy or self.active_task is not None:
             QMessageBox.information(self,'Limpeza automática',
                 'Já existe uma operação de IA em andamento. A timeline continua editável.')
@@ -3803,12 +3808,12 @@ class MainWindow(QMainWindow):
         # Small fixed vocabulary helps Faster-Whisper recognize the editor's
         # domain when this cleanup action needs a fresh transcript. Existing
         # project transcripts still bypass ASR; hints never rewrite the text.
-        opts=AIOptions(enable_qwen=False,
+        opts=self._ai_options(enable_qwen=False,
                        whisper_hotwords=project_hotwords(
                            self.project.transcripts,
                            confirmed_texts=confirmed_caption_texts(self.project)))
         known={c.id:words_in_clip(self.project,c) for c in selected
-               if has_coverage(self.project,c,opts.whisper_model,opts.language)}
+               if has_coverage(self.project,c,transcript_model_identity(opts),opts.language)}
         count,seconds=scope_summary(targets)
         self.statusBar().showMessage(f'Limpeza local: {count} bloco(s), {format_timecode(seconds)}.')
 
@@ -3820,7 +3825,7 @@ class MainWindow(QMainWindow):
             if not scope_is_still_valid(self.project,originals,targets):
                 QMessageBox.warning(self,'Alcance alterado',
                     'Os blocos mudaram durante a análise. Nenhum resultado foi aplicado; '
-                    'os caches de Silero/Whisper podem ser reutilizados ao executar novamente.')
+                    'os caches de Silero/ASR podem ser reutilizados ao executar novamente.')
                 return
             findings=[]
             by_target={target.original_id:target for target in targets}
@@ -3839,7 +3844,7 @@ class MainWindow(QMainWindow):
                 if reports:
                     merge_reports(self.project,reports)
                     if plan.stats.get('transcription_calls'):
-                        record_coverage(self.project,reports,opts.whisper_model,opts.language)
+                        record_coverage(self.project,reports,transcript_model_identity(opts),opts.language)
                 self.refresh(list(originals))
             if findings:
                 self._review(findings,'Revisar limpeza automática · cortes locais')
@@ -3854,7 +3859,7 @@ class MainWindow(QMainWindow):
                          if any(value is not None for value in memory_values) else '')
             self.statusBar().showMessage(
                 f'Limpeza local concluída · {len(findings)} sugestão(ões) · '
-                f'Silero/extração {metrics.get("vad_pipeline_seconds",0):.1f}s · Whisper/extração '
+                f'Silero/extração {metrics.get("vad_pipeline_seconds",0):.1f}s · ASR/extração '
                 f'{metrics.get("transcription_pipeline_seconds",0):.1f}s · '
                 f'regras {metrics.get("text_rules_seconds",0):.2f}s · '
                 f'cache {metrics.get("cache_hits",0)} acertos · '
@@ -3907,11 +3912,11 @@ class MainWindow(QMainWindow):
             if not srt_path:return
             if not srt_path.lower().endswith('.srt'):srt_path+='.srt'
         originals=copy.deepcopy({t.original_id:self.project.clip(t.original_id) for t in targets})
-        opts=AIOptions(whisper_hotwords=project_hotwords(
+        opts=self._ai_options(whisper_hotwords=project_hotwords(
             self.project.transcripts,
             confirmed_texts=confirmed_caption_texts(self.project)))
         known={c.id:words_in_clip(self.project,c) for c in selected
-               if has_coverage(self.project,c,opts.whisper_model,opts.language)}
+               if has_coverage(self.project,c,transcript_model_identity(opts),opts.language)}
         seconds=sum(t.playback_seconds for t in targets)
         self.statusBar().showMessage(f'Fila Batata Quente: {len(chosen)} ações, '
                                      f'{len(targets)} blocos, {format_timecode(seconds)}.')
@@ -3960,7 +3965,7 @@ class MainWindow(QMainWindow):
                 if progress:progress(0,3)
                 count=merge_reports(working,results['reports'])
                 if results['reports']:
-                    record_coverage(working,results['reports'],opts.whisper_model,opts.language)
+                    record_coverage(working,results['reports'],transcript_model_identity(opts),opts.language)
                 if control:control.checkpoint()
                 if progress:progress(1,3)
                 new_targets=apply_reviewed_cuts(working,targets,approved,control=control)
@@ -4023,7 +4028,7 @@ class MainWindow(QMainWindow):
                         self.open_narration()
                 removed=len(approved)
                 msg=(f'Edição concluída: {removed} cortes aprovados, {count} palavras novas; '
-                     f'Whisper analisou {results["asr_seconds"]:.1f}s de '
+                     f'ASR analisou {results["asr_seconds"]:.1f}s de '
                      f'{results["source_seconds"]:.1f}s de fonte. '
                      f'Cache: {results["cache_hits"]} acertos.')
                 if saved_srt:msg+=f' SRT: {saved_srt} legendas.'
@@ -4144,15 +4149,16 @@ class MainWindow(QMainWindow):
                 return
         captured=copy.deepcopy({t.original_id:self.project.clip(t.original_id) for t in targets})
         count,seconds=scope_summary(targets)
-        opts=AIOptions(whisper_hotwords=project_hotwords(
+        opts=self._ai_options(whisper_hotwords=project_hotwords(
             self.project.transcripts,
             confirmed_texts=confirmed_caption_texts(self.project)))
         # Snapshot das palavras para que a thread não consulte um projeto mutável.
         known={c.id:words_in_clip(self.project,c) for c in selected
-               if has_coverage(self.project,c,opts.whisper_model,opts.language)
+               if has_coverage(self.project,c,transcript_model_identity(opts),opts.language)
                and action!='silence'}
-        descriptions={'transcribe':'Somente transcrição · Whisper',
-                      'subtitles':'Somente legendas · Whisper',
+        asr_name='Parakeet Ultra Q8' if opts.asr_backend=='parakeet-ultra' else 'Faster-Whisper'
+        descriptions={'transcribe':f'Somente transcrição · {asr_name}',
+                      'subtitles':f'Somente legendas · {asr_name}',
                       'silence':'Somente silêncios · Silero',
                       'fillers':'Vícios de linguagem · análise local',
                       'context':'Análise contextual · local'}
@@ -4175,7 +4181,7 @@ class MainWindow(QMainWindow):
             if action!='silence':
                 self.snapshot()
                 merged=merge_reports(self.project,reports)
-                record_coverage(self.project,reports,opts.whisper_model,opts.language)
+                record_coverage(self.project,reports,transcript_model_identity(opts),opts.language)
             if action=='subtitles':
                 new=create_auto_captions(self.project,targets)
                 self.refresh([c.id for c in new] or list(captured))
@@ -4256,7 +4262,7 @@ class MainWindow(QMainWindow):
                                         'Instale o modelo e o executável via INSTALAR_QWEN_OPCIONAL.bat. '
                                         'Faster-Whisper e Silero continuam disponíveis sem Qwen.')
                 return
-        opts=AIOptions(enable_qwen=semantic,
+        opts=self._ai_options(enable_qwen=semantic,
                        whisper_hotwords=project_hotwords(
                            self.project.transcripts,
                            confirmed_texts=confirmed_caption_texts(self.project)))
@@ -4287,8 +4293,8 @@ class MainWindow(QMainWindow):
                 findings=[f for r in reports for f in r['suggestions']]
                 self._review(findings,'Revisar propostas Silero' + (' + Qwen' if semantic else ''))
         self._ai_busy=True
-        task=self._task(worker,ready,label=('Qwen + Silero + Whisper' if semantic else
-                                             'Silero + Whisper · transcrição'))
+        task=self._task(worker,ready,label=('Qwen + Silero + '+asr_name if semantic else
+                                             'Silero + '+asr_name+' · transcrição'))
         if task:
             task.signals.finished.connect(lambda: setattr(self,'_ai_busy',False))
         else:

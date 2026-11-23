@@ -119,40 +119,7 @@ def _vad(d: dict) -> dict:
     detected = get_speech_timestamps(audio, vad_options=options, sampling_rate=16000)
     spans = [{'start': round(s['start'] / 16000, 4), 'end': round(s['end'] / 16000, 4)}
              for s in detected]
-    # Silero describes speech, but a speech-free interval can still contain
-    # gameplay effects/music. Protect sustained audible activity from silence
-    # cuts without labeling it as speech or decoding the source a second time.
-    frame_samples=320  # 20 ms at the already-normalized 16 kHz rate
-    frame_count=(len(audio)+frame_samples-1)//frame_samples
-    if frame_count:
-        padded=audio
-        remainder=len(audio)%frame_samples
-        if remainder:
-            import numpy as np
-            padded=np.pad(audio,(0,frame_samples-remainder))
-        frames=padded.reshape(frame_count,frame_samples)
-        import numpy as np
-        rms=np.sqrt(np.einsum('ij,ij->i',frames,frames,optimize=False)/frame_samples)
-        active=(rms >= float(d.get('audio_activity_rms',.006))).tolist()
-        # Merge gaps up to 40 ms, and ignore isolated sub-40 ms spikes.
-        active_indexes=[i for i,value in enumerate(active) if value]
-        groups=[]
-        if active_indexes:
-            first=last=active_indexes[0]
-            for index in active_indexes[1:]:
-                if index-last<=3:
-                    last=index
-                else:
-                    if last-first+1>=2:groups.append((first,last+1))
-                    first=last=index
-            if last-first+1>=2:groups.append((first,last+1))
-        activity=[{'start':round(a*frame_samples/16000,4),
-                   'end':round(min(len(audio),b*frame_samples)/16000,4)}
-                  for a,b in groups]
-    else:
-        activity=[]
     return {'speech': spans, 'duration': round(len(audio) / 16000, 4),
-            'audio_activity': activity,
             'engine': 'Silero-VAD-ONNX-via-faster-whisper'}
 
 
@@ -613,8 +580,43 @@ def _whisper_batch(d: dict) -> dict:
     return {'completed': len(jobs)}
 
 
+def _parakeet(d: dict, *, model=None) -> dict:
+    from .parakeet_asr import transcribe_file
+    return transcribe_file(d['audio_path'], model_path=d.get('model_path'),
+                           backend=d.get('backend', 'cpu'),
+                           threads=int(d.get('threads', 6)),
+                           language=d.get('language') or 'pt',
+                           binding_wheel=Path(d['binding_wheel']) if d.get('binding_wheel') else None,
+                           library=Path(d['library']) if d.get('library') else None,
+                           model=model)
+
+
+def _parakeet_batch(d: dict) -> dict:
+    """Load one local Parakeet model and reuse it for all missing chunks."""
+    jobs=d['jobs']
+    if not jobs:
+        return {'completed': 0}
+    from .model_paths import parakeet_model_path
+    from .parakeet_asr import load_binding
+    first=jobs[0]['payload']
+    model_path=Path(first.get('model_path') or parakeet_model_path())
+    if not model_path.is_file():
+        raise FileNotFoundError(
+            f'Modelo Parakeet Ultra Q8 ausente: {model_path}. Execute scripts/install_parakeet_ultra.ps1.'
+        )
+    binding=load_binding(wheel=Path(first['binding_wheel']) if first.get('binding_wheel') else None,
+                          library=Path(first['library']) if first.get('library') else None)
+    with binding.Model(str(model_path),backend=first.get('backend','cpu')) as model:
+        for job in jobs:
+            result=_parakeet(job['payload'],model=model)
+            write_json(Path(job['output']),{'schema':CACHE_SCHEMA,
+                                            'stage':'parakeet','result':result})
+    return {'completed':len(jobs)}
+
+
 HANDLERS = {'extract': _extract, 'vad': _vad, 'whisper': _whisper, 'qwen': _qwen,
-            'vad_batch': _vad_batch, 'whisper_batch': _whisper_batch}
+            'vad_batch': _vad_batch, 'whisper_batch': _whisper_batch,
+            'parakeet': _parakeet, 'parakeet_batch': _parakeet_batch}
 
 
 def main() -> int:

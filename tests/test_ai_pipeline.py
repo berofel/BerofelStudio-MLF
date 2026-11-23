@@ -12,17 +12,17 @@ from unittest.mock import patch
 from berofel.core.project import Project, Clip
 from berofel.services.ai_cache import CacheStore, CACHE_SCHEMA, write_json
 from berofel.services.ai_pipeline import (AIOptions, Pipeline, StageRunner,
-                                          qwen_stage_timeout, qwen_removal_interval)
+                                          qwen_stage_timeout, qwen_removal_interval,
+                                          transcript_model_identity)
 from berofel.services.subtitles import export_srt, merge_reports, build_cues, timeline_words
 from berofel.services.ai_worker import (_parse_model_json, _qwen, _qwen_prompt_batches,
-                                        _qwen_temp_directory, _qwen_server_completion, _vad)
+                                        _qwen_temp_directory, _qwen_server_completion)
 
 
 class FakeStages:
     def __init__(self):
         self.calls=[]
         self.call_details=[]
-        self.audio_activity=[]
     def __call__(self, stage, payload, output, **kw):
         self.calls.append(stage)
         self.call_details.append((stage,payload,kw))
@@ -34,13 +34,19 @@ class FakeStages:
             result={'audio_path':str(target),'duration':payload['duration']}
         elif stage == 'vad':
             result={'speech':[{'start':.0,'end':5.0},{'start':7.0,'end':min(15.,payload.get('duration',15.))}],
-                    'audio_activity':list(self.audio_activity),'duration':15.}
+                    'duration':15.}
         elif stage == 'whisper':
             result={'words':[{'id':'w0_0','text':'Olá','start':.2,'end':.5},
                              {'id':'w0_1','text':'pessoal','start':.6,'end':1.1},
                              {'id':'w0_2','text':'é','start':1.3,'end':1.5}],
                     'segments':[{'start':0.,'end':1.6,'text':'Olá pessoal é'}],
                     'language':'pt','duration':15.}
+        elif stage == 'parakeet':
+            result={'words':[{'id':'p0_0','text':'Olá','start':.2,'end':.5,
+                              'probability':0.}],
+                    'segments':[{'start':.2,'end':.5,'text':'Olá','word_ids':['p0_0']}],
+                    'language':'pt','model':'parakeet-ultra-Q8_0','duration':15.,
+                    'timestamp_kind':'word','runtime':'0.4.2','backend':payload.get('backend')}
         elif stage == 'qwen':
             on_progress=kw.get('on_progress')
             if on_progress:
@@ -148,6 +154,38 @@ class AITest(unittest.TestCase):
         self.assertEqual(again['cache_misses'],0)
         self.assertEqual(len(self.fake.calls),3)
 
+    def test_parakeet_is_opt_in_has_own_cache_and_uses_six_threads(self):
+        model=Path(self.temp.name)/'parakeet.gguf';model.write_bytes(b'model')
+        wheel=Path(self.temp.name)/'binding.whl';wheel.write_bytes(b'binding')
+        library=Path(self.temp.name)/'transcribe.dll';library.write_bytes(b'runtime')
+        opts=AIOptions(asr_backend='parakeet-ultra',asr_device='vulkan',
+                       asr_model_path=str(model),asr_binding_wheel=str(wheel),
+                       asr_library=str(library))
+        result=Pipeline(self.cache,self.fake).analyze([self.clip],opts,mode='transcribe')
+        self.assertEqual(self.fake.calls,['extract','parakeet'])
+        call=next(item for item in self.fake.call_details if item[0]=='parakeet')
+        self.assertEqual(call[1]['backend'],'vulkan')
+        self.assertEqual(call[1]['threads'],6)
+        self.assertEqual(result['reports'][0]['words'][0]['text'],'Olá')
+        cached=Pipeline(self.cache,self.fake).analyze([self.clip],opts,mode='transcribe')
+        self.assertEqual(cached['cache_misses'],0)
+        self.assertEqual(cached['reports'],result['reports'])
+        # A later default run must not reuse the Parakeet transcript.
+        default=Pipeline(self.cache,self.fake).analyze([self.clip],AIOptions(),mode='transcribe')
+        self.assertEqual(default['cache_misses'],1)
+        self.assertEqual(self.fake.calls,['extract','parakeet','whisper'])
+
+    def test_parakeet_coverage_identity_invalidates_when_native_runtime_changes(self):
+        model=Path(self.temp.name)/'parakeet.gguf';model.write_bytes(b'model')
+        wheel=Path(self.temp.name)/'binding.whl';wheel.write_bytes(b'binding')
+        library=Path(self.temp.name)/'transcribe.dll';library.write_bytes(b'runtime-v1')
+        opts=AIOptions(asr_backend='parakeet-ultra',asr_device='vulkan',
+                       asr_model_path=str(model),asr_binding_wheel=str(wheel),
+                       asr_library=str(library))
+        first=transcript_model_identity(opts)
+        library.write_bytes(b'runtime-v2-changed')
+        self.assertNotEqual(first,transcript_model_identity(opts))
+
     def test_qwen_option_only_executes_when_model_available_and_after_whisper(self):
         cli=Path(self.temp.name)/'llama-cli.exe';cli.write_bytes(b'fake')
         model=Path(self.temp.name)/'model.gguf';model.write_bytes(b'fake')
@@ -217,37 +255,39 @@ class AITest(unittest.TestCase):
         ],duration=4.,minimum=.65,padding=.12)
         self.assertEqual(overlapped,[(.12,.88),(2.92,3.88)])
 
-    def test_silence_removal_protects_audible_gameplay_activity_without_calling_it_speech(self):
-        self.fake.audio_activity=[{'start':5.4,'end':6.6}]
-        result=Pipeline(self.cache,self.fake).analyze(
+    def test_long_voice_free_gameplay_gap_remains_cut_candidate_when_sounds_are_present(self):
+        import math
+        from array import array
+        class GameStages:
+            def __init__(inner):inner.calls=[]
+            def __call__(inner,stage,payload,output,**kw):
+                inner.calls.append(stage)
+                if stage=='extract':
+                    rate=16000;frames=array('h')
+                    for index in range(rate*15):
+                        # Audible game-like tone, no voice, between 5.4 and 6.6 s.
+                        active=int(5.4*rate)<=index<int(6.6*rate)
+                        sample=.25*math.sin(2*math.pi*440*index/rate) if active else 0.
+                        frames.append(round(sample*32767))
+                    with wave.open(payload['audio_path'],'wb') as wav:
+                        wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(rate)
+                        wav.writeframes(frames.tobytes())
+                    result={'audio_path':payload['audio_path'],'duration':15.}
+                elif stage=='vad':
+                    result={'speech':[{'start':0.,'end':5.},{'start':7.,'end':15.}],
+                            'duration':15.,'engine':'test-silero-spans'}
+                else:raise AssertionError(stage)
+                write_json(Path(output),{'schema':CACHE_SCHEMA,'stage':stage,'result':result})
+                return result
+        runner=GameStages()
+        result=Pipeline(self.cache,runner).analyze(
             [self.clip],AIOptions(enable_qwen=False),mode='silence')
         report=result['reports'][0]
-        self.assertEqual(self.fake.calls,['extract','vad'])
+        self.assertEqual(runner.calls,['extract','vad'])
         self.assertEqual(report['speech'],[
             {'start':0.,'end':5.}, {'start':7.,'end':15.}])
-        self.assertFalse([item for item in report['suggestions']
-                          if item['type']=='silencio'])
-
-    def test_vad_worker_detects_non_speech_rms_activity_once_with_speech(self):
-        import math
-        import struct
-        audio=Path(self.temp.name)/'activity.wav'
-        frames=[]
-        for index in range(16000):
-            sample=.025*math.sin(2*math.pi*440*index/16000) if 7200<=index<12800 else 0.
-            frames.append(struct.pack('<h',round(sample*32767)))
-        with wave.open(str(audio),'wb') as wav:
-            wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000)
-            wav.writeframes(b''.join(frames))
-        with patch('faster_whisper.vad.get_speech_timestamps',return_value=[
-                {'start':0,'end':6400},{'start':13600,'end':16000}]) as silero:
-            result=_vad({'audio_path':str(audio)})
-        self.assertEqual(silero.call_count,1)
-        self.assertEqual(result['speech'],[{'start':0.0,'end':0.4},
-                                           {'start':0.85,'end':1.0}])
-        self.assertTrue(result['audio_activity'])
-        self.assertLessEqual(result['audio_activity'][0]['start'],.45)
-        self.assertGreaterEqual(result['audio_activity'][0]['end'],.80)
+        silence=[item for item in report['suggestions'] if item['type']=='silencio']
+        self.assertEqual([(item['a'],item['b']) for item in silence],[(5.12,6.88)])
 
     def test_qwen_cache_invalidates_when_adaptive_context_changes(self):
         cli=Path(self.temp.name)/'llama-cli.exe';cli.write_bytes(b'fake')

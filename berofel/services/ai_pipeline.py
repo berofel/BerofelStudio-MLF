@@ -17,7 +17,8 @@ from typing import Callable
 
 from .ai_cache import CacheStore, CACHE_SCHEMA, digest, read_json, write_json
 from .process_control import ProcessControl
-from .model_paths import whisper_model_dir
+from .model_paths import (whisper_model_dir, parakeet_model_path,
+                          transcribe_binding_wheel, transcribe_runtime_dir)
 from .performance import current_profile, qwen_limits, qwen_threads
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -88,6 +89,13 @@ def default_qwen_model() -> Path:
 @dataclass
 class AIOptions:
     whisper_model: str = 'base'
+    # Parakeet is opt-in. Faster-Whisper remains the stable default until a
+    # user's own recordings and complete editor flow validate the alternative.
+    asr_backend: str = 'faster-whisper'
+    asr_device: str = 'cpu'
+    asr_model_path: str = ''
+    asr_binding_wheel: str = ''
+    asr_library: str = ''
     language: str = 'pt'
     device: str = 'cpu'
     compute_type: str = 'int8'
@@ -102,6 +110,24 @@ class AIOptions:
     qwen_model: str = ''
     llama_cli: str = ''
     offline_only: bool = True
+
+
+def transcript_model_identity(options: AIOptions) -> str:
+    """Stable project-coverage identity; never reuse transcript across ASRs."""
+    backend=str(getattr(options,'asr_backend','faster-whisper')).strip().lower()
+    if backend=='parakeet-ultra':
+        model=Path(options.asr_model_path) if options.asr_model_path else parakeet_model_path()
+        library=Path(options.asr_library) if options.asr_library else transcribe_runtime_dir()/'transcribe.dll'
+        wheel=Path(options.asr_binding_wheel) if options.asr_binding_wheel else transcribe_binding_wheel()
+        def fingerprint(path):
+            try:
+                stat=path.stat()
+                return f'{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}'
+            except OSError:
+                return str(path)
+        revision='/'.join((fingerprint(model),fingerprint(library),fingerprint(wheel)))
+        return f'parakeet-ultra-Q8_0/transcribe.cpp-0.4.2/{options.asr_device}/{revision}'
+    return str(options.whisper_model)
 
 
 def _windows_flags():
@@ -162,8 +188,8 @@ class StageRunner:
         conclusão completa. Se houver falha, etapas concluídas ficam no cache.
         """
         if not jobs:return
-        if stage not in ('vad','whisper'):
-            raise ValueError('Apenas VAD e Whisper possuem processamento em lote.')
+        if stage not in ('vad','whisper','parakeet'):
+            raise ValueError('Apenas VAD e os motores ASR possuem processamento em lote.')
         with tempfile.TemporaryDirectory(prefix='bfs_ai_batch_') as folder:
             folder=Path(folder)
             request=folder/'jobs.json'
@@ -380,26 +406,50 @@ class Pipeline:
 
         # Etapa 2: uma única instância Silero ONNX para todos os lotes não armazenados.
         def vad_payload(ch):
-            # Invalidate older VAD entries because this result now includes
-            # non-speech RMS intervals that the silence cut planner protects.
-            params={'threshold':.5,'min_silence_ms':350,'speech_pad_ms':100,
-                    'audio_activity_rms':.006,'engine':'silero-onnx-v6+rms-protection-v1'}
+            params={'threshold':.5,'min_silence_ms':350,'speech_pad_ms':100,'engine':'silero-onnx-v6'}
             return params,{'audio_path':ch['extract']['audio_path'],**params}
         if needs_vad:
             self._notify(f'Silero VAD • verificando {len(chunks)} trecho(s)')
             self._batch_stage(chunks,'vad',vad_payload,on_step=step)
 
-        # Etapa 3: Faster-Whisper permanece carregado entre os lotes da etapa,
-        # porém o PROCESSO encerra e libera RAM antes do Qwen.
-        # Fingerprint do modelo (quando local) invalida o cache se o binário mudar.
+        # Etapa 3: mantém um ASR selecionado durante todos os lotes pendentes.
+        # Faster-Whisper segue como padrão; Parakeet é opt-in e tem cache/modelo
+        # isolados para não contaminar cobertura nem resultados anteriores.
+        asr_backend=str(getattr(opts,'asr_backend','faster-whisper')).strip().lower()
+        if asr_backend not in ('faster-whisper','parakeet-ultra'):
+            raise ValueError('Motor ASR inválido. Use faster-whisper ou parakeet-ultra.')
+        transcript_stage='parakeet' if asr_backend=='parakeet-ultra' else 'whisper'
         model_fingerprint=None
-        if opts.whisper_model == 'base':
+        if asr_backend=='faster-whisper' and opts.whisper_model == 'base':
             model_file=whisper_model_dir()/'model.bin'
             if model_file.is_file():
                 stat=model_file.stat()
                 model_fingerprint=(stat.st_size,stat.st_mtime_ns)
         def whisper_payload(ch):
-            runtime_threads=opts.cpu_threads or current_profile().ai_threads
+            runtime_threads=opts.cpu_threads or (6 if asr_backend=='parakeet-ultra'
+                                                  else current_profile().ai_threads)
+            if asr_backend=='parakeet-ultra':
+                model_path=Path(opts.asr_model_path) if opts.asr_model_path else parakeet_model_path()
+                wheel=Path(opts.asr_binding_wheel) if opts.asr_binding_wheel else transcribe_binding_wheel()
+                library=Path(opts.asr_library) if opts.asr_library else transcribe_runtime_dir()/'transcribe.dll'
+                if not model_path.is_file():
+                    raise FileNotFoundError(f'Modelo Parakeet Ultra não instalado: {model_path}')
+                if not wheel.is_file() or not library.is_file():
+                    raise FileNotFoundError('Runtime Parakeet ausente. Execute scripts/install_parakeet_ultra.ps1.')
+                model_stat=model_path.stat();library_stat=library.stat();wheel_stat=wheel.stat()
+                params={'engine':'parakeet-ultra','model':'Q8_0',
+                        'model_path':str(model_path.resolve()),
+                        'model_fingerprint':(model_stat.st_size,model_stat.st_mtime_ns),
+                        'runtime':'transcribe.cpp-0.4.2','library_size':library_stat.st_size,
+                        'library_mtime_ns':library_stat.st_mtime_ns,
+                        'binding_size':wheel_stat.st_size,'binding_mtime_ns':wheel_stat.st_mtime_ns,
+                        'backend':opts.asr_device,'language':opts.language,
+                        'threads':runtime_threads,'word_timestamps':True}
+                payload={'audio_path':ch['extract']['audio_path'],'model_path':str(model_path),
+                         'binding_wheel':str(wheel),'library':str(library),
+                         'backend':opts.asr_device,'language':opts.language,
+                         'threads':runtime_threads}
+                return params,payload
             params={'model_revision':model_fingerprint,'model':opts.whisper_model,'lang':opts.language,
                     'compute':opts.compute_type,'device':opts.device,'threads':opts.cpu_threads,
                     'word_timestamps':True}
@@ -414,11 +464,12 @@ class Pipeline:
             return params,payload
         if needs_whisper:
             pending=[ch for ch in chunks if ch['clip'].id not in known_words]
-            self._notify(f'Faster-Whisper • {len(pending)} trecho(s) sem cobertura válida')
+            asr_name='Parakeet Ultra Q8' if asr_backend=='parakeet-ultra' else 'Faster-Whisper'
+            self._notify(f'{asr_name} • {len(pending)} trecho(s) sem cobertura válida')
             for ch in chunks:
                 if ch['clip'].id in known_words:
                     step()  # checkpoint equivalente a um hit de transcrição prévia
-            self._batch_stage(pending,'whisper',whisper_payload,on_step=step)
+            self._batch_stage(pending,transcript_stage,whisper_payload,on_step=step)
 
         # Etapa 4: Qwen recebe uma transcrição completa por clipe, apenas com
         # texto e IDs. Isso evita reiniciar a IA por cada lote de áudio Whisper.
@@ -427,17 +478,14 @@ class Pipeline:
         self._notify('Qwen • análise contextual dos textos' if needs_qwen else 'Preparando resultados solicitados')
         results=[]
         for clip_index,clip in enumerate(items,1):
-            all_speech=[];all_activity=[];all_words=[];all_segments=[];suggestions=[]
+            all_speech=[];all_words=[];all_segments=[];suggestions=[]
             belonging=[ch for ch in chunks if ch['clip'].id==clip.id]
             for ch in belonging:
                 relative=ch['relative'];a=ch['a'];length=ch['duration'];index=ch['index']
                 for span in ch.get('vad', {}).get('speech',[]):
                     all_speech.append({'start':relative+span['start'],
                                        'end':relative+span['end']})
-                for span in ch.get('vad', {}).get('audio_activity',[]):
-                    all_activity.append({'start':relative+span['start'],
-                                         'end':relative+span['end']})
-                tr=ch.get('whisper', {'words': [], 'segments': []});normalized=[]
+                tr=ch.get(transcript_stage, {'words': [], 'segments': []});normalized=[]
                 if clip.id in known_words:
                     for word in known_words[clip.id]:
                         ws=float(word['source_start']);we=float(word['source_end'])
@@ -525,10 +573,9 @@ class Pipeline:
                                             'checked':False,'word_ids':proposal['word_ids']})
                 step()
             if needs_vad:
-                # Protect audible non-speech (music/effects) without reporting
-                # it as voice. The suggestion remains an ordinary review item.
-                protected_speech=sorted(all_speech+all_activity,key=lambda span:span['start'])
-                for sa,sb in self._build_gaps(protected_speech,clip.end-clip.start,
+                # Silence means time without voice. Game ambience/effects do
+                # not suppress a long candidate when Silero found no speech.
+                for sa,sb in self._build_gaps(all_speech,clip.end-clip.start,
                                                opts.min_silence,opts.silence_padding):
                     suggestions.append({'clip_id':clip.id,'title':clip.title,
                                         'a':sa,'b':sb,'type':'silencio','score':100,
