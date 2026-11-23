@@ -31,6 +31,7 @@ from berofel.services.proxies import create_proxy, find_proxy
 from berofel.services.analysis import analyze_clips, repetitions_clips
 from berofel.services.ai_pipeline import AIOptions, run_analysis, default_llama_cli, default_qwen_model
 from berofel.services.batch_editing import plan_actions, run_edit_queue, apply_reviewed_cuts
+from berofel.services.automatic_cleanup import EditOptions, analyze_automatic_cleanup
 from berofel.services.subtitles import merge_reports, export_srt, timeline_words
 from berofel.services.action_scope import (ScopeSpec, resolve_scope, scope_summary,
     local_to_original_proposal, scope_is_still_valid)
@@ -405,8 +406,9 @@ class SuggestionsDialog(QDialog):
         filters.addWidget(QLabel('Tipo:'))
         self.filter_type=QComboBox()
         self.filter_type.addItem('Todos os tipos','all')
-        type_labels={'silencio':'Silêncio · Silero','contexto':'Contexto · Qwen',
-                     'repeticao':'Repetições','filler':'Vícios de fala'}
+        type_labels={'silencio':'Silêncio · Silero','contexto':'Contexto · análise local',
+                     'repeticao':'Repetições','filler':'Vícios de fala',
+                     'misto':'Corte combinado · análise local'}
         types=sorted({str(f.get('type') or 'outro') for f in findings})
         for kind in types:
             self.filter_type.addItem(type_labels.get(kind,kind.capitalize()),kind)
@@ -729,7 +731,7 @@ class MainWindow(QMainWindow):
                  ('▶ Edição completa · marcar funções',self.open_actions),
                  ('Somente transcrever',self.transcribe_selected),
                  ('Somente silêncios · Silero',self.analyze_intelligent),
-                 ('Vícios de linguagem · Qwen',self.analyze_semantic),
+                 ('Vícios de linguagem · análise local',self.analyze_semantic),
                  ('Legenda automática',lambda:self.execute_modular('subtitles')),
                  ('Exportar SRT do alcance',lambda:self.execute_modular('srt')),
                  ('Exportar WAV da timeline',self.export_audio),
@@ -837,7 +839,7 @@ class MainWindow(QMainWindow):
         self.side_tabs=QTabWidget()
         self.actions_panel=ActionsPanel(self)
         self.actions_panel.on_execute=self.execute_modular
-        self.actions_panel.on_execute_plan=self.execute_edit_queue
+        self.actions_panel.on_execute_plan=self.execute_automatic_cleanup
         self.actions_panel.on_clipper=self.open_clipper
         self.side_tabs.addTab(self.actions_panel, 'Assistente IA')
         self.side_tabs.addTab(self.props_scroll, 'Propriedades')
@@ -3766,6 +3768,91 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f'{len(marks)} evento(s) acústico(s) marcado(s) na timeline. Ctrl+Z desfaz os marcadores.')
 
+    def execute_automatic_cleanup(self, actions):
+        """Local automatic cleanup: Silero/Whisper only when selected, then Python rules."""
+        if self._ai_busy or self.active_task is not None:
+            QMessageBox.information(self,'Limpeza automática',
+                'Já existe uma operação de IA em andamento. A timeline continua editável.')
+            return
+        names=set(actions)
+        if not names.intersection({'silence','fillers','context'}):
+            return
+        options=EditOptions(remove_silences='silence' in names,
+                            remove_fillers='fillers' in names,
+                            analyze_context='context' in names)
+        try:
+            selected,targets=self.actions_panel.selection()
+        except ValueError as exc:
+            QMessageBox.information(self,'Preparar limpeza',str(exc));self.open_actions();return
+        if not targets:
+            QMessageBox.information(self,'Alcance','Escolha blocos de áudio/vídeo para analisar.')
+            self.open_actions();return
+        originals=copy.deepcopy({t.original_id:self.project.clip(t.original_id) for t in targets})
+        opts=AIOptions(enable_qwen=False)
+        known={c.id:words_in_clip(self.project,c) for c in selected
+               if has_coverage(self.project,c,opts.whisper_model,opts.language)}
+        count,seconds=scope_summary(targets)
+        self.statusBar().showMessage(f'Limpeza local: {count} bloco(s), {format_timecode(seconds)}.')
+
+        def worker(progress,control=None,stage=None):
+            return analyze_automatic_cleanup(selected,options,known_words=known,
+                progress=progress,control=control,stage=stage,ai_options=opts)
+
+        def ready(plan):
+            if not scope_is_still_valid(self.project,originals,targets):
+                QMessageBox.warning(self,'Alcance alterado',
+                    'Os blocos mudaram durante a análise. Nenhum resultado foi aplicado; '
+                    'os caches de Silero/Whisper podem ser reutilizados ao executar novamente.')
+                return
+            findings=[]
+            by_target={target.original_id:target for target in targets}
+            for candidate in plan.candidates:
+                target=by_target.get(candidate.clip_id)
+                original=originals.get(candidate.clip_id)
+                if target is None or original is None:continue
+                proposal=local_to_original_proposal(
+                    candidate.as_finding(original.title or 'Bloco'),target,original)
+                if .03 <= proposal['b']-proposal['a'] <= original.end-original.start:
+                    findings.append(proposal)
+            has_text=options.remove_fillers or options.analyze_context
+            reports=plan.reports if has_text else []
+            if reports or findings:
+                self.snapshot()
+                if reports:
+                    merge_reports(self.project,reports)
+                    if plan.stats.get('transcription_calls'):
+                        record_coverage(self.project,reports,opts.whisper_model,opts.language)
+                self.refresh(list(originals))
+            if findings:
+                self._review(findings,'Revisar limpeza automática · cortes locais')
+            else:
+                QMessageBox.information(self,'Limpeza automática',
+                    'Análise concluída. Nenhum corte suficientemente seguro foi sugerido. '
+                    'Transcrições novas foram preservadas no projeto.')
+            metrics=plan.metrics;stats=plan.stats
+            memory_values=[metrics.get('vad_pipeline_peak_rss_mib'),
+                           metrics.get('transcription_pipeline_peak_rss_mib')]
+            memory_text=(f' · pico RSS {max(value for value in memory_values if value is not None):.0f} MiB'
+                         if any(value is not None for value in memory_values) else '')
+            self.statusBar().showMessage(
+                f'Limpeza local concluída · {len(findings)} sugestão(ões) · '
+                f'Silero/extração {metrics.get("vad_pipeline_seconds",0):.1f}s · Whisper/extração '
+                f'{metrics.get("transcription_pipeline_seconds",0):.1f}s · '
+                f'regras {metrics.get("text_rules_seconds",0):.2f}s · '
+                f'cache {metrics.get("cache_hits",0)} acertos · '
+                f'{stats.get("overlap_merges",0)} sobreposição(ões) unificada(s)'
+                f'{memory_text}.')
+
+        self._ai_busy=True
+        self.actions_panel.busy(True)
+        task=self._task(worker,ready,label='Limpeza automática local')
+        if task:
+            def done():
+                self._ai_busy=False;self.actions_panel.busy(False)
+            task.signals.finished.connect(done)
+        else:
+            self._ai_busy=False;self.actions_panel.busy(False)
+
     def execute_edit_queue(self, actions, optimize_silence=True):
         """Edição combinada 0.9: uma fila com IA sequencial e revisão única.
 
@@ -3881,7 +3968,7 @@ class MainWindow(QMainWindow):
                         QMessageBox.warning(self,'Exportar SRT',str(exc))
                 if 'context' in chosen:
                     dlg=QDialog(self)
-                    dlg.setWindowTitle('Análise contextual Qwen · resultados para revisão')
+                    dlg.setWindowTitle('Análise contextual local · resultados para revisão')
                     dlg.resize(730,480)
                     layout=QVBoxLayout(dlg)
                     info=QLabel('Relatório de contexto: nenhuma remoção é feita por esta ação. '
@@ -3944,6 +4031,8 @@ class MainWindow(QMainWindow):
 
     def execute_modular(self, action: str):
         """0.8: cada clique executa UMA ação sobre UM escopo explícito."""
+        if action in ('silence','fillers','context'):
+            return self.execute_automatic_cleanup((action,))
         if self._ai_busy or self.active_task is not None:
             QMessageBox.information(self,'Batata Quente',
                 'Já existe uma operação em andamento. Pause, cancele ou aguarde sua conclusão.')
@@ -4043,8 +4132,8 @@ class MainWindow(QMainWindow):
         descriptions={'transcribe':'Somente transcrição · Whisper',
                       'subtitles':'Somente legendas · Whisper',
                       'silence':'Somente silêncios · Silero',
-                      'fillers':'Vícios de linguagem · Whisper + Qwen',
-                      'context':'Análise contextual · Whisper + Qwen'}
+                      'fillers':'Vícios de linguagem · análise local',
+                      'context':'Análise contextual · local'}
         self.statusBar().showMessage(f'{descriptions[action]}: {count} bloco(s), '
                                      f'{format_timecode(seconds)} na timeline.')
 
@@ -4078,7 +4167,7 @@ class MainWindow(QMainWindow):
                 self.refresh(list(captured))
                 # Consulta contextual é deliberadamente somente leitura.
                 dlg=QDialog(self)
-                dlg.setWindowTitle('Qwen · análise contextual · nenhuma alteração de vídeo')
+                dlg.setWindowTitle('Análise contextual local · revisão humana')
                 dlg.resize(690,430)
                 layout=QVBoxLayout(dlg)
                 info=QLabel('Resultados para revisão. Nesta ação não é possível aplicar cortes. '

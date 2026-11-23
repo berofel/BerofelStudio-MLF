@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (QScrollArea, QWidget, QVBoxLayout, QHBoxLayout,
 from .wheel_controls import WheelGuardComboBox as QComboBox
 
 from berofel.services.action_scope import ScopeSpec, resolve_scope, scope_summary
-from berofel.services.batch_editing import plan_actions
 
 SCOPES = [
     ('Um bloco selecionado', 'one'),
@@ -21,9 +20,6 @@ SCOPES = [
 ACTIONS = [
     ('Transcrever · somente Whisper', 'transcribe'),
     ('Legendas automáticas · Whisper', 'subtitles'),
-    ('Detectar silêncios · só Silero', 'silence'),
-    ('Vícios de linguagem · Whisper + Qwen', 'fillers'),
-    ('Análise contextual · sem cortes', 'context'),
     ('Exportar legendas SRT do alcance', 'srt'),
     ('Usar transcrição na narração', 'narration'),
 ]
@@ -138,13 +134,9 @@ class ActionsPanel(QScrollArea):
         self.action_checks={}
         self._action_labels={}
         chosen_actions=[
-            ('silence','Remover silêncios · Silero VAD'),
-            ('transcribe','Transcrever · Faster-Whisper'),
-            ('fillers','Revisar vícios de linguagem · Qwen'),
-            ('context','Analisar contexto · Qwen (sem corte automático)'),
-            ('subtitles','Criar legendas automáticas editáveis'),
-            ('srt','Exportar legendas SRT ao final'),
-            ('narration','Narração · Qwen3-TTS Base (texto/voz do painel)')]
+            ('silence','Remover silêncios'),
+            ('fillers','Vícios de linguagem'),
+            ('context','Contexto')]
         for key,label in chosen_actions:
             check=QCheckBox(label)
             check.setToolTip(f'{label}. Pode combinar com outras ações; o editor resolve as dependências.')
@@ -155,18 +147,13 @@ class ActionsPanel(QScrollArea):
         presets=QHBoxLayout()
         self.presets_row=presets
         all_btn=QPushButton('Edição completa')
-        all_btn.setToolTip('Silero, Whisper, Qwen e legendas; revise os cortes antes de aplicar.')
-        all_btn.clicked.connect(lambda:self.set_actions(('silence','transcribe','fillers','subtitles')))
+        all_btn.setToolTip('Analisa os três módulos locais; revise as sugestões antes de aplicar.')
+        all_btn.clicked.connect(lambda:self.set_actions(('silence','fillers','context')))
         presets.addWidget(all_btn)
         clear_btn=QPushButton('Desmarcar')
         clear_btn.clicked.connect(lambda:self.set_actions(()))
         presets.addWidget(clear_btn)
         box.addLayout(presets)
-        self.optimize=QCheckBox('Usar Silero para poupar tempo do Whisper')
-        self.optimize.setChecked(True)
-        self.optimize.setToolTip('Ignora intervalos sem voz durante a transcrição, mas não corta o vídeo sem aprovação.')
-        self.optimize.stateChanged.connect(self._update_plan)
-        box.addWidget(self.optimize)
         self.plan_label=QLabel('Escolha as funções para montar a fila.')
         self.plan_label.setWordWrap(True)
         self.plan_label.setStyleSheet('color:#ffb370;background:#202329;border:1px solid #3e434b;'
@@ -233,10 +220,7 @@ class ActionsPanel(QScrollArea):
         for layout in (self.timecode_row,self.in_out_row,self.presets_row):
             layout.setDirection(direction)
         self.local_badge.setVisible(not compact)
-        labels={'silence':'Silêncio · Silero','transcribe':'Transcrever · Whisper',
-                'fillers':'Vícios · Qwen','context':'Contexto · Qwen',
-                'subtitles':'Legendas automáticas','srt':'Exportar SRT',
-                'narration':'Narração · Qwen3-TTS Base'}
+        labels={'silence':'Silêncios','fillers':'Vícios','context':'Contexto'}
         for key,check in self.action_checks.items():
             check.setText(labels[key] if compact else self._action_labels[key])
         self.batch_button.setText('▶ APLICAR EDIÇÃO' if compact
@@ -257,24 +241,25 @@ class ActionsPanel(QScrollArea):
         self._update_plan()
 
     def _update_plan(self, *args):
-        try:
-            plan=plan_actions(self.checked_actions(),self.optimize.isChecked())
-        except ValueError:
+        chosen=self.checked_actions()
+        if not chosen:
             self.plan_label.setText('Marque uma ou mais ações para montar a fila.')
             self.batch_button.setEnabled(False)
             return
-        labels={'silence':'Silero','whisper':'Whisper',
-                'whisper_qwen':'Whisper + Qwen','qwen':'Qwen','subtitles':'Legendas',
-                'srt':'SRT','narration':'Qwen3-TTS Base'}
-        self.plan_label.setText('Fila automática: ' + ' → '.join(labels[name] for name in plan.phases) +
-            ('\nSilero reduz o áudio analisado pelo Whisper, mas os cortes aguardam sua aprovação.'
-             if plan.use_vad_for_asr else ''))
+        needs_text='fillers' in chosen or 'context' in chosen
+        needs_vad='silence' in chosen or 'context' in chosen
+        stages=[]
+        if needs_vad: stages.append('Silero VAD')
+        if needs_text: stages.append('Whisper se necessário')
+        stages.append('regras locais em Python')
+        self.plan_label.setText('Limpeza local: ' + ' → '.join(stages) +
+            '\nSem Qwen/LLM. Cada corte aguarda revisão; Contexto sozinho não remove pausas.')
         self.batch_button.setEnabled(not self._busy)
 
     def _trigger_batch(self):
         if self._busy or not self.checked_actions():return
         if self.on_execute_plan:
-            self.on_execute_plan(self.checked_actions(),self.optimize.isChecked())
+            self.on_execute_plan(self.checked_actions())
 
     def _trigger(self, action):
         if self._busy:return

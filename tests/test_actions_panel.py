@@ -769,10 +769,11 @@ class ActionsUITests(unittest.TestCase):
 
     def test_batch_choices_and_select_300_cuts_one_click(self):
         panel=ActionsPanel()
-        panel.set_actions(('silence','fillers','subtitles'))
-        self.assertEqual(panel.checked_actions(),('silence','fillers','subtitles'))
-        self.assertIn('Silero',panel.plan_label.text())
-        self.assertIn('Qwen',panel.plan_label.text())
+        self.assertEqual(tuple(panel.action_checks),('silence','fillers','context'))
+        panel.set_actions(('silence','fillers','context'))
+        self.assertEqual(panel.checked_actions(),('silence','fillers','context'))
+        self.assertIn('Silero VAD',panel.plan_label.text())
+        self.assertIn('Sem Qwen/LLM',panel.plan_label.text())
         proposals=[{'clip_id':'one','title':'Teste','a':i,'b':i+.4,
                     'type':'silencio','note':'Pausa'} for i in range(300)]
         dialog=SuggestionsDialog(proposals)
@@ -793,6 +794,16 @@ class ActionsUITests(unittest.TestCase):
         dialog._set_all(False)
         self.assertEqual(len(dialog.accepted_findings()),0)
         dialog.close();panel.close()
+
+    def test_context_shortcut_uses_local_cleanup_entrypoint(self):
+        win=MainWindow()
+        try:
+            with patch.object(win,'execute_automatic_cleanup') as cleanup, \
+                 patch('berofel.ui.window.run_analysis',side_effect=AssertionError('rota antiga de IA')):
+                win.execute_modular('context')
+            cleanup.assert_called_once_with(('context',))
+        finally:
+            win.close();self.app.processEvents()
 
     def test_review_can_audition_suggestion_through_the_main_preview_at_clip_speed(self):
         win=MainWindow()

@@ -1,3 +1,11 @@
+# Limpeza automática modular local
+
+- A fila principal de limpeza agora exibe somente **Remover silêncios**, **Vícios de linguagem** e **Contexto**; “Edição completa” marca apenas esses três módulos.
+- Silêncios reutiliza o Silero existente sem Whisper; Vícios reutiliza a transcrição do projeto ou executa somente Faster-Whisper; Contexto usa o mesmo VAD como metadado de pausas e não remove pausas por si só.
+- Vícios e reformulações são analisados por regras Python determinísticas, sem Qwen/LLM. Contradições de negação, números escritos/digitais, ações opostas, continuidade e informação distintiva bloqueiam cortes automáticos.
+- Resultados seguem para a revisão humana já existente e o corte permanece não destrutivo/undoável; os atalhos antigos para Silêncio/Vícios/Contexto também usam o novo motor local.
+- Cobertura determinística dos sete conjuntos de opções e dos casos PT-BR está em `tests/test_automatic_cleanup.py`; instruções em `docs/LIMPEZA_AUTOMATICA_LOCAL.md`.
+
 ## Correção da narração silenciosa — 22/11/2026
 
 - Gerar uma narração de Uma voz não encaminha mais PCM ao `QAudioSink`; o backend continua sintetizando e salvando o WAV, e a escuta só começa pelos comandos manuais.
