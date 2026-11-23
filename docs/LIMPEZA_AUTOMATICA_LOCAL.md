@@ -76,6 +76,16 @@ O código não reabre nem renderiza o áudio apenas para refinar um corte; os
 limites atuais continuam usando timestamps de palavra e as margens já presentes
 na aplicação da timeline.
 
+Como proteção distinta do refino de borda, a etapa VAD agora mede energia RMS
+em janelas de 20 ms no PCM que ela já carregou para o Silero. Regiões audíveis
+sustentadas (limiar interno inicial -44 dBFS; lacunas até 40 ms agrupadas;
+spikes isolados descartados) são adicionadas somente à máscara que protege
+candidatos de silêncio. Elas não são chamadas de fala, não viram palavras e não
+alteram os tempos do Whisper. Assim, efeitos de jogo/música audíveis podem
+dividir uma pausa candidata; o limiar é conservador e pode preservar ruído de
+fundo. A versão dos parâmetros mudou na chave do cache para invalidar VAD antigo.
+Isso não substitui a revisão humana.
+
 ## Reconhecimento de fala e comandos de voz
 
 Word e Google Docs documentam ditado com pontuação e comandos de edição por
@@ -148,16 +158,23 @@ amostrado de 398 MiB. Como o sinal era silêncio sintético, esses smokes valida
 os caminhos reais dos motores e não medem precisão editorial em voz humana nem
 representam benchmark de outra configuração de hardware.
 
+Após adicionar proteção RMS, um smoke real com áudio falado FLEURS PT-BR
+(17,76 s, licença CC-BY-4.0) percorreu FFmpeg → Silero/RMS em 0,87 s, com três
+regiões de fala, 15,35 s detectados como fala, duas propostas de pausa e dois
+misses de cache. A ação chamou somente extração e VAD, sem Faster-Whisper. Este
+único clipe verifica integração/caminho de dados, não é corpus de retakes nem
+valida precisão editorial; o WAV ficou na pasta temporária e não entrou no Git.
+
 Para validar: abra **Assistente IA**, escolha o alcance, marque qualquer
 combinação dos três controles e use **Aplicar edição**. Cada sugestão começa
 desmarcada e precisa ser aprovada explicitamente na revisão. Para contexto sem
 remoção de silêncio, marque somente **Contexto**.
 
 Os testes determinísticos da integração ficam em
-`tests/test_automatic_cleanup.py`. A suíte principal foi executada pelo Python
-do ambiente `%LOCALAPPDATA%\\BFS\\venv`: 441 passaram e 5 foram ignorados. Os
-28 testes do ZIP V2 executaram sem falha; 2 testes opcionais do refinador RMS
-foram ignorados por NumPy ausente.
+`tests/test_automatic_cleanup.py`. A suíte principal foi executada por um venv
+temporário com as dependências declaradas e SciPy auxiliar: 452 passaram e 5
+foram ignorados. A suíte independente do ZIP V3 passou com 46/46 testes,
+incluindo os testes opcionais de refino RMS, no ambiente temporário com NumPy.
 
 Benchmark sintético, não representativo de voz ou do pipeline completo: 46.000
 palavras e 1.999 pausas artificiais foram processadas pelo comparador integrado
@@ -202,20 +219,23 @@ anotada. O modelo exato de CPU deste ambiente não foi confirmado.
 ## Avaliação do pacote Upgrade Global Python V3
 
 O ZIP foi executado como referência isolada: 46 testes passaram. O benchmark
-sintético do pacote processou 17.500 palavras; V2 mediu 1,223 s e pico Python
-rastreado de 2,6 MiB, enquanto V3 mediu 1,213 s e 2,0 MiB. Ele não inclui
-áudio, ASR, VAD, Qt ou timeline e, portanto, não demonstra ganho no editor.
+sintético do pacote processou 17.500 palavras; nesta execução, V2 mediu 1,176 s
+e pico Python rastreado de 2,6 MiB, enquanto V3 mediu 1,180 s e 2,0 MiB. Ele
+não inclui áudio, ASR, VAD, Qt ou timeline e, portanto, não demonstra ganho no
+editor.
 
 A branch já continha as funções principais da proposta V3: busca reversa de
 até cinco tentativas, ponte por comandos de regravação, cobertura direcional,
 normalização controlada, proteção de dados críticos e revisão não destrutiva.
-O protótipo independente não foi instalado como um segundo motor. Em uma
-comparação determinística de dez pares de frases (três candidatos esperados e
-sete casos que deveriam ser preservados), o detector integrado identificou
-3/3 candidatos sem falsos positivos após estas proteções; o protótipo V3
-produziu 3/3 candidatos e dois falsos positivos: mudança de 50 para 150
-arquivos e uma frase que acrescentava “também” no meio do enunciado. São
-fixtures textuais, não acurácia em fala humana.
+O protótipo independente não foi instalado como um segundo motor. Na
+comparação determinística refeita nesta execução, usei dez pares: três
+retomadas/reformulações, uma autocorreção numérica que exige revisão e seis
+casos que devem ser preservados. O motor integrado propôs os quatro casos
+esperados (autocorreção marcada para aprovação individual) e não propôs os seis
+casos protegidos. O `LocalCleanupV3` do ZIP também encontrou os quatro
+esperados, mas fez mais dois cortes candidatos indevidos: 50 vs. 150 arquivos e
+uma frase com “também” que acrescentava informação. São fixtures textuais
+determinísticas, não acurácia em fala humana.
 
 Foram adicionadas duas verificações ao motor integrado: preservar ênfase por
 repetição adjacente (por exemplo, “muito, muito importante”) quando uma versão

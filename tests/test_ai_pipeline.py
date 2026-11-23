@@ -15,13 +15,14 @@ from berofel.services.ai_pipeline import (AIOptions, Pipeline, StageRunner,
                                           qwen_stage_timeout, qwen_removal_interval)
 from berofel.services.subtitles import export_srt, merge_reports, build_cues, timeline_words
 from berofel.services.ai_worker import (_parse_model_json, _qwen, _qwen_prompt_batches,
-                                        _qwen_temp_directory, _qwen_server_completion)
+                                        _qwen_temp_directory, _qwen_server_completion, _vad)
 
 
 class FakeStages:
     def __init__(self):
         self.calls=[]
         self.call_details=[]
+        self.audio_activity=[]
     def __call__(self, stage, payload, output, **kw):
         self.calls.append(stage)
         self.call_details.append((stage,payload,kw))
@@ -32,7 +33,8 @@ class FakeStages:
                 file.writeframes(b'\0\0'*100)
             result={'audio_path':str(target),'duration':payload['duration']}
         elif stage == 'vad':
-            result={'speech':[{'start':.0,'end':5.0},{'start':7.0,'end':min(15.,payload.get('duration',15.))}], 'duration':15.}
+            result={'speech':[{'start':.0,'end':5.0},{'start':7.0,'end':min(15.,payload.get('duration',15.))}],
+                    'audio_activity':list(self.audio_activity),'duration':15.}
         elif stage == 'whisper':
             result={'words':[{'id':'w0_0','text':'Olá','start':.2,'end':.5},
                              {'id':'w0_1','text':'pessoal','start':.6,'end':1.1},
@@ -214,6 +216,38 @@ class AITest(unittest.TestCase):
             {'start':2.35,'end':2.8},
         ],duration=4.,minimum=.65,padding=.12)
         self.assertEqual(overlapped,[(.12,.88),(2.92,3.88)])
+
+    def test_silence_removal_protects_audible_gameplay_activity_without_calling_it_speech(self):
+        self.fake.audio_activity=[{'start':5.4,'end':6.6}]
+        result=Pipeline(self.cache,self.fake).analyze(
+            [self.clip],AIOptions(enable_qwen=False),mode='silence')
+        report=result['reports'][0]
+        self.assertEqual(self.fake.calls,['extract','vad'])
+        self.assertEqual(report['speech'],[
+            {'start':0.,'end':5.}, {'start':7.,'end':15.}])
+        self.assertFalse([item for item in report['suggestions']
+                          if item['type']=='silencio'])
+
+    def test_vad_worker_detects_non_speech_rms_activity_once_with_speech(self):
+        import math
+        import struct
+        audio=Path(self.temp.name)/'activity.wav'
+        frames=[]
+        for index in range(16000):
+            sample=.025*math.sin(2*math.pi*440*index/16000) if 7200<=index<12800 else 0.
+            frames.append(struct.pack('<h',round(sample*32767)))
+        with wave.open(str(audio),'wb') as wav:
+            wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000)
+            wav.writeframes(b''.join(frames))
+        with patch('faster_whisper.vad.get_speech_timestamps',return_value=[
+                {'start':0,'end':6400},{'start':13600,'end':16000}]) as silero:
+            result=_vad({'audio_path':str(audio)})
+        self.assertEqual(silero.call_count,1)
+        self.assertEqual(result['speech'],[{'start':0.0,'end':0.4},
+                                           {'start':0.85,'end':1.0}])
+        self.assertTrue(result['audio_activity'])
+        self.assertLessEqual(result['audio_activity'][0]['start'],.45)
+        self.assertGreaterEqual(result['audio_activity'][0]['end'],.80)
 
     def test_qwen_cache_invalidates_when_adaptive_context_changes(self):
         cli=Path(self.temp.name)/'llama-cli.exe';cli.write_bytes(b'fake')

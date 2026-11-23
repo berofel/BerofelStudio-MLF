@@ -380,7 +380,10 @@ class Pipeline:
 
         # Etapa 2: uma única instância Silero ONNX para todos os lotes não armazenados.
         def vad_payload(ch):
-            params={'threshold':.5,'min_silence_ms':350,'speech_pad_ms':100,'engine':'silero-onnx-v6'}
+            # Invalidate older VAD entries because this result now includes
+            # non-speech RMS intervals that the silence cut planner protects.
+            params={'threshold':.5,'min_silence_ms':350,'speech_pad_ms':100,
+                    'audio_activity_rms':.006,'engine':'silero-onnx-v6+rms-protection-v1'}
             return params,{'audio_path':ch['extract']['audio_path'],**params}
         if needs_vad:
             self._notify(f'Silero VAD • verificando {len(chunks)} trecho(s)')
@@ -424,13 +427,16 @@ class Pipeline:
         self._notify('Qwen • análise contextual dos textos' if needs_qwen else 'Preparando resultados solicitados')
         results=[]
         for clip_index,clip in enumerate(items,1):
-            all_speech=[];all_words=[];all_segments=[];suggestions=[]
+            all_speech=[];all_activity=[];all_words=[];all_segments=[];suggestions=[]
             belonging=[ch for ch in chunks if ch['clip'].id==clip.id]
             for ch in belonging:
                 relative=ch['relative'];a=ch['a'];length=ch['duration'];index=ch['index']
                 for span in ch.get('vad', {}).get('speech',[]):
                     all_speech.append({'start':relative+span['start'],
                                        'end':relative+span['end']})
+                for span in ch.get('vad', {}).get('audio_activity',[]):
+                    all_activity.append({'start':relative+span['start'],
+                                         'end':relative+span['end']})
                 tr=ch.get('whisper', {'words': [], 'segments': []});normalized=[]
                 if clip.id in known_words:
                     for word in known_words[clip.id]:
@@ -519,7 +525,10 @@ class Pipeline:
                                             'checked':False,'word_ids':proposal['word_ids']})
                 step()
             if needs_vad:
-                for sa,sb in self._build_gaps(all_speech,clip.end-clip.start,
+                # Protect audible non-speech (music/effects) without reporting
+                # it as voice. The suggestion remains an ordinary review item.
+                protected_speech=sorted(all_speech+all_activity,key=lambda span:span['start'])
+                for sa,sb in self._build_gaps(protected_speech,clip.end-clip.start,
                                                opts.min_silence,opts.silence_padding):
                     suggestions.append({'clip_id':clip.id,'title':clip.title,
                                         'a':sa,'b':sb,'type':'silencio','score':100,
