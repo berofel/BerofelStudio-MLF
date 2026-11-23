@@ -38,6 +38,7 @@ from berofel.services.action_scope import (ScopeSpec, resolve_scope, scope_summa
 from berofel.services.caption_actions import (create_manual_caption, create_auto_captions,
     export_scoped_srt, scoped_cues)
 from berofel.services.transcript_coverage import (record_coverage,has_coverage,words_in_clip)
+from berofel.services.asr_vocabulary import project_hotwords
 from berofel.services.clipper import analyze_clips as analyze_clip_candidates
 from berofel.ui.actions_panel import ActionsPanel, format_timecode
 from berofel.ui.clipper_dialog import ClipperDialog
@@ -3792,8 +3793,7 @@ class MainWindow(QMainWindow):
         # domain when this cleanup action needs a fresh transcript. Existing
         # project transcripts still bypass ASR; hints never rewrite the text.
         opts=AIOptions(enable_qwen=False,
-                       whisper_hotwords=('Berofel Studio, Faster-Whisper, Silero, '
-                                         'FFmpeg, timeline, transcrição, legendas'))
+                       whisper_hotwords=project_hotwords(self.project.transcripts))
         known={c.id:words_in_clip(self.project,c) for c in selected
                if has_coverage(self.project,c,opts.whisper_model,opts.language)}
         count,seconds=scope_summary(targets)

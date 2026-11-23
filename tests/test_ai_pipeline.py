@@ -139,6 +139,13 @@ class AITest(unittest.TestCase):
         call=[details for details in self.fake.call_details if details[0]=='whisper'][-1]
         self.assertEqual(call[1]['hotwords'],'Berofel Studio, timeline')
 
+    def test_default_whisper_cache_key_remains_compatible_without_hotwords(self):
+        base=Pipeline(self.cache,self.fake).analyze([self.clip],AIOptions(enable_qwen=False))
+        again=Pipeline(self.cache,self.fake).analyze([self.clip],AIOptions(enable_qwen=False))
+        self.assertEqual(base['cache_misses'],3)
+        self.assertEqual(again['cache_misses'],0)
+        self.assertEqual(len(self.fake.calls),3)
+
     def test_qwen_option_only_executes_when_model_available_and_after_whisper(self):
         cli=Path(self.temp.name)/'llama-cli.exe';cli.write_bytes(b'fake')
         model=Path(self.temp.name)/'model.gguf';model.write_bytes(b'fake')
