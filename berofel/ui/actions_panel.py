@@ -1,13 +1,15 @@
 """Ações independentes 0.8; espaço fixo no painel direito, sem modais de seleção."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import (QScrollArea, QWidget, QVBoxLayout, QHBoxLayout,
     QBoxLayout, QSizePolicy, QLabel, QLineEdit, QPushButton,
     QTextEdit, QFrame, QCheckBox)
 from .wheel_controls import WheelGuardComboBox as QComboBox
 
 from berofel.services.action_scope import ScopeSpec, resolve_scope, scope_summary
+from berofel.services.model_paths import (parakeet_model_path,
+    transcribe_binding_wheel, transcribe_runtime_dir)
 
 SCOPES = [
     ('Um bloco selecionado', 'one'),
@@ -18,8 +20,8 @@ SCOPES = [
     ('Projeto inteiro', 'project'),
 ]
 ACTIONS = [
-    ('Transcrever · somente Whisper', 'transcribe'),
-    ('Legendas automáticas · Whisper', 'subtitles'),
+    ('Transcrever · somente ASR local', 'transcribe'),
+    ('Legendas automáticas · ASR local', 'subtitles'),
     ('Exportar legendas SRT do alcance', 'srt'),
     ('Usar transcrição na narração', 'narration'),
 ]
@@ -180,6 +182,24 @@ class ActionsPanel(QScrollArea):
         box.addWidget(self.clipper_button)
         self.action_buttons.append(self.clipper_button)
         box.addWidget(QLabel('AÇÕES AVULSAS · um clique, uma função'))
+        box.addWidget(QLabel('Motor de transcrição local'))
+        self.asr_engine=QComboBox()
+        self.asr_engine.addItem('Faster-Whisper · padrão',('faster-whisper','cpu'))
+        self.asr_engine.addItem('Parakeet Ultra Q8 · CPU',('parakeet-ultra','cpu'))
+        self.asr_engine.addItem('Parakeet Ultra Q8 · Vulkan',('parakeet-ultra','vulkan'))
+        available=(parakeet_model_path().is_file() and
+                   transcribe_binding_wheel().is_file() and
+                   (transcribe_runtime_dir()/'transcribe.dll').is_file())
+        if not available:
+            for index in (1,2):
+                item=self.asr_engine.model().item(index)
+                if item:item.setEnabled(False)
+            self.asr_engine.setToolTip(
+                'Instale modelo/runtime Parakeet pelo script opcional para habilitar estas opções.')
+        self.asr_engine.currentIndexChanged.connect(self._save_asr_preference)
+        self.asr_engine.currentIndexChanged.connect(self._update_plan)
+        self._restore_asr_preference()
+        box.addWidget(self.asr_engine)
         for label,key in ACTIONS:
             button=QPushButton(label)
             button.setToolTip('Executa somente esta ação no alcance indicado.')
@@ -207,6 +227,25 @@ class ActionsPanel(QScrollArea):
         self.update_scope_preview()
         self._update_plan()
         self._apply_compact(self.width()<320)
+
+    @staticmethod
+    def _settings():
+        return QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
+                         'Berofel','BerofelStudio')
+
+    def _restore_asr_preference(self):
+        selected=str(self._settings().value('ai/asr_backend','faster-whisper|cpu'))
+        index=self.asr_engine.findData(tuple(selected.split('|',1)))
+        self.asr_engine.setCurrentIndex(max(0,index))
+
+    def _save_asr_preference(self,*_args):
+        value=self.asr_engine.currentData() or ('faster-whisper','cpu')
+        self._settings().setValue('ai/asr_backend','|'.join(value))
+        self._settings().sync()
+
+    def asr_selection(self):
+        value=self.asr_engine.currentData() or ('faster-whisper','cpu')
+        return str(value[0]),str(value[1])
 
     def resizeEvent(self,event):
         super().resizeEvent(event)
@@ -250,7 +289,8 @@ class ActionsPanel(QScrollArea):
         needs_vad='silence' in chosen or 'context' in chosen
         stages=[]
         if needs_vad: stages.append('Silero VAD')
-        if needs_text: stages.append('Whisper se necessário')
+        engine='Parakeet Ultra Q8' if self.asr_selection()[0]=='parakeet-ultra' else 'Faster-Whisper'
+        if needs_text: stages.append(engine+' se necessário')
         stages.append('regras locais em Python')
         self.plan_label.setText('Limpeza local: ' + ' → '.join(stages) +
             '\nSem Qwen/LLM. Cada corte aguarda revisão; Contexto sozinho não remove pausas.')
