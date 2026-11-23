@@ -33,14 +33,15 @@ chave de cache e não reescreve palavras nem seus timestamps. Uma transcrição 
 existente continua sendo reutilizada sem executar Whisper.
 
 Essa lista também é usada pelas rotas de transcrição e legendas iniciadas pelo
-editor, não apenas pela limpeza. Inclui termos frequentes/confiança alta de
-transcrições já salvas no projeto, além dos nomes fixos dos motores e recursos
-do editor. A coleta roda localmente, ignora palavras comuns e itens de baixa
-confiança, e tem limite de quantidade/tamanho. Os termos não são enviados a
-serviços externos. Como o Whisper trata hotwords como dicas de decodificação,
-elas podem favorecer uma palavra esperada e também enviesar o resultado; por
-isso não substituem a revisão nem são usadas como correção ortográfica
-confirmada.
+editor, não apenas pela limpeza. Legendas digitadas ou corrigidas pelo usuário
+contam como confirmação. Termos que vieram somente do ASR entram apenas quando
+reaparecem em fontes distintas ou estão separados por pelo menos 30 segundos,
+reduzindo o ciclo em que um erro de transcrição se reforça imediatamente. A
+coleta roda localmente, ignora palavras comuns e itens de baixa confiança, e
+tem limite de quantidade/tamanho. Os termos não são enviados a serviços
+externos. Como o Whisper trata hotwords como dicas de decodificação, ainda
+podem enviesar o resultado; não substituem revisão nem são usadas como correção
+ortográfica confirmada.
 
 Autocorreções explícitas como “na verdade”, “quer dizer” e “ou melhor” recebem
 tratamento direcional. Uma mudança de número ou negação só pode passar pela
@@ -63,6 +64,10 @@ Referências:
 * [Ditado no Microsoft Word](https://support.microsoft.com/en-gb/word/dictate-your-documents-in-word-for-the-web?redirectsourcepath=%2Farticle%2Fdictate-with-your-voice-in-office-d4fd296e-8f15-4168-afec-1f95b13a6408)
 * [Digitação por voz no Google Docs](https://support.google.com/docs/answer/4492226?hl=en-PE)
 * [Opções de transcrição do Faster-Whisper](https://github.com/SYSTRAN/faster-whisper/blob/master/faster_whisper/transcribe.py)
+
+Pesquisa adicional de projetos de texto open source, dicionários locais,
+decisões de dependências e benchmark da coleta: [Pesquisa open source de
+transcrição e texto](PESQUISA_OPEN_SOURCE_TRANSCRICAO_E_TEXTO.md).
 
 O fallback linguístico é Python padrão, sem spaCy nem downloads em tempo de uso.
 Se `rapidfuzz` já estiver instalado, a razão textual o usa opcionalmente; sem

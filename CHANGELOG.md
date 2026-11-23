@@ -1,5 +1,12 @@
 # Limpeza automática modular local
 
+## Pesquisa open source e ASR local — 23/11/2026
+
+- Reduzida a coleta de hotwords de projeto: processamento incremental evita cópias e ordenação de todos os tokens; microbenchmark sintético de 50 mil palavras caiu de 0,1556 s para 0,1462 s e de 19,36 MiB para 0,035 MiB de alocação temporária medida.
+- Hotwords vindas de ASR agora precisam reaparecer em fontes diferentes ou em posições separadas por 30 s; legendas manuais e auto-legendas editadas pelo usuário contam como confirmação.
+- Registrada pesquisa de Faster-Whisper, Buzz, WordCraft, Hunspell/Spylls e dicionários pt-BR VERO. Nenhum modelo ou pacote foi instalado.
+- Cobertos feedback de erro do ASR, casing de termos confirmados e filtragem de legenda automática não editada.
+
 ## Evolução linguística local — 23/11/2026
 
 - O detector contextual agora agrupa frases usando uma assinatura linguística em cache e equivalências pequenas, controladas e específicas do editor; elas ajudam na busca de candidatos e não decidem cortes isoladamente.

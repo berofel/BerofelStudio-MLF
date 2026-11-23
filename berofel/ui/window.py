@@ -38,7 +38,7 @@ from berofel.services.action_scope import (ScopeSpec, resolve_scope, scope_summa
 from berofel.services.caption_actions import (create_manual_caption, create_auto_captions,
     export_scoped_srt, scoped_cues)
 from berofel.services.transcript_coverage import (record_coverage,has_coverage,words_in_clip)
-from berofel.services.asr_vocabulary import project_hotwords
+from berofel.services.asr_vocabulary import confirmed_caption_texts, project_hotwords
 from berofel.services.clipper import analyze_clips as analyze_clip_candidates
 from berofel.ui.actions_panel import ActionsPanel, format_timecode
 from berofel.ui.clipper_dialog import ClipperDialog
@@ -3793,7 +3793,9 @@ class MainWindow(QMainWindow):
         # domain when this cleanup action needs a fresh transcript. Existing
         # project transcripts still bypass ASR; hints never rewrite the text.
         opts=AIOptions(enable_qwen=False,
-                       whisper_hotwords=project_hotwords(self.project.transcripts))
+                       whisper_hotwords=project_hotwords(
+                           self.project.transcripts,
+                           confirmed_texts=confirmed_caption_texts(self.project)))
         known={c.id:words_in_clip(self.project,c) for c in selected
                if has_coverage(self.project,c,opts.whisper_model,opts.language)}
         count,seconds=scope_summary(targets)
@@ -3894,7 +3896,9 @@ class MainWindow(QMainWindow):
             if not srt_path:return
             if not srt_path.lower().endswith('.srt'):srt_path+='.srt'
         originals=copy.deepcopy({t.original_id:self.project.clip(t.original_id) for t in targets})
-        opts=AIOptions(whisper_hotwords=project_hotwords(self.project.transcripts))
+        opts=AIOptions(whisper_hotwords=project_hotwords(
+            self.project.transcripts,
+            confirmed_texts=confirmed_caption_texts(self.project)))
         known={c.id:words_in_clip(self.project,c) for c in selected
                if has_coverage(self.project,c,opts.whisper_model,opts.language)}
         seconds=sum(t.playback_seconds for t in targets)
@@ -4129,7 +4133,9 @@ class MainWindow(QMainWindow):
                 return
         captured=copy.deepcopy({t.original_id:self.project.clip(t.original_id) for t in targets})
         count,seconds=scope_summary(targets)
-        opts=AIOptions(whisper_hotwords=project_hotwords(self.project.transcripts))
+        opts=AIOptions(whisper_hotwords=project_hotwords(
+            self.project.transcripts,
+            confirmed_texts=confirmed_caption_texts(self.project)))
         # Snapshot das palavras para que a thread não consulte um projeto mutável.
         known={c.id:words_in_clip(self.project,c) for c in selected
                if has_coverage(self.project,c,opts.whisper_model,opts.language)
@@ -4240,7 +4246,9 @@ class MainWindow(QMainWindow):
                                         'Faster-Whisper e Silero continuam disponíveis sem Qwen.')
                 return
         opts=AIOptions(enable_qwen=semantic,
-                       whisper_hotwords=project_hotwords(self.project.transcripts))
+                       whisper_hotwords=project_hotwords(
+                           self.project.transcripts,
+                           confirmed_texts=confirmed_caption_texts(self.project)))
         self.statusBar().showMessage(f'Batata Quente: processando {len(selected)} bloco(s) selecionado(s)...')
         def worker(progress,control=None,stage=None):
             return run_analysis(selected, options=opts, progress=progress,

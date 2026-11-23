@@ -31,17 +31,33 @@ def _confidence(item: dict) -> float:
         return 0.
 
 
-def project_hotwords(transcripts, base=BASE_HOTWORDS, *, max_terms=24,
+def project_hotwords(transcripts, base=BASE_HOTWORDS, *, confirmed_texts=(), max_terms=24,
                      max_dynamic_chars=220) -> str:
     """Return bounded project terms suitable for Faster-Whisper's hotwords.
 
-    Repeated transcript terms are preferred. A single title-cased term is
-    admitted only when confidently recognized mid-sentence, avoiding most
-    sentence-initial capitalization. Adjacent confident proper-name tokens
-    can be kept as a short phrase. Low-confidence words and common function
-    words are not fed back into ASR.
+    Terms from user-authored/edited captions are trusted. ASR-derived terms
+    must recur across sources or over a wide time span, preventing a single
+    transcription error from immediately teaching itself back to Whisper.
+    Low-confidence words and common function words are ignored.
     """
-    rows=[]
+    counts=Counter()
+    positions={}
+    phrases={}
+    previous_by_source={}
+    runs_by_source={}
+
+    def flush_run(source):
+        run=runs_by_source.pop(source,[])
+        if len(run)>=2:
+            phrase=' '.join(item[0] for item in run)
+            if len(phrase)<=48:
+                data=phrases.setdefault(phrase,{'count':0,'sources':set(),
+                                                'first':run[0][1],'last':run[-1][2]})
+                data['count']+=1
+                data['sources'].add(source)
+                data['first']=min(data['first'],run[0][1])
+                data['last']=max(data['last'],run[-1][2])
+
     for raw in transcripts or ():
         if not isinstance(raw,dict):
             continue
@@ -57,49 +73,67 @@ def project_hotwords(transcripts, base=BASE_HOTWORDS, *, max_terms=24,
             continue
         folded=token.casefold()
         if len(folded)<4 or folded in _COMMON or folded.isnumeric():
+            flush_run(str(raw.get('source') or ''))
             continue
-        rows.append({'text':token,'folded':folded,'probability':probability,
-                     'start':start,'end':end,'source':str(raw.get('source') or ''),
-                     'sentence_end':bool(re.search(r'[.!?]["”\']?\s*$',raw_text))})
-    rows.sort(key=lambda row:(row['source'],row['start'],row['end']))
+        source=str(raw.get('source') or '')
+        sentence_end=bool(re.search(r'[.!?]["”\']?\s*$',raw_text))
+        if probability>=.70:
+            counts[folded]+=1
+            location=positions.setdefault(folded,{'sources':set(),'first':start,'last':end})
+            location['sources'].add(source)
+            location['first']=min(location['first'],start)
+            location['last']=max(location['last'],end)
+        previous=previous_by_source.get(source)
+        delta=start-previous['end'] if previous else None
 
-    counts=Counter(row['folded'] for row in rows if row['probability']>=.70)
-    scores={}
-    previous_by_source={}
-    for row in rows:
-        if row['probability']<.88 or not row['text'][:1].isupper():
-            previous_by_source[row['source']]=row
-            continue
-        previous=previous_by_source.get(row['source'])
-        if previous and row['start']-previous['end']<=.8 and not previous['sentence_end']:
-            scores[row['folded']]=max(scores.get(row['folded'],0),1.0+row['probability'])
-        previous_by_source[row['source']]=row
-
-    # Preserve short consecutive capitalized names/brands as one hint phrase.
-    phrases=Counter()
-    run=[]
-    for row in rows:
-        eligible=(row['probability']>=.78 and row['text'][:1].isupper()
-                  and row['folded'] not in _COMMON)
-        adjacent=(run and row['source']==run[-1]['source']
-                  and row['start']-run[-1]['end']<=.65
-                  and not run[-1]['sentence_end'])
+        # Keep capitalized phrases without constructing a second per-word copy
+        # of the project's transcript. Transcript reports are time ordered;
+        # negative gaps intentionally break the phrase.
+        eligible=probability>=.78 and token[:1].isupper()
+        run=runs_by_source.get(source,[])
+        adjacent=(run and previous and 0<=delta<=.65 and not previous['sentence_end'])
         if eligible and (not run or adjacent):
-            run.append(row)
+            run.append((token,start,end))
+            runs_by_source[source]=run
         else:
-            if len(run)>=2:
-                phrase=' '.join(item['text'] for item in run)
-                if len(phrase)<=48:phrases[phrase]+=1
-            run=[row] if eligible else []
-    if len(run)>=2:
-        phrase=' '.join(item['text'] for item in run)
-        if len(phrase)<=48:phrases[phrase]+=1
+            flush_run(source)
+            if eligible:
+                runs_by_source[source]=[(token,start,end)]
+        previous_by_source[source]={'end':end,'sentence_end':sentence_end}
+    for source in tuple(runs_by_source):
+        flush_run(source)
 
     candidates=[]
     for folded,count in counts.items():
-        if count>=2 or folded in scores:
-            candidates.append((scores.get(folded,0)+count,folded))
-    candidates.extend((count*2,phrase) for phrase,count in phrases.items())
+        location=positions[folded]
+        independent=(len(location['sources'])>=2 or location['last']-location['first']>=30.)
+        if count>=2 and independent:
+            candidates.append((count,folded))
+    for phrase,data in phrases.items():
+        independent=(len(data['sources'])>=2 or data['last']-data['first']>=30.)
+        if data['count']>=2 and independent:
+            candidates.append((data['count']*2,phrase))
+
+    # Text in manual captions and captions edited after auto-generation is
+    # explicit user confirmation; it can seed the dictionary immediately.
+    confirmed=Counter()
+    confirmed_spelling={}
+    for text in confirmed_texts or ():
+        clean_text=unicodedata.normalize('NFC',unicodedata.normalize('NFKC',str(text or '')))
+        tokens=[_clean(token) for token in re.findall(r"[\wÀ-ÿ][\wÀ-ÿ'’-]*",clean_text)]
+        tokens=[token for token in tokens if len(token)>=4 and token.casefold() not in _COMMON]
+        for token in tokens:
+            folded=token.casefold()
+            confirmed[folded]+=1
+            confirmed_spelling.setdefault(folded,token)
+        for index in range(len(tokens)-1):
+            if tokens[index][:1].isupper() and tokens[index+1][:1].isupper():
+                phrase=f'{tokens[index]} {tokens[index+1]}'
+                if len(phrase)<=48:
+                    confirmed[phrase.casefold()]+=2
+                    confirmed_spelling.setdefault(phrase.casefold(),phrase)
+    candidates.extend((1000+count,confirmed_spelling[term])
+                      for term,count in confirmed.items())
     candidates.sort(key=lambda item:(-item[0],item[1].casefold()))
 
     fixed=[];seen=set()
@@ -117,3 +151,18 @@ def project_hotwords(transcripts, base=BASE_HOTWORDS, *, max_terms=24,
             continue
         dynamic.append(value);seen.add(folded);used_chars+=extra
     return ', '.join(fixed+dynamic)
+
+
+def confirmed_caption_texts(project) -> tuple[str,...]:
+    """Collect only captions typed or changed by the user."""
+    texts=[]
+    for clip in getattr(project,'clips',()):
+        if getattr(clip,'kind','')!='text':
+            continue
+        text=str(getattr(clip,'text','') or '').strip()
+        origin=str(getattr(clip,'generated_by','') or '')
+        generated=str(getattr(clip,'caption_generated_text','') or '').strip()
+        if text and (origin=='manual_caption' or
+                     (origin=='auto_caption' and text!=generated)):
+            texts.append(text)
+    return tuple(texts)
