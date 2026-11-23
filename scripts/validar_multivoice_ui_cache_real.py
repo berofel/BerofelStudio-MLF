@@ -11,8 +11,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
+import threading
+import time
 import wave
 
 import numpy as np
@@ -92,12 +95,91 @@ def _wait_task(window, app, timeout_ms: int = 180_000) -> None:
         wait_loop = QEventLoop()
         task.signals.finished.connect(wait_loop.quit)
         wait_loop.exec()
-        raise TimeoutError('A tarefa do editor excedeu o limite de 180 segundos.')
+        raise TimeoutError(f'A tarefa do editor excedeu o limite de {timeout_ms / 1000:.0f} segundos.')
     if window.active_task is not None:
         raise RuntimeError('A tarefa encerrou sem liberar a fila do editor.')
     if window._open_error_dialogs:
         messages = [dialog.text() for dialog in window._open_error_dialogs]
         raise RuntimeError('O editor reportou falha: ' + ' | '.join(messages))
+
+
+def build_one_voice_script(line_count: int) -> str:
+    if not 1 <= line_count <= 1000:
+        raise ValueError('O smoke de uma voz aceita entre 1 e 1.000 falas.')
+    return '\n'.join(
+        f'[{number:03d} | V1]\n'
+        f'Esta é a fala número {number:03d} no lote contínuo de validação.'
+        for number in range(1, line_count + 1))
+
+
+class ProcessTreeResourceSampler:
+    """Sample editor + child-worker RSS/CPU while real Qwen inference runs."""
+    def __init__(self, interval_seconds: float = 0.2):
+        self.interval_seconds = interval_seconds
+        self.root_pid = os.getpid()
+        self.started = 0.0
+        self.peak_rss = 0
+        self.cpu_start = 0.0
+        self.cpu_latest = 0.0
+        self._stop = threading.Event()
+        self._thread = None
+        self._psutil = None
+
+    def _read_tree(self) -> tuple[int, float]:
+        psutil = self._psutil
+        root = psutil.Process(self.root_pid)
+        processes = [root]
+        try:
+            processes.extend(root.children(recursive=True))
+        except psutil.Error:
+            pass
+        rss = cpu = 0
+        for process in processes:
+            try:
+                rss += process.memory_info().rss
+                usage = process.cpu_times()
+                cpu += usage.user + usage.system
+            except psutil.Error:
+                continue
+        return rss, cpu
+
+    def _sample(self) -> None:
+        while not self._stop.is_set():
+            rss, cpu = self._read_tree()
+            self.peak_rss = max(self.peak_rss, rss)
+            self.cpu_latest = cpu
+            self._stop.wait(self.interval_seconds)
+
+    def start(self):
+        try:
+            import psutil
+            self._psutil = psutil
+            _rss, self.cpu_start = self._read_tree()
+        except ImportError:
+            return self
+        self.started = time.perf_counter()
+        self._thread = threading.Thread(target=self._sample,
+                                        name='BFS Qwen resource sampler', daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> dict | None:
+        if self._thread is None:
+            return None
+        self._stop.set()
+        self._thread.join(timeout=2)
+        elapsed = max(0.001, time.perf_counter() - self.started)
+        _rss, cpu = self._read_tree()
+        self.peak_rss = max(self.peak_rss, _rss)
+        self.cpu_latest = max(self.cpu_latest, cpu)
+        cpu_seconds = max(0.0, self.cpu_latest - self.cpu_start)
+        return {'scope': 'editor process and child processes during synthesis',
+                'sample_interval_ms': int(self.interval_seconds * 1000),
+                'wall_seconds': round(elapsed, 3),
+                'peak_process_tree_rss_bytes': self.peak_rss,
+                'peak_process_tree_rss_gib': round(self.peak_rss / (1024 ** 3), 3),
+                'process_tree_cpu_seconds': round(cpu_seconds, 3),
+                'average_cpu_cores_used': round(cpu_seconds / elapsed, 3)}
 
 
 def main() -> int:
@@ -108,6 +190,8 @@ def main() -> int:
                         help='ID do perfil V1; obrigatório quando há vários autorizados.')
     parser.add_argument('--profile-v2', help='ID distinto para V2; ativa validação de duas vozes.')
     parser.add_argument('--profile-v3', help='ID distinto para V3; ativa o roteiro Qt de 100 falas.')
+    parser.add_argument('--one-voice-lines', type=int,
+                        help='Gera N textos inéditos em V1 para testar reuso do worker (1–1.000).')
     parser.add_argument('--confirm-distinct-speakers', action='store_true',
                         help='Confirma que os perfis selecionados representam pessoas diferentes.')
     parser.add_argument('--engine', choices=ENGINES, required=True)
@@ -116,6 +200,10 @@ def main() -> int:
         parser.error('confirme autorização para usar a referência vocal local.')
     if args.profile_v3 and not args.profile_v2:
         parser.error('--profile-v3 exige também um perfil distinto em --profile-v2.')
+    if args.one_voice_lines is not None and (args.profile_v2 or args.profile_v3):
+        parser.error('--one-voice-lines não pode ser combinado com perfis V2/V3.')
+    if args.one_voice_lines is not None and not 1 <= args.one_voice_lines <= 1000:
+        parser.error('--one-voice-lines aceita entre 1 e 1.000 falas.')
     try:
         validate_distinct_speaker_claim(args.profile_v2, args.confirm_distinct_speakers)
     except ValueError as exc:
@@ -135,6 +223,8 @@ def main() -> int:
             manager, profiles[0]['id'], args.profile_v2, args.profile_v3)
         profiles_by_voice = {f'V{index}': selected_profiles[profile_id]
                              for index, profile_id in enumerate(selected_profiles, 1)}
+    elif args.one_voice_lines is not None:
+        profiles_by_voice = {'V1': profiles[0]}
     else:
         profiles_by_voice = {'V1': profiles[0], 'V2': profiles[0]}
 
@@ -161,13 +251,18 @@ def main() -> int:
     previous_voice_dir = os.environ.get('BEROFEL_VOICE_PROFILE_DIR')
     env_keys = ('BEROFEL_AI_CACHE', 'BEROFEL_QWEN3_PROMPT_CACHE',
                 'BEROFEL_QWEN3_PUREC_PROFILE_CACHE', 'HF_HUB_OFFLINE',
+                'BEROFEL_QWEN3_PUREC_LOG',
                 'TRANSFORMERS_OFFLINE', 'HF_HUB_DISABLE_TELEMETRY',
                 'BEROFEL_QWEN3_NATIVE_HOME', 'BEROFEL_QWEN3_NATIVE_EXE',
                 'BEROFEL_QWEN3_NATIVE_MODEL', 'BEROFEL_QWEN3_NATIVE_TOKENIZER')
     previous = {key: os.environ.get(key) for key in env_keys}
     window = None
+    root = None
+    resource_sampler = None
+    resource_metrics = None
     try:
-        with tempfile.TemporaryDirectory(prefix='bfs_multivoice_ui_smoke_') as temp:
+        with tempfile.TemporaryDirectory(prefix='bfs_multivoice_ui_smoke_',
+                                         ignore_cleanup_errors=True) as temp:
             root = Path(temp)
             QSettings.setDefaultFormat(QSettings.Format.IniFormat)
             QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope,
@@ -177,6 +272,7 @@ def main() -> int:
                 'BEROFEL_AI_CACHE': str(root / 'ai-cache'),
                 'BEROFEL_QWEN3_PROMPT_CACHE': str(root / 'prompt-cache'),
                 'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': str(root / 'purec-profile-cache'),
+                'BEROFEL_QWEN3_PUREC_LOG': str(root / 'purec-server.log'),
                 'HF_HUB_OFFLINE': '1', 'TRANSFORMERS_OFFLINE': '1',
                 'HF_HUB_DISABLE_TELEMETRY': '1',
             }
@@ -215,7 +311,9 @@ def main() -> int:
             if engine_index < 0:
                 raise RuntimeError(f'O perfil {args.engine} não está disponível no painel.')
             panel.engine.setCurrentIndex(engine_index)
-            if args.profile_v3:
+            if args.one_voice_lines is not None:
+                smoke_script_text = build_one_voice_script(args.one_voice_lines)
+            elif args.profile_v3:
                 smoke_script_text = build_100_line_acceptance_script()
             elif args.profile_v2:
                 smoke_script_text = (
@@ -226,8 +324,23 @@ def main() -> int:
             panel.script_text.setPlainText(smoke_script_text)
             script = panel.build_script(title='Smoke multivozes no editor')
             panel.set_active_script(script)
-            window.generate_multivoice_ui(script)
-            _wait_task(window, app)
+            resource_sampler = ProcessTreeResourceSampler().start()
+            server_pids = []
+            if args.one_voice_lines and args.engine.startswith('qwen3-tts-purec-'):
+                from berofel.services import qwen3_purec_tts as purec_service
+                original_start_server = purec_service._start_server
+                def track_server(*call_args, **call_kwargs):
+                    result = original_start_server(*call_args, **call_kwargs)
+                    process = purec_service._PROCESS
+                    if process is not None:
+                        server_pids.append(process.pid)
+                    return result
+                with patch.object(purec_service, '_start_server', side_effect=track_server):
+                    window.generate_multivoice_ui(script)
+                    _wait_task(window, app, max(180_000, len(script.lines) * 12_000))
+            else:
+                window.generate_multivoice_ui(script)
+                _wait_task(window, app, max(180_000, len(script.lines) * 12_000))
 
             saved_data = next((item for item in window.project.narration_scripts
                                if item.get('id') == script.id), None)
@@ -236,7 +349,8 @@ def main() -> int:
             result = MultiVoiceScript.from_dict(saved_data)
             clips = [clip for clip in window.project.clips
                      if clip.narration_script_id == script.id]
-            expected_line_count = 100 if args.profile_v3 else 2
+            expected_line_count = (args.one_voice_lines if args.one_voice_lines is not None else
+                                   100 if args.profile_v3 else 2)
             if len(clips) != expected_line_count or len(result.lines) != expected_line_count:
                 raise RuntimeError(f'O editor inseriu {len(clips)} clips e {len(result.lines)} falas; '
                                    f'esperado: {expected_line_count}.')
@@ -255,7 +369,9 @@ def main() -> int:
                     raise RuntimeError('A pausa entre as falas não foi respeitada na timeline.')
             if not all(line.status == 'generated' for line in result.lines):
                 raise RuntimeError('Uma ou mais falas não foram finalizadas com sucesso.')
-            expected_synthesis_calls = expected_line_count if args.profile_v2 else 1
+            resource_metrics = resource_sampler.stop() if resource_sampler else None
+            expected_synthesis_calls = expected_line_count if (
+                args.profile_v2 or args.one_voice_lines is not None) else 1
             synthesis_calls = sum(not line.cache_hit for line in result.lines)
             if synthesis_calls != expected_synthesis_calls:
                 raise RuntimeError(f'Número inesperado de sínteses: {synthesis_calls}; '
@@ -263,8 +379,16 @@ def main() -> int:
             audio_paths = [line.audio_path for line in result.lines]
             if len(set(audio_paths)) != expected_line_count:
                 raise RuntimeError('Cada fala precisa ter um WAV independente.')
-            if not args.profile_v2 and _sha256(result.lines[0].audio_path) != _sha256(result.lines[1].audio_path):
+            if (args.one_voice_lines is None and not args.profile_v2 and
+                    _sha256(result.lines[0].audio_path) != _sha256(result.lines[1].audio_path)):
                 raise RuntimeError('O cache não reutilizou o áudio idêntico no smoke de uma voz.')
+            if args.one_voice_lines and args.engine.startswith('qwen3-tts-purec-'):
+                if not server_pids or len(set(server_pids)) != 1:
+                    raise RuntimeError(f'O servidor foi recarregado durante o lote: {server_pids!r}.')
+                if any(line.profile_prepare_seconds > 0 for line in result.lines[1:]):
+                    raise RuntimeError('O perfil vocal foi preparado novamente dentro do lote V1.')
+                if any(line.model_load_seconds > 0 for line in result.lines[1:]):
+                    raise RuntimeError('O modelo foi recarregado dentro do lote V1.')
             if not window._save_at(str(project_path)):
                 raise RuntimeError('O projeto do smoke não pôde ser salvo.')
             reopened = load_project(str(project_path))
@@ -317,23 +441,34 @@ def main() -> int:
                 'voice_line_counts': voice_counts,
                 'script_line_count': len(result.lines),
                 'synthesis_calls': synthesis_calls,
+                'resident_server_pid_count_during_one_voice_batch': len(set(server_pids)),
+                'server_start_checks_during_one_voice_batch': len(server_pids),
+                'one_voice_batch_reused_profile_and_model': bool(
+                    args.one_voice_lines and args.engine.startswith('qwen3-tts-purec-') and
+                    server_pids and len(set(server_pids)) == 1 and
+                    all(line.profile_prepare_seconds == 0 and line.model_load_seconds == 0
+                        for line in result.lines[1:])),
                 'cache_hit_per_line': cache_hits,
                 'timeline_clips': len(clips),
                 'timeline_pause_ms_preserved': result.pause_ms,
                 'timeline_order_and_spacing_verified': True,
                 'script_wall_seconds': round(result.total_seconds, 3),
+                'first_audio_ready_seconds': round(result.first_audio_ready_seconds, 3),
+                'first_audio_chunk_seconds_for_first_line': round(
+                    result.lines[0].first_audio_seconds, 3),
                 'generated_audio_seconds': round(sum(line.duration for line in result.lines), 3),
                 'fresh_synthesis_audio_seconds': round(fresh_synthesis_audio_seconds, 3),
                 'fresh_synthesis_end_to_end_rtf': round(
                     result.total_seconds / max(.001, fresh_synthesis_audio_seconds), 3),
                 'profile_preparation_seconds': round(result.profile_preparation_seconds, 3),
                 'model_load_seconds': round(result.model_load_seconds, 3),
+                'resource_metrics': resource_metrics,
                 'project_reopen_preserved_script_and_clips': True,
                 'individual_wav_metrics': [_measure_wav(line.audio_path)
                                            for line in result.lines],
                 'individual_wav_hashes_equal': (
                     _sha256(result.lines[0].audio_path) == _sha256(result.lines[1].audio_path)
-                    if not args.profile_v2 else None),
+                    if not args.profile_v2 and args.one_voice_lines is None else None),
                 'full_script_wav_export': export_metrics,
                 'mp4_export': {'duration_seconds': round(mp4_duration, 3),
                                'has_video': has_video, 'has_audio': has_audio,
@@ -342,6 +477,8 @@ def main() -> int:
             }
             print(json.dumps(report, ensure_ascii=False, indent=2))
     finally:
+        if resource_sampler is not None and resource_metrics is None:
+            resource_sampler.stop()
         if window is not None:
             window.close()
         try:
@@ -353,6 +490,12 @@ def main() -> int:
             stop_native_worker()
         except Exception:
             pass
+        if root is not None and root.exists():
+            temp_base = Path(tempfile.gettempdir()).resolve()
+            resolved_root = root.resolve()
+            if (resolved_root.parent == temp_base and
+                    resolved_root.name.startswith('bfs_multivoice_ui_smoke_')):
+                shutil.rmtree(resolved_root)
         QSettings.setDefaultFormat(old_format)
         if previous_voice_dir is None:
             os.environ.pop('BEROFEL_VOICE_PROFILE_DIR', None)

@@ -12,7 +12,10 @@ from scripts.validar_multivoice_distinct_profiles import (
     ACCEPTANCE_VOICE_ORDER, build_100_line_acceptance_script,
     select_authorized_distinct_profiles,
 )
-from scripts.validar_multivoice_ui_cache_real import validate_distinct_speaker_claim
+from scripts.validar_multivoice_ui_cache_real import (
+    ProcessTreeResourceSampler, build_one_voice_script,
+    validate_distinct_speaker_claim,
+)
 from berofel.services.multivoice_narration import parse_berofel_script
 from berofel.services.voice_profiles import VoiceProfileManager
 
@@ -40,6 +43,26 @@ class DistinctProfileAcceptanceTests(unittest.TestCase):
         validate_distinct_speaker_claim('profile-v2', True)
         with self.assertRaisesRegex(ValueError, 'arquivos diferentes'):
             validate_distinct_speaker_claim('profile-v2', False)
+
+    def test_one_voice_acceptance_builder_creates_unique_in_order_lines(self):
+        parsed = parse_berofel_script(build_one_voice_script(20))
+        self.assertEqual(len(parsed), 20)
+        self.assertEqual([line.number for line in parsed], list(range(1, 21)))
+        self.assertEqual({line.voice_id for line in parsed}, {'V1'})
+        self.assertEqual(len({line.text for line in parsed}), 20)
+        with self.assertRaisesRegex(ValueError, '1 e 1.000'):
+            build_one_voice_script(0)
+
+    def test_process_sampler_reports_bounded_process_metrics(self):
+        sampler = ProcessTreeResourceSampler(interval_seconds=0.01).start()
+        import time
+        time.sleep(0.03)
+        metrics = sampler.stop()
+        if metrics is not None:
+            self.assertGreater(metrics['wall_seconds'], 0)
+            self.assertGreater(metrics['peak_process_tree_rss_bytes'], 0)
+            self.assertGreaterEqual(metrics['process_tree_cpu_seconds'], 0)
+            self.assertGreaterEqual(metrics['average_cpu_cores_used'], 0)
 
     def _profile(self, name: str, source: Path, authorized: bool):
         return self.manager.create(name, source, 'portuguese', 'fala de teste',

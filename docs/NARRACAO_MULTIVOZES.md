@@ -134,6 +134,18 @@ Para validar pelo painel Qt do próprio editor, use `scripts/validar_multivoice_
 
 Com perfis diferentes, `--confirm-distinct-speakers` é obrigatório: arquivos de referência diferentes podem ser recortes do mesmo locutor. O relatório separa a checagem objetiva de arquivos distintos da confirmação humana das identidades. Sem `--profile-v2`/`--profile-v3`, o smoke mantém o caso de uma referência associada a dois slots e verifica o cache de fala repetida; esse caminho não valida locutores distintos.
 
+Para validar a permanência do mesmo worker em um lote de 20 textos inéditos com uma voz, execute:
+
+```powershell
+& "$env:LOCALAPPDATA\BFS\venv\Scripts\python.exe" `
+  scripts/validar_multivoice_ui_cache_real.py `
+  --confirm-own-or-authorized-voice `
+  --one-voice-lines 20 `
+  --engine qwen3-tts-purec-int8
+```
+
+O relatório confirma que houve 20 sínteses e 20 WAVs, verifica que todos os acessos ao worker Pure C usaram o mesmo PID e falha se o modelo ou o perfil vocal forem preparados novamente depois da primeira fala. Use `qwen3-tts-purec-mixed` para repetir o mesmo ensaio no Turbo.
+
 #### Smoke Qt atualizado com os dois perfis Pure C
 
 Em 2026-11-22, rodei o validador Qt acima nos perfis Pure C INT8 e Pure C Mixer, offline, com a única referência autorizada disponível mapeada aos slots V1 e V2. Em ambos, a primeira fala foi sintetizada e a segunda reutilizou o cache (`cache_hit=false/true`); os WAVs são endereços independentes com o mesmo hash por serem a mesma frase/voz. A interface inseriu os dois clips, preservou roteiro e IDs ao salvar/reabrir, exportou WAV não silencioso e MP4 com áudio/vídeo. As pastas e os arquivos temporários foram removidos.
@@ -144,6 +156,19 @@ Em 2026-11-22, rodei o validador Qt acima nos perfis Pure C INT8 e Pure C Mixer,
 | Pure C Mixer | 8,207 s | 4,72 s | 2,133 s | 2,427 s | 1,739 |
 
 Esses tempos são de uma execução curta por modo, incluem o fluxo do smoke e não estão atribuídos ao Ryzen 7 5700G. Como ambos usam o mesmo perfil e texto repetido, esta medição não verifica troca de locutor, estabilidade de timbre nem a fila real de 100 falas com três identidades.
+
+#### Lote de 20 textos inéditos com uma voz — Qt e Pure C residente
+
+O smoke de aceitação `--one-voice-lines 20` executa 20 frases únicas pela aba Várias vozes, usa cache e projeto temporários, e instrumenta o PID do servidor em cada entrada ao Pure C. Em 2026-11-22, ambos os perfis terminaram com 20 sínteses/20 WAVs/20 clips, zero cache hits entre os textos, um único PID em 40 verificações, sem novo preparo ou carga nas falas 2–20, timeline ordenada, WAV de roteiro, MP4 com áudio/vídeo e projeto salvo/reaberto. A integridade de cada WAV foi verificada por duração, sample rate e RMS não silencioso.
+
+| Backend (6 threads) | Tempo das 20 falas | Áudio produzido | RTF do lote | Preparo do perfil | Carga do servidor | RSS máximo da árvore editor+worker | CPU médio da árvore |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Pure C Mixer | 101,505 s | 122,40 s | 0,829 | 2,258 s | 2,520 s | 3,621 GiB | 7,551 núcleos |
+| Pure C INT8 | 108,130 s | 108,88 s | 0,993 | 2,281 s | 2,461 s | 3,656 GiB | 7,462 núcleos |
+
+CPU médio é tempo agregado dos processos dividido pelo tempo decorrido; RSS é o pico amostrado a cada 200 ms e inclui editor e processo servidor. São medições de uma execução por backend neste ambiente, sem identificação física confirmada do processador, e não devem ser atribuídas ao Ryzen 7 5700G. Nenhuma das duas execuções avalia comparação de locutores distintos. Artefatos temporários foram removidos.
+
+Os quatro testes de integração que aparecem como `skipped` na execução padrão da suíte passaram quando habilitados explicitamente: geração do Native Qwen pelos dois modos, síntese Pure C/stream/cache, inserção/exportação pela interface e pré-aquecimento ao selecionar voz. Foram executados com Pure C Mixer; os três testes Pure C foram repetidos também com INT8. Logs locais: `logs/real_engine_integration_20261122.log` e `logs/purec_int8_integration_20261122.log`.
 
 ### Diagnosticar troca Pure C sem usar gravações pessoais
 
@@ -232,3 +257,15 @@ Reproduzir essa medição sem alterar os perfis persistentes, usando caches e re
 ```
 
 Também reexecutei pela janela Qt real após integrar o pré-preparo: 6,866 s para preparar o perfil e 0,773 s para carregar o servidor; um WAV sintetizado foi reaproveitado para as duas falas idênticas do mesmo perfil, com dois clips na timeline, pausa de 200 ms, salvar/reabrir e exportação WAV estéreo 48 kHz de 11,88 s sincronizados. Este smoke confirma a integração Native Q4 e o novo pré-preparo no editor, mas não valida identidade vocal distinta, MP4 nesse backend, nem perfis separados no fluxo UI.
+
+### Revisão final do gerenciador Pure C — 2026-11-22
+
+O adaptador agora expõe estados de servidor (`STOPPED`, `STARTING`, `READY`, `GENERATING`, `STOPPING`) e associa o processo ativo ao SHA-256 do x-vector, identificador do backend e número real de threads. Antes de enviar síntese, confere essa associação; durante os chunks, o estado é `GENERATING` e volta a `READY` ao concluir. O processo grava stdout/stderr em log local por inicialização. Falhas de encerramento ou health check incluem o trecho final do log; encerramento explícito e `atexit` fecham o arquivo de log. O Pure C instalado não tem seleção de voz por requisição: perfil diferente ainda exige reinício, como documentado acima.
+
+Foram repetidos testes reais offline nos dois perfis aprovados, sempre com seis threads. Ambos passaram pela síntese WAV, cache de perfil/modelo, player Qt, inserção na timeline, pré-aquecimento, exportação WAV e exportação MP4 com áudio/vídeo. Na execução direcionada desta revisão, Mixer gerou 4,40 s de áudio em 4,987 s (primeiro chunk em 0,738 s), e INT8 gerou 4,32 s em 5,981 s (primeiro chunk em 0,766 s). Com servidor/perfil já residentes, as chamadas registraram `profile_prepare_seconds=0` e `model_load_seconds=0`; a síntese continua consumindo tempo de inferência. Estes são textos curtos, uma execução por perfil, e não são benchmark do Ryzen 7 5700G.
+
+O smoke Qt de 20 textos inéditos com uma voz foi executado nos dois backends. Em cada um: 20 sínteses reais, 20 WAVs, 20 clips, timeline ordenada, salvar/reabrir, WAV e MP4 válidos; foram registrados 40 pontos de acesso ao servidor com um único PID. Nenhuma das falas 2–20 repetiu preparação do perfil ou carga do modelo. Mixer: 95,03 s para 117,92 s de áudio (RTF 0,806), primeiro áudio disponível em 9,156 s, RSS máximo amostrado de 3,619 GiB e CPU média da árvore de 7,636 núcleos. INT8: 104,875 s para 115,60 s (RTF 0,907), primeiro áudio em 9,349 s, RSS 3,666 GiB e CPU média de 7,708 núcleos. A amostragem de recursos ocorre a cada 200 ms; a CPU física deste ambiente não foi identificada, portanto os valores não são atribuídos ao Ryzen de referência. Os WAVs temporários foram verificados como não silenciosos e removidos após a execução.
+
+A suíte completa foi repetida com os testes opcionais Native Qwen e Pure C habilitados, modo Qt offscreen e os modelos locais/offline: **392 testes passaram, zero falhas e zero ignorados em 235,281 s**. O teste real Native Q4 gravou cache e WAV sob diretório temporário isolado; antes dessa correção, a execução tentava escrever no cache persistente do usuário e falhava com `PermissionError`. O relatório bruto está em `logs/full_suite_final_20261122.log` (arquivo local ignorado pelo Git).
+
+Este resultado comprova a implementação local e a validação com uma voz. Não comprova três identidades vocais distintas: no inventário atual existe uma gravação/perfil autorizado. Também não foi executado um lote real de 100 falas com três locutores; a fila 70/20/10, parser de 1.000 falas, persistência e regeneração exclusiva da fala 047 continuam cobertos por testes automatizados de orquestração, incluindo verificação de hash dos 99 WAVs restantes. Para completar a validação de identidade, o computador precisa disponibilizar dois outros perfis com gravações independentes e autorizadas.
