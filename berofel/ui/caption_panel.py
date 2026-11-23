@@ -13,15 +13,16 @@ from .wheel_controls import WheelGuardComboBox
 from PySide6.QtWidgets import QTextEdit
 
 from berofel.services.transcript_proofing import (apply_suggestion,
-    load_pt_br_dictionary, spelling_suggestions)
+    load_pt_br_dictionary, project_approved_words, spelling_suggestions)
 from berofel.services.tasks import Task
 
 
-def _proofread_text(text):
+def _proofread_text(text, approved_words=()):
     dictionary = load_pt_br_dictionary()
     if dictionary is None:
         return text, None
-    return text, spelling_suggestions(text, dictionary=dictionary)
+    return text, spelling_suggestions(text, dictionary=dictionary,
+                                      approved_words=approved_words)
 
 
 class CaptionPanel(QWidget):
@@ -236,7 +237,8 @@ class CaptionPanel(QWidget):
         self._proofread_pending = (request, clip_id, text)
         self.proofread_button.setEnabled(False)
         self.state_label.setText('Verificando ortografia localmente…')
-        task = Task(_proofread_text, text)
+        approved_words = project_approved_words(self._project)
+        task = Task(_proofread_text, text, approved_words)
         self._proofread_task = task
         task.signals.success.connect(self._proofread_success)
         task.signals.error.connect(self._proofread_error)

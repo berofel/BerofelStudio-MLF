@@ -2,10 +2,12 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from berofel.services.transcript_proofing import (SpellingSuggestion, apply_suggestion,
-    find_pt_br_dictionary, load_pt_br_dictionary, spelling_suggestions)
+    find_pt_br_dictionary, load_pt_br_dictionary, project_approved_words,
+    spelling_suggestions)
 
 
 class FakeDictionary:
@@ -46,6 +48,22 @@ class TranscriptProofingTests(unittest.TestCase):
         issues = spelling_suggestions('transcricão transcricão',
             dictionary=FakeDictionary(), max_issues=1)
         self.assertEqual(len(issues), 1)
+
+    def test_project_terms_protect_technical_names_not_sentence_prose(self):
+        project = SimpleNamespace(clips=[
+            SimpleNamespace(kind='text', text='BerofelStudio usa Qwen3-TTS',
+                generated_by='manual_caption', caption_generated_text=''),
+            SimpleNamespace(kind='text', text='Faster-Whisper está correto',
+                generated_by='auto_caption', caption_generated_text='transcrição original'),
+            SimpleNamespace(kind='text', text='Legenda automática',
+                generated_by='auto_caption', caption_generated_text='Legenda automática'),
+        ])
+        approved = project_approved_words(project)
+        self.assertIn('berofelstudio', approved)
+        self.assertIn('qwen3-tts', approved)
+        self.assertIn('faster-whisper', approved)
+        self.assertNotIn('legenda', approved)
+        self.assertNotIn('correto', approved)
 
     def test_discovery_uses_explicit_local_hunspell_prefix(self):
         with tempfile.TemporaryDirectory() as folder:

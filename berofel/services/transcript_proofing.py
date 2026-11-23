@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 import re
 
+from .asr_vocabulary import BASE_HOTWORDS
+
 
 _WORD = re.compile(r"[\wÀ-ÿ][\wÀ-ÿ'’-]*", re.UNICODE)
 _PT_BR_BASES = (
@@ -26,6 +28,40 @@ class SpellingSuggestion:
     end: int
     word: str
     suggestions: tuple[str, ...]
+
+
+def project_approved_words(project, *, max_captions: int = 500,
+                           max_words: int = 500) -> frozenset[str]:
+    """Return bounded product/proper-name terms confirmed in this project.
+
+    Only technical terms (digits, internal capitals, or all-caps tokens) from
+    user-authored/edited captions are added; ordinary sentence words are not
+    whitelisted, so a typo in prose still remains reviewable.
+    """
+    approved = {word.casefold() for term in BASE_HOTWORDS for word in _WORD.findall(term)}
+    count = captions = 0
+    for clip in getattr(project, 'clips', ()):
+        if getattr(clip, 'kind', '') != 'text':
+            continue
+        text = str(getattr(clip, 'text', '') or '')
+        origin = str(getattr(clip, 'generated_by', '') or '')
+        generated = str(getattr(clip, 'caption_generated_text', '') or '').strip()
+        if not text or not (origin == 'manual_caption' or
+                            (origin == 'auto_caption' and text.strip() != generated)):
+            continue
+        captions += 1
+        if captions > max_captions:
+            break
+        for match in _WORD.finditer(text):
+            word = match.group(0)
+            has_internal_capital = any(char.isupper() for char in word[1:])
+            if (len(word) >= 3 and (any(char.isdigit() for char in word)
+                                    or has_internal_capital or word.isupper())):
+                approved.add(word.casefold())
+                count += 1
+                if count >= max_words:
+                    return frozenset(approved)
+    return frozenset(approved)
 
 
 def find_pt_br_dictionary() -> Path | None:

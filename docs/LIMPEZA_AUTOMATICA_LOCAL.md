@@ -78,7 +78,9 @@ abertura do dicionário leva alguns segundos, e as próximas usam o cache da
 sessão. A revisão funciona sem rede depois da instalação. Selecione uma sugestão e aplique; depois
 use **Aplicar texto** para salvar a alteração no clip. O intervalo original da
 palavra é validado antes de substituir, então sugestões antigas não sobrescrevem
-texto modificado.
+texto modificado. Termos técnicos e nomes com maiúsculas internas ou números
+reaproveitados de legendas do usuário são tratados como vocabulário aprovado;
+auto-legendas inalteradas e palavras comuns não são isentas do corretor.
 
 Para instalar o dicionário uma vez, execute `scripts/instalar_corretor_pt_br.py`
 com o Python do ambiente BFS. O script baixa apenas os dois arquivos VERO da

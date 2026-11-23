@@ -6,6 +6,7 @@
 - Integrado Spylls como dependência pequena do conjunto opcional de IA e criado instalador idempotente para VERO/Hunspell pt-BR em pasta BFS versionada, com verificação de integridade upstream e aviso de licença.
 - O corretor não reescreve transcrições, palavras temporizadas ou arquivos de origem; não usa LLM e funciona offline depois de instalado.
 - Adicionados testes de spans, sugestões, texto obsoleto, descoberta da pasta versionada e aplicação pelo painel Qt. Neste ambiente, Spylls 0.1.7 e o VERO pt-BR foram instalados localmente, os checksums foram validados e uma palavra com erro produziu uma sugestão real.
+- Nomes técnicos/camelCase confirmados em legendas manuais ou editadas são protegidos na revisão local; palavras comuns e auto-legendas inalteradas não entram como exceção.
 
 ## Disfluências e ênfase — 23/11/2026
 
