@@ -39,6 +39,12 @@ _PROCESS_KEY = ''
 _PORT = 0
 _MODEL_LOAD_SECONDS = 0.0
 _PROFILE_SECONDS = 0.0
+_SERVER_STATE = 'STOPPED'
+_ACTIVE_PROFILE_FINGERPRINT = ''
+_ACTIVE_ENGINE = ''
+_ACTIVE_THREADS = 0
+_SERVER_LOG_HANDLE = None
+_SERVER_LOG_PATH = ''
 
 
 def runtime_root() -> Path:
@@ -98,6 +104,41 @@ def _profile_cache_root() -> Path:
     if override:
         return Path(override).expanduser().resolve()
     return runtime_root() / 'cache' / 'profiles'
+
+
+def _server_log_destination() -> Path:
+    override = os.environ.get('BEROFEL_QWEN3_PUREC_LOG', '').strip()
+    if override:
+        path = Path(override).expanduser().resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+    folder = runtime_root() / 'logs'
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / f'purec-server-{time.strftime("%Y%m%d-%H%M%S")}-{uuid.uuid4().hex[:8]}.log'
+
+
+def _server_log_tail(path: str, limit: int = 2400) -> str:
+    if not path:
+        return ''
+    try:
+        with Path(path).open('rb') as source:
+            source.seek(max(0, Path(path).stat().st_size - limit))
+            return source.read().decode('utf-8', 'replace').strip()
+    except OSError:
+        return ''
+
+
+def server_status() -> dict:
+    """Return a safe snapshot of the serialized local server state."""
+    with _LOCK:
+        if _PROCESS is not None and _PROCESS.poll() is not None:
+            _stop_server_locked()
+        return {'state': _SERVER_STATE,
+                'pid': _PROCESS.pid if _PROCESS is not None else None,
+                'engine': _ACTIVE_ENGINE,
+                'threads': _ACTIVE_THREADS,
+                'profile_fingerprint': _ACTIVE_PROFILE_FINGERPRINT,
+                'log_path': _SERVER_LOG_PATH}
 
 
 def _model_key(exe: Path, model: Path) -> str:
@@ -196,15 +237,29 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
 
 def _stop_server_locked() -> None:
     global _PROCESS, _PROCESS_KEY, _PORT, _MODEL_LOAD_SECONDS, _PROFILE_SECONDS
+    global _SERVER_STATE, _ACTIVE_PROFILE_FINGERPRINT, _ACTIVE_ENGINE, _ACTIVE_THREADS
+    global _SERVER_LOG_HANDLE, _SERVER_LOG_PATH
     process = _PROCESS
+    if process is not None:
+        _SERVER_STATE = 'STOPPING'
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill(); process.wait(timeout=5)
     _PROCESS = None; _PROCESS_KEY = ''; _PORT = 0
     _MODEL_LOAD_SECONDS = 0.0; _PROFILE_SECONDS = 0.0
-    if process is not None and process.poll() is None:
-        process.terminate()
+    _ACTIVE_PROFILE_FINGERPRINT = ''; _ACTIVE_ENGINE = ''; _ACTIVE_THREADS = 0
+    log_handle = _SERVER_LOG_HANDLE
+    _SERVER_LOG_HANDLE = None; _SERVER_LOG_PATH = ''
+    if log_handle is not None:
         try:
-            process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            process.kill(); process.wait(timeout=5)
+            log_handle.flush()
+            log_handle.close()
+        except OSError:
+            pass
+    _SERVER_STATE = 'STOPPED'
 
 
 def stop_purec_worker() -> None:
@@ -222,49 +277,84 @@ def _start_server(profile: Path, control=None,
                   engine: str = ENGINE_ID,
                   thread_count: int | None = None) -> tuple[int, float]:
     global _PROCESS, _PROCESS_KEY, _PORT, _MODEL_LOAD_SECONDS, _PROFILE_SECONDS
+    global _SERVER_STATE, _ACTIVE_PROFILE_FINGERPRINT, _ACTIVE_ENGINE, _ACTIVE_THREADS
+    global _SERVER_LOG_HANDLE, _SERVER_LOG_PATH
     exe, model, paths = _layout()
     quantization = _quantization_flag(engine)
-    key = digest({'model': _model_key(exe, model), 'profile': hashlib.sha256(profile.read_bytes()).hexdigest(),
+    profile_fingerprint = hashlib.sha256(profile.read_bytes()).hexdigest()
+    key = digest({'model': _model_key(exe, model), 'profile': profile_fingerprint,
                   'threads': threads_for_engine(thread_count), 'precision': engine})
     if _PROCESS is not None and _PROCESS.poll() is None and _PROCESS_KEY == key:
         # This value is per request: a resident server incurs no new model load.
+        _SERVER_STATE = 'READY'
         return _PORT, 0.0
     _stop_server_locked()
+    _SERVER_STATE = 'STARTING'
     port = _free_port()
     command = [str(exe), '-d', str(model), '--load-voice', str(profile),
                '--xvector-only', *quantization, '-j', str(threads_for_engine(thread_count)),
                '--max-request-seconds', '600', '--serve', str(port)]
     started = time.perf_counter()
-    process = subprocess.Popen(command, cwd=str(exe.parent), env=_environment(exe, paths, thread_count),
-                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL, creationflags=_process_flags())
-    deadline = time.monotonic() + 180
-    while time.monotonic() < deadline:
-        if control and control.cancelled:
-            process.kill(); process.wait(timeout=5)
-            if control: control.checkpoint()
-        if process.poll() is not None:
-            raise RuntimeError('Servidor Pure C encerrou ao carregar Qwen3 Base e o perfil vocal.')
-        try:
-            conn = http.client.HTTPConnection('127.0.0.1', port, timeout=1)
+    log_path = _server_log_destination()
+    log_handle = log_path.open('ab', buffering=0)
+    process = None
+    try:
+        process = subprocess.Popen(command, cwd=str(exe.parent), env=_environment(exe, paths, thread_count),
+                                   stdin=subprocess.DEVNULL, stdout=log_handle,
+                                   stderr=subprocess.STDOUT, creationflags=_process_flags())
+        _PROCESS = process
+        _SERVER_LOG_HANDLE = log_handle
+        _SERVER_LOG_PATH = str(log_path)
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            if control and control.cancelled:
+                _stop_server_locked()
+                control.checkpoint()
+            if process.poll() is not None:
+                detail = _server_log_tail(str(log_path))
+                _stop_server_locked()
+                suffix = f' Detalhe do servidor: {detail}' if detail else f' Consulte o log local: {log_path}'
+                raise RuntimeError('Servidor Pure C encerrou durante a inicialização do modelo ou voz.' + suffix)
             try:
-                conn.request('GET', '/v1/health')
-                response = conn.getresponse(); body = response.read()
-            finally:
-                conn.close()
-            if response.status == 200 and json.loads(body).get('status') == 'ok':
-                _PROCESS = process; _PROCESS_KEY = key; _PORT = port
-                _MODEL_LOAD_SECONDS = time.perf_counter() - started
-                return port, _MODEL_LOAD_SECONDS
-        except (OSError, ValueError, TimeoutError):
-            pass
-        time.sleep(.2)
-    process.kill(); process.wait(timeout=5)
-    raise TimeoutError('Servidor Pure C não ficou pronto em 180 segundos.')
+                conn = http.client.HTTPConnection('127.0.0.1', port, timeout=1)
+                try:
+                    conn.request('GET', '/v1/health')
+                    response = conn.getresponse(); body = response.read()
+                finally:
+                    conn.close()
+                if response.status == 200 and json.loads(body).get('status') == 'ok':
+                    _PROCESS_KEY = key; _PORT = port
+                    _ACTIVE_PROFILE_FINGERPRINT = profile_fingerprint
+                    _ACTIVE_ENGINE = engine
+                    _ACTIVE_THREADS = threads_for_engine(thread_count)
+                    _SERVER_STATE = 'READY'
+                    _MODEL_LOAD_SECONDS = time.perf_counter() - started
+                    return port, _MODEL_LOAD_SECONDS
+            except (OSError, ValueError, TimeoutError):
+                pass
+            time.sleep(.2)
+        detail = _server_log_tail(str(log_path))
+        _stop_server_locked()
+        suffix = f' Detalhe do servidor: {detail}' if detail else f' Consulte o log local: {log_path}'
+        raise TimeoutError('Servidor Pure C não respondeu ao health check em 180 segundos.' + suffix)
+    except Exception:
+        if _PROCESS is process and process is not None:
+            _stop_server_locked()
+        else:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            try:
+                log_handle.close()
+            except OSError:
+                pass
+            _SERVER_STATE = 'STOPPED'
+        raise
 
 
 def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
                          control=None, stage=None, audio_chunk=None) -> dict:
+    global _SERVER_STATE
     validate_request(request.text, request.voice, request.language, request.consent)
     if request.engine not in PUREC_ENGINES:
         raise ValueError('Selecione um modo de execução Pure C reconhecido.')
@@ -297,6 +387,13 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
     with _LOCK:
         port, model_load = _start_server(Path(profile['path']), control,
                                          request.engine, request.thread_count)
+        expected_profile_fingerprint = hashlib.sha256(
+            Path(profile['path']).read_bytes()).hexdigest()
+        if (_ACTIVE_PROFILE_FINGERPRINT != expected_profile_fingerprint or
+                _ACTIVE_ENGINE != request.engine or
+                _ACTIVE_THREADS != threads_for_engine(request.thread_count) or
+                _PROCESS is None or _PROCESS.poll() is not None):
+            raise RuntimeError('O servidor Pure C pronto não corresponde ao perfil vocal, backend ou threads solicitados; nenhuma síntese foi enviada.')
         # A cache miss starts the resident model while preparing its profile;
         # preserve that measured cost in this request's telemetry. Cache hits
         # on an already running server correctly report zero incremental load.
@@ -311,6 +408,7 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
                               'rep_penalty': 1.05}, ensure_ascii=False).encode('utf-8')
         stage_seconds['payload_prepare_seconds'] = time.perf_counter() - payload_started
         try:
+            _SERVER_STATE = 'GENERATING'
             headers_started = time.perf_counter()
             conn.request('POST', '/v1/tts/stream', body=payload,
                          headers={'Content-Type': 'application/json'})
@@ -375,6 +473,10 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
         finally:
             try: conn.close()
             except OSError: pass
+            if _PROCESS is not None and _PROCESS.poll() is None:
+                _SERVER_STATE = 'READY'
+            else:
+                _stop_server_locked()
     duration = frames / 24000.0
     generation = time.perf_counter() - start
     quantization = ('Talker INT8 + Code Predictor INT4'

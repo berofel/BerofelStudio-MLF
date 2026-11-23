@@ -34,7 +34,25 @@ def _isolated_qsettings(folder):
                           str(Path(original).parent))
 
 
+@contextmanager
+def _stop_purec_worker_on_exit():
+    try:
+        yield
+    finally:
+        purec.stop_purec_worker()
+
+
 class PureCTests(unittest.TestCase):
+    def test_server_status_is_stopped_without_a_worker(self):
+        with patch.object(purec, '_PROCESS', None), \
+             patch.object(purec, '_SERVER_STATE', 'STOPPED'), \
+             patch.object(purec, '_ACTIVE_ENGINE', ''), \
+             patch.object(purec, '_ACTIVE_THREADS', 0), \
+             patch.object(purec, '_ACTIVE_PROFILE_FINGERPRINT', ''):
+            status = purec.server_status()
+        self.assertEqual(status['state'], 'STOPPED')
+        self.assertIsNone(status['pid'])
+
     def test_runtime_caps_openblas_to_one_thread(self):
         with patch.dict(os.environ, {'OPENBLAS_NUM_THREADS': '16',
                                     'BEROFEL_QWEN3_PUREC_THREADS': '4'}, clear=False):
@@ -91,7 +109,7 @@ class PureCTests(unittest.TestCase):
             def write_normalized(_source, destination):
                 Path(destination).write_bytes(b'W' * 128)
 
-            with patch.dict(os.environ, {
+            with _stop_purec_worker_on_exit(), patch.dict(os.environ, {
                 'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': str(root / 'cache'),
                 'BEROFEL_QWEN3_PUREC_THREADS': '6',
             }, clear=False), \
@@ -124,7 +142,7 @@ class PureCTests(unittest.TestCase):
             (model / 'model.safetensors').write_bytes(b'weights')
             (model / 'speech_tokenizer' / 'model.safetensors').write_bytes(b'codec')
             runtime = root / 'msys'; runtime.mkdir()
-            with patch.dict(os.environ, {
+            with _stop_purec_worker_on_exit(), patch.dict(os.environ, {
                 'BEROFEL_QWEN3_PUREC_EXE': str(exe),
                 'BEROFEL_QWEN3_PUREC_MODEL': str(model),
                 'BEROFEL_QWEN3_PUREC_RUNTIME_PATHS': str(runtime),
@@ -164,7 +182,10 @@ class PureCRealIntegrationTests(unittest.TestCase):
                        if item.get('authorized') and item.get('reference_text'))
         test_engine = os.environ.get('BEROFEL_PUREC_TEST_ENGINE', purec.ENGINE_ID)
         with tempfile.TemporaryDirectory(prefix='bfs_purec_real_test_') as work:
-            with patch.dict(os.environ, {'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work}, clear=False):
+            with _stop_purec_worker_on_exit(), patch.dict(os.environ, {
+                'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work,
+                'BEROFEL_QWEN3_PUREC_LOG': str(Path(work) / 'purec-server.log'),
+            }, clear=False):
                 source = Path(work) / 'authorized_reference.wav'
                 from berofel.services.audio_reference import prepare_audio_prompt
                 prepare_audio_prompt(profile['sample_path'], source)
@@ -176,13 +197,17 @@ class PureCRealIntegrationTests(unittest.TestCase):
                     wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(rate)
                     wav.writeframes(pcm + np.zeros(rate // 10, dtype='<i2').tobytes())
                 chunks = []
+                chunk_states = []
+                def collect_chunk(chunk):
+                    chunk_states.append(purec.server_status()['state'])
+                    chunks.append(chunk)
                 request = NarrationRequest(
                     text='O Berofel Studio está testando a narração local com Qwen Base.',
                     voice=str(source), reference_text=profile['reference_text'],
                     language='portuguese', consent=True, engine=test_engine,
                     title='Pure C integração',
                     project_path=str(Path(work) / 'project.bfsproj'))
-                result = generate_narration(request, audio_chunk=chunks.append)
+                result = generate_narration(request, audio_chunk=collect_chunk)
                 path = Path(result['path'])
                 self.assertTrue(path.is_file())
                 with __import__('wave').open(str(path), 'rb') as wav:
@@ -194,6 +219,11 @@ class PureCRealIntegrationTests(unittest.TestCase):
                 self.assertGreater(result['streamed_pcm_bytes'], 0)
                 self.assertGreater(result['streamed_chunk_count'], 0)
                 self.assertTrue(chunks)
+                self.assertTrue(chunk_states)
+                self.assertEqual(set(chunk_states), {'GENERATING'})
+                self.assertEqual(purec.server_status()['state'], 'READY')
+                self.assertEqual(purec.server_status()['engine'], test_engine)
+                self.assertEqual(purec.server_status()['threads'], 6)
                 stage_fields=(
                     'payload_prepare_seconds','http_headers_seconds',
                     'stream_read_seconds','wav_write_seconds',
@@ -279,7 +309,10 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                        if item.get('authorized') and item.get('reference_text'))
         test_engine = os.environ.get('BEROFEL_PUREC_TEST_ENGINE', purec.ENGINE_ID)
         with tempfile.TemporaryDirectory(prefix='bfs_purec_prewarm_test_') as work:
-            with patch.dict(os.environ, {'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work}, clear=False), \
+            with patch.dict(os.environ, {
+                    'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work,
+                    'BEROFEL_QWEN3_PUREC_LOG': str(Path(work) / 'purec-server.log'),
+                }, clear=False), \
                  _isolated_qsettings(work):
                 app = QApplication.instance() or QApplication([])
                 window = MainWindow()
@@ -362,7 +395,10 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                        if item.get('authorized') and item.get('reference_text'))
         test_engine = os.environ.get('BEROFEL_PUREC_TEST_ENGINE', purec.ENGINE_ID)
         with tempfile.TemporaryDirectory(prefix='bfs_purec_editor_test_') as work:
-            with patch.dict(os.environ, {'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work}, clear=False), \
+            with patch.dict(os.environ, {
+                    'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work,
+                    'BEROFEL_QWEN3_PUREC_LOG': str(Path(work) / 'purec-server.log'),
+                }, clear=False), \
                  _isolated_qsettings(work):
                 app = QApplication.instance() or QApplication([])
                 window = MainWindow(); window.project.path = str(Path(work) / 'editor_test.bfsproj')
@@ -382,7 +418,7 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                 panel.voice.setCurrentIndex(profile_index)
                 panel.clone_engine.setCurrentIndex(engine_index)
                 if test_engine == purec.ENGINE_ID:
-                    panel.purec_threads.setCurrentIndex(panel.purec_threads.findData(8))
+                    panel.purec_threads.setCurrentIndex(panel.purec_threads.findData(6))
                 panel.language.setCurrentIndex(panel.language.findData('portuguese'))
                 panel.text.setPlainText('Esta narração está sendo inserida na timeline do editor.')
                 title = f'Pure C editor test {test_engine}'
@@ -402,7 +438,7 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                 self.assertEqual(len(clips), 1)
                 self.assertTrue(Path(clips[0].source).is_file())
                 if test_engine == purec.ENGINE_ID:
-                    self.assertIn('8 threads',panel.audio_history[-1][1])
+                    self.assertIn('6 threads',panel.audio_history[-1][1])
                     self.assertIsNotNone(window.narration_stream.first_chunk_latency_seconds,
                         'Pure C PCM chunks must reach the editor preview player.')
                 self.assertGreater(clips[0].duration, 1.0)
