@@ -248,6 +248,9 @@ def main() -> int:
 
     app = QApplication.instance() or QApplication([])
     old_format = QSettings.defaultFormat()
+    original_settings_file = QSettings(
+        QSettings.Format.IniFormat, QSettings.Scope.UserScope,
+        'Berofel', 'BerofelStudio').fileName()
     previous_voice_dir = os.environ.get('BEROFEL_VOICE_PROFILE_DIR')
     env_keys = ('BEROFEL_AI_CACHE', 'BEROFEL_QWEN3_PROMPT_CACHE',
                 'BEROFEL_QWEN3_PUREC_PROFILE_CACHE', 'HF_HUB_OFFLINE',
@@ -481,6 +484,9 @@ def main() -> int:
             resource_sampler.stop()
         if window is not None:
             window.close()
+            window.deleteLater()
+            app.processEvents()
+            window = None
         try:
             stop_purec_worker()
         except Exception:
@@ -490,13 +496,16 @@ def main() -> int:
             stop_native_worker()
         except Exception:
             pass
+        QSettings.setDefaultFormat(old_format)
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope,
+                          str(Path(original_settings_file).parent))
+        app.processEvents()
         if root is not None and root.exists():
             temp_base = Path(tempfile.gettempdir()).resolve()
             resolved_root = root.resolve()
             if (resolved_root.parent == temp_base and
                     resolved_root.name.startswith('bfs_multivoice_ui_smoke_')):
                 shutil.rmtree(resolved_root)
-        QSettings.setDefaultFormat(old_format)
         if previous_voice_dir is None:
             os.environ.pop('BEROFEL_VOICE_PROFILE_DIR', None)
         else:

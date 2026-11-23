@@ -313,7 +313,7 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                     'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work,
                     'BEROFEL_QWEN3_PUREC_LOG': str(Path(work) / 'purec-server.log'),
                 }, clear=False), \
-                 _isolated_qsettings(work):
+                 _isolated_qsettings(work), _stop_purec_worker_on_exit():
                 app = QApplication.instance() or QApplication([])
                 window = MainWindow()
                 try:
@@ -399,7 +399,7 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                     'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': work,
                     'BEROFEL_QWEN3_PUREC_LOG': str(Path(work) / 'purec-server.log'),
                 }, clear=False), \
-                 _isolated_qsettings(work):
+                 _isolated_qsettings(work), _stop_purec_worker_on_exit():
                 app = QApplication.instance() or QApplication([])
                 window = MainWindow(); window.project.path = str(Path(work) / 'editor_test.bfsproj')
                 window.show(); app.processEvents()
