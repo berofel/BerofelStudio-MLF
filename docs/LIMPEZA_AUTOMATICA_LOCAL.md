@@ -173,3 +173,28 @@ exato foi negada, então não atribuímos o resultado especificamente ao Ryzen
 Ainda é necessário validar propostas contra um corpus PT-BR anotado e executar
 o fluxo visual com mídia real. A integração não declara benchmark end-to-end nem
 precisão editorial em áudio humano.
+
+## Retomadas com comandos de regravação — Python V3
+
+O motor contextual existente agora reconhece comandos locais de retomada
+(`deixa eu refazer`, `vou falar de novo`, `vamos refazer`, entre outros) como
+ponte entre tentativas. O comando não integra o intervalo sugerido para corte.
+Quando existe essa ponte, a busca reversa pode alcançar até cinco falas
+anteriores e 70 segundos; sem o comando permanecem os limites anteriores de
+quatro falas e 35 segundos. A tentativa mais recente é avaliada primeiro.
+
+As assinaturas de comparação também distinguem sujeito e pergunta/resposta,
+normalizam algumas quantidades escritas para compará-las com dígitos e protegem
+palavras críticas contra aliases ortográficos. São verificações de segurança
+heurísticas; toda sugestão de Contexto continua sujeita à revisão.
+
+Teste comparativo sintético no Python do ambiente BFS/Windows, com 17.500
+palavras e 2.499 pausas artificiais, três execuções por versão e `tracemalloc`:
+HEAD teve 2.499 candidatos, p50 4,319 s, máximo 4,494 s e pico temporário
+3,63 MiB; a versão V3 integrada teve 2.499 candidatos, p50 4,817 s, máximo
+4,838 s e pico 3,61 MiB. Nesse conjunto comum, a lógica adicional custa cerca
+de 12% de tempo e reduz 0,02 MiB de pico rastreado; portanto, não é reportada
+como otimização de desempenho. O conjunto repetitivo tampouco mede
+precisão/cobertura de fala.
+Não foram medidos ASR, VAD, interface ou exportação, nem usada gravação humana
+anotada. O modelo exato de CPU deste ambiente não foi confirmado.

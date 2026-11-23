@@ -14,6 +14,7 @@ import re
 import threading
 import time
 import unicodedata
+import math
 from typing import Callable
 from .asr_vocabulary import BASE_HOTWORDS
 
@@ -52,6 +53,8 @@ class PhraseSignature:
     modality: frozenset[str] = frozenset()
     entities: frozenset[str] = frozenset()
     time_references: frozenset[str] = frozenset()
+    subjects: frozenset[str] = frozenset()
+    question: bool = False
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,8 @@ _MODALITY = frozenset({'pode', 'podem', 'poderia', 'poderiam', 'deve', 'devem',
                        'deveria', 'deveriam', 'talvez', 'precisa', 'precisam',
                        'pretende', 'pretendem', 'possível', 'impossível'})
 _ADDITIVE = frozenset({'também', 'alem', 'além', 'ainda', 'inclusive', 'adicionalmente'})
+_SUBJECTS=frozenset({'eu','você','voce','vocês','voces','nós','nos','ele','ela',
+                     'eles','elas','a_gente','vocês','voces'})
 _TIME_REFERENCES=frozenset({'hoje','ontem','amanhã','amanha','agora','depois','antes',
                             'semana','mês','mes','ano','hora','minuto','segundo'})
 _CUES = ('quer dizer', 'ou melhor', 'na verdade', 'vamos de novo', 'pera', 'não,')
@@ -129,7 +134,29 @@ _ACTION_LEMMAS=frozenset({'começar','iniciar','mostrar','exibir','apresentar','
     'legendar','transcrever','exportar','abrir','salvar','gerar','permitir','funcionar',
     'processar','adicionar','criar','aparecer','reiniciar','usar','gravar','corrigir'})
 _REPAIR_PATTERNS=(('na','verdade'),('quer','dizer'),('ou','melhor'),
-                  ('melhor','dizendo'),('corrigindo',),('espera',),('pera',))
+                  ('melhor','dizendo'),('corrigindo',),('digo',),('espera',),('pera',))
+_RETAKE_PATTERNS=(('vou','falar','de','novo'),('deixa','eu','refazer'),
+    ('deixa','eu','recomecar'),('vou','recomecar'),('vamos','de','novo'),
+    ('vamos','refazer'),('nao','pera'),('nao','espera'),('errei','vou','de','novo'),
+    ('corta','essa','parte'),('essa','nao','ficou','boa'))
+_RETAKE_STARTS=frozenset(pattern[0] for pattern in _RETAKE_PATTERNS)
+_NUMBER_CANONICAL={
+    'zero':'0','um':'1','uma':'1','dois':'2','duas':'2','tres':'3','três':'3',
+    'quatro':'4','cinco':'5','seis':'6','sete':'7','oito':'8','nove':'9','dez':'10',
+    'onze':'11','doze':'12','treze':'13','catorze':'14','quatorze':'14','quinze':'15',
+    'dezesseis':'16','dezassete':'17','dezessete':'17','dezoito':'18','dezenove':'19',
+    'vinte':'20','trinta':'30','quarenta':'40','cinquenta':'50','sessenta':'60',
+    'setenta':'70','oitenta':'80','noventa':'90','cem':'100','cento':'100'}
+_ANALYSIS_CRITICAL=frozenset(set(_NEGATION)|set(_CONDITIONS)|set(_MODALITY)|
+    set(_SUBJECTS)|set(_KNOWN_ENTITIES)|{'instalar','desinstalar','ativar','desativar',
+    'conectar','desconectar','permitir','impedir'})
+_SUBJECT_GROUPS = {
+    'eu': 'singular_1', 'meu': 'singular_1', 'minha': 'singular_1',
+    'você': 'singular_2', 'voce': 'singular_2', 'cê': 'singular_2',
+    'vocês': 'plural_2', 'voces': 'plural_2',
+    'nós': 'plural_1', 'nos': 'plural_1', 'a_gente': 'plural_1',
+    'ele': 'singular_3', 'ela': 'singular_3', 'eles': 'plural_3', 'elas': 'plural_3',
+}
 _TOKEN_CANONICAL={
     'nao':'não','voce':'você','voces':'vocês','tres':'três',
     'subtitulo':'subtítulo','subtitulos':'subtítulos',
@@ -243,7 +270,12 @@ def _sequence_tokens(tokens: list[str]) -> list[str]:
 
 
 def _numbers(tokens: list[str]) -> set[str]:
-    return {t for t in tokens if any(char.isdigit() for char in t) or t in _NUMBER_WORDS}
+    return {_NUMBER_CANONICAL.get(t, t) for t in tokens
+            if any(char.isdigit() for char in t) or t in _NUMBER_WORDS or t in _NUMBER_CANONICAL}
+
+
+def _number_concepts(numbers: set[str] | frozenset[str]) -> set[str]:
+    return {'numero:'+value for value in numbers}
 
 
 @lru_cache(maxsize=8192)
@@ -255,17 +287,20 @@ def _phrase_signature(text: str) -> PhraseSignature:
         lemma=_lemma(analyzed)
         if lemma=='ir' and i+1<len(tokens) and _lemma(tokens[i+1]).endswith(('ar','er','ir')):
             continue
-        if token not in _STOP and lemma not in _STOP and len(lemma)>1:
+        if token not in _STOP and lemma not in _STOP and len(lemma)>1 and token not in _NUMBER_CANONICAL:
             concepts.append(_CONCEPT_BY_LEMMA.get(lemma,lemma))
+    concepts.extend('numero:'+value for value in _numbers(list(tokens)))
     concept_set=frozenset(concepts)
     action_concepts=set(_ACTION_LEMMAS)|{'iniciar','demonstrar','retirar'}
     entities=frozenset(_analysis_alias(token) for token in tokens if _analysis_alias(token) in _KNOWN_ENTITIES or
                        (any(ch.isdigit() for ch in token)))
+    subjects=frozenset(_SUBJECT_GROUPS[token] for token in tokens if token in _SUBJECT_GROUPS)
+    question=bool(re.search(r'\?\s*$',text or ''))
     return PhraseSignature(tokens,concept_set,
         frozenset(concept_set & action_concepts),
         frozenset(_numbers(list(tokens))),bool(set(tokens)&_NEGATION),
         frozenset(set(tokens)&_CONDITIONS),frozenset(set(tokens)&_MODALITY),entities,
-        frozenset(set(tokens)&_TIME_REFERENCES))
+        frozenset(set(tokens)&_TIME_REFERENCES),subjects,question)
 
 
 @lru_cache(maxsize=512)
@@ -278,6 +313,8 @@ def _analysis_alias(token: str) -> str:
     """
     folded=str(token).casefold()
     if (len(folded)<5 or folded in _ANALYSIS_APPROVED or folded in _STOP or
+            folded in _ANALYSIS_CRITICAL or
+            folded in _NUMBER_CANONICAL or
             any(ch.isdigit() for ch in folded)):
         return folded
     if folded not in _ANALYSIS_ALIAS_SEEN:
@@ -297,7 +334,36 @@ def _analysis_alias(token: str) -> str:
     order=sorted(range(len(candidates)),key=lambda index:ratios[index],reverse=True)
     best=order[0]
     runner_up=ratios[order[1]] if len(order)>1 else 0.
-    return candidates[best] if ratios[best]>=.90 and ratios[best]-runner_up>=.04 else folded
+    alias=candidates[best]
+    # Spell correction is only a candidate-generation aid. Never rewrite a
+    # safety token into/out of a negation, number, entity, subject or action.
+    if (alias in _ANALYSIS_CRITICAL or alias in _KNOWN_ENTITIES or
+            alias in _NUMBER_CANONICAL or alias in _ACTION_LEMMAS or
+            alias in _SUBJECT_GROUPS or alias in _NEGATION):
+        return folded
+    return alias if ratios[best]>=.90 and ratios[best]-runner_up>=.04 else folded
+
+
+@lru_cache(maxsize=1024)
+def _retake_offset(tokens: tuple[str, ...]) -> int:
+    """Length of a leading spoken re-record command, zero when absent."""
+    folded=tuple(_fold_token(token) for token in tokens)
+    for pattern in _RETAKE_PATTERNS:
+        if folded[:len(pattern)]==pattern:
+            return len(pattern)
+    return 0
+
+
+def _fold_token(token: str) -> str:
+    return ''.join(ch for ch in unicodedata.normalize('NFD',str(token).casefold())
+                   if unicodedata.category(ch)!='Mn')
+
+
+@lru_cache(maxsize=1024)
+def _contains_retake_command(tokens: tuple[str, ...]) -> bool:
+    folded=tuple(_fold_token(token) for token in tokens)
+    return any(folded[i:i+len(pattern)]==pattern
+               for i in range(len(folded)) for pattern in _RETAKE_PATTERNS)
 
 
 def _repair_suffix(tokens: list[str]) -> tuple[int, tuple[str, ...], str] | None:
@@ -366,6 +432,7 @@ def _sentences(words: list[dict], clip_start: float, pauses: list[tuple[float, f
             ('no','video'),('no','vídeo'),('na','verdade'),('ou','melhor'),
             ('corrigindo',),('vamos','de','novo'),('quer','dizer'))
         return (any(upcoming[:len(marker)]==marker for marker in markers) or
+                bool(_retake_offset(tuple(upcoming))) or
                 any(upcoming[:len(prefix)]==prefix for prefix in _RESTART_PREFIXES))
     for index,item in enumerate(ordered):
         text = str(item.get('text', '')).strip()
@@ -374,7 +441,7 @@ def _sentences(words: list[dict], clip_start: float, pauses: list[tuple[float, f
             end = float(item.get('source_end', clip_start + float(item.get('end', 0))))
         except (TypeError, ValueError):
             continue
-        if not text or end <= start:
+        if not text or not math.isfinite(start) or not math.isfinite(end) or end <= start:
             continue
         # Split on an actual VAD pause or reliable hard punctuation. A generic
         # Whisper word gap is not enough to declare a sentence boundary.
@@ -407,23 +474,47 @@ def _context_candidates(clip, report: dict, pause_spans: list[tuple[float, float
     sentences = _sentences(report.get('words', []), clip.start, pause_spans)
     found: list[CutCandidate] = []
     protected: list[str] = []
-    for index, newer in enumerate(sentences):
+    sentence_retake=[]
+    for sentence in sentences:
+        first_tokens=_tokens(sentence[0].text) if sentence else []
+        # Retake instructions are conventional sentence-initial commands;
+        # avoid scanning every lexical token in ordinary speech.
+        if first_tokens and first_tokens[0] in _RETAKE_STARTS:
+            all_tokens=tuple(token for word in sentence for token in _tokens(word.text))
+            sentence_retake.append(_contains_retake_command(all_tokens))
+        else:
+            sentence_retake.append(False)
+    # Work from the most recent attempt backwards so each candidate is judged
+    # against the final take first. This bounds comparisons to nearby speech.
+    for index in range(len(sentences)-1,-1,-1):
+        newer=sentences[index]
         if control:control.checkpoint()
         if len(newer) < 4:
             continue
         new_text = ' '.join(w.text for w in newer)
-        nt = _tokens(new_text)
+        raw_nt = _tokens(new_text)
+        lead_retake=_retake_offset(tuple(raw_nt))
+        nt = raw_nt[lead_retake:] if lead_retake else raw_nt
+        # A standalone instruction such as "deixa eu refazer" is a bridge,
+        # never speech content eligible for deletion.
+        if lead_retake and len(nt)<4:
+            continue
         if not _core(nt):
             continue
         new_start, new_end = newer[0].start, newer[-1].end
+        if any(right.start < left.end - .03 for left,right in zip(newer,newer[1:])):
+            protected.append('timestamps de palavras sobrepostos ou fora de ordem'); continue
         # Search nearby prior utterances plus suffixes of long attempts. This
         # keeps distinctive earlier information outside a proposed cut.
-        for back in range(1, min(index, 4) + 1):
+        for back in range(1, min(index, 5) + 1):
             if control:control.checkpoint()
             older = sentences[index-back]
             candidates_before=len(found)
             old_start, old_end = older[0].start, older[-1].end
+            if any(right.start < left.end - .03 for left,right in zip(older,older[1:])):
+                protected.append('timestamps de palavras sobrepostos ou fora de ordem'); continue
             gap = new_start - old_end
+            retake_bridge=bool(lead_retake or any(sentence_retake[index-back+1:index]))
             anchored_pause=any(p0 <= new_start and p1 >= old_end and p1-p0 >= .22
                                for p0,p1 in pause_spans)
             new_prefix=tuple(nt[:3])
@@ -436,15 +527,18 @@ def _context_candidates(clip, report: dict, pause_spans: list[tuple[float, float
                 r'\s*(?:no vídeo|no video|na verdade|ou melhor|corrigindo|quer dizer|vamos de novo)',
                 new_text,flags=re.IGNORECASE))
             no_pause_restart=gap >= -.05 and gap <= 1.25 and (explicit_restart or repeated_restart)
-            if (not anchored_pause and not no_pause_restart) or new_start-old_start > 35:
+            max_distance=70. if retake_bridge else 35.
+            if (not anchored_pause and not no_pause_restart and not retake_bridge) or new_start-old_start > max_distance:
                 continue
             # If speaker metadata exists, a change of speaker is a hard
             # boundary. Missing speaker labels do not invent identity.
             old_speakers={word.speaker for word in older if word.speaker is not None}
             new_speakers={word.speaker for word in newer if word.speaker is not None}
-            if old_speakers and new_speakers and old_speakers.isdisjoint(new_speakers):
+            if ((len(old_speakers)>1 or len(new_speakers)>1) or
+                    (old_speakers and new_speakers and old_speakers.isdisjoint(new_speakers))):
                 protected.append('locutor diferente'); continue
-            new_signature=_phrase_signature(new_text)
+            comparison_text=' '.join(nt)
+            new_signature=_phrase_signature(comparison_text)
             whole_old_signature=_phrase_signature(' '.join(word.text for word in older))
             repair=_repair_suffix(nt)
             whole_old_tokens=list(whole_old_signature.tokens)
@@ -477,6 +571,11 @@ def _context_candidates(clip, report: dict, pause_spans: list[tuple[float, float
             if (whole_old_signature.time_references and new_signature.time_references and
                 whole_old_signature.time_references!=new_signature.time_references):
                 whole_mismatch.append('referência temporal')
+            if (whole_old_signature.subjects and new_signature.subjects and
+                    whole_old_signature.subjects.isdisjoint(new_signature.subjects)):
+                whole_mismatch.append('sujeito diferente')
+            if whole_old_signature.question!=new_signature.question:
+                whole_mismatch.append('pergunta/resposta')
             old_whole_names,new_whole_names=_important_names(older),_important_names(newer)
             if old_whole_names and new_whole_names and old_whole_names!=new_whole_names:
                 whole_mismatch.append('entidades')
@@ -510,6 +609,11 @@ def _context_candidates(clip, report: dict, pause_spans: list[tuple[float, float
                 if (old_signature.time_references and new_signature.time_references and
                     old_signature.time_references!=new_signature.time_references):
                     critical.append('referência temporal')
+                if (old_signature.subjects and new_signature.subjects and
+                        old_signature.subjects.isdisjoint(new_signature.subjects)):
+                    critical.append('sujeito diferente')
+                if old_signature.question!=new_signature.question:
+                    critical.append('pergunta/resposta')
                 old_names,new_names=_important_names(prior),_important_names(newer)
                 if old_names and new_names and old_names!=new_names: critical.append('entidades')
                 opposites=({'instalar','desinstalar'},{'ativar','desativar'},
@@ -529,7 +633,8 @@ def _context_candidates(clip, report: dict, pause_spans: list[tuple[float, float
                 ngrams=_ngram_overlap(ot,nt)
                 rapid=_rapidfuzz_available()
                 fuzzy=float(rapid(' '.join(left),' '.join(right)))/100 if rapid else seq
-                cue=bool(repair) or any(value in new_text.casefold() for value in _CUES)
+                cue=(bool(repair) or lead_retake>0 or retake_bridge or
+                     any(value in new_text.casefold() for value in _CUES))
                 first_incomplete=not re.search(r'[.!?]["”\']?$',prior[-1].text)
                 newer_complete=bool(re.search(r'[.!?]["”\']?$',newer[-1].text)) or len(nt)>=7
                 if seq>=.98 and not first_incomplete and not cue:
@@ -538,9 +643,9 @@ def _context_candidates(clip, report: dict, pause_spans: list[tuple[float, float
                 if repair and repair_signature:
                     corrected=set(repair_signature.concepts)
                     if critical:
-                        old_core-=set(old_signature.numbers)|set(_NEGATION)
+                        old_core-=_number_concepts(old_signature.numbers)|set(_NEGATION)
                         prefix_end=repair[0]-len(correction.split())
-                        new_core-=_numbers(nt[:prefix_end])
+                        new_core-=_number_concepts(_numbers(nt[:prefix_end]))
                         new_core-=set(_NEGATION)
                     new_core.update(corrected)
                 covered=len(old_core&new_core)/max(1,len(old_core))
@@ -563,6 +668,7 @@ def _context_candidates(clip, report: dict, pause_spans: list[tuple[float, float
                 evidence=(f'pausa/reinício {max(0.,gap):.2f}s',f'cobertura direcional {covered:.0%}',
                           f'alinhamento {max(seq,fuzzy):.0%}',f'n-gramas {ngrams:.0%}',
                           'busca por sufixo da tentativa anterior' if suffix_start else 'comparação do trecho anterior')
+                if retake_bridge:evidence+=('comando de regravação entre tentativas',)
                 if repair:evidence+=(f'marcador de correção: {correction}',)
                 found.append(CutCandidate(clip.id,relative_start,relative_end,reason,evidence,
                     min(96,68+covered*20+seq*8),'context',

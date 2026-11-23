@@ -1,5 +1,12 @@
 # Limpeza automática modular local
 
+## Motor contextual Python V3 — 23/11/2026
+
+- Integrados ao motor existente comandos falados de regravação e busca reversa de tentativas; os comandos servem como âncora e não são incluídos nos cortes sugeridos.
+- A assinatura contextual protege sujeito e forma interrogativa, compara números escritos com dígitos e impede que aliases ortográficos alterem palavras críticas.
+- Adicionados testes para pontes de regravação, tentativas longas, proteção pergunta/resposta, quantidades e aliases críticos.
+- Benchmark comparativo sintético com 17.500 palavras/2.499 pausas, três execuções por versão: HEAD p50 4,319 s e 3,63 MiB temporários; integração p50 4,817 s e 3,61 MiB. O custo de ~12% de tempo foi registrado sem alegação de ganho de velocidade; ainda falta avaliação humana anotada.
+
 ## Motor Contextual Python V2 integrado — 23/11/2026
 
 - Mescladas ao motor existente as comparações direcionais por informação, busca de sufixos longos, retomadas marcadas e reinícios sem pausa, sem adicionar outro serviço ASR/VAD, motor contextual ou opção à interface.

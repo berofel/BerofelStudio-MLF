@@ -251,6 +251,65 @@ class AutomaticCleanupTests(unittest.TestCase):
         self.assertEqual(transcript,before)
         self.assertEqual(' '.join(item['text'] for item in transcript),raw)
 
+    def test_retake_commands_bridge_attempts_but_are_never_cut_content(self):
+        original=words('Hoje iremos instalar o editor no Windows.',1.)
+        command=words('Deixa eu refazer.',9.)
+        final=words('Hoje nós vamos instalar o editor no Windows.',12.)
+        candidates,protected=_context_candidates(
+            clip(),{'words':original+command+final},[(3.,8.5),(11.,11.8)])
+        self.assertTrue(candidates,protected)
+        self.assertLess(candidates[0].start,command[0]['source_start'])
+        self.assertGreater(candidates[0].end,original[0]['source_start'])
+        self.assertIn('comando de regravação entre tentativas',candidates[0].evidence)
+        # The command-only span itself is never proposed as a cut.
+        self.assertFalse(candidates[0].start <= command[0]['source_start'] < candidates[0].end)
+
+    def test_retake_bridge_extends_search_for_long_attempts_without_cutting_command(self):
+        original=words('No vídeo de hoje vamos mostrar como instalar o editor.',1.)
+        command=words('Vou falar de novo.',30.)
+        final=words('Hoje nós vamos mostrar como instalar o editor.',44.)
+        candidates,_=_context_candidates(
+            clip(end=70.),{'words':original+command+final},[(5.,29.)])
+        self.assertTrue(candidates)
+        self.assertLess(candidates[0].end,command[0]['source_start'])
+
+    def test_number_forms_normalize_but_different_quantities_remain_distinct(self):
+        spelled=_phrase_signature('O editor processa cinquenta arquivos.')
+        digits=_phrase_signature('O editor processa 50 arquivos.')
+        changed=_phrase_signature('O editor processa 150 arquivos.')
+        self.assertEqual(spelled.numbers,digits.numbers)
+        self.assertNotEqual(digits.numbers,changed.numbers)
+
+    def test_question_answer_and_different_subject_are_protected(self):
+        cases=[('Você consegue abrir o projeto no Windows?',
+                'Eu consigo abrir o projeto no Windows.')]
+        for left,right in cases:
+            result,protected=_context_candidates(
+                clip(),{'words':words(left,1.)+words(right,9.)},[(4.,8.8)])
+            self.assertFalse(result,(left,right))
+            self.assertTrue(any('sujeito' in reason or 'pergunta/resposta' in reason
+                                for reason in protected))
+
+    def test_context_fails_safe_on_overlapping_word_timestamps(self):
+        first=words('Hoje nós iremos fazer uma demonstração completa.',1.)
+        second=words('No vídeo de hoje faremos uma demonstração completa.',9.)
+        first[2]['source_start']=first[1]['source_start']
+        candidates,protected=_context_candidates(
+            clip(),{'words':first+second},[(4.,8.8)])
+        self.assertFalse(candidates)
+        self.assertIn('timestamps de palavras sobrepostos ou fora de ordem',protected)
+
+    def test_context_alias_cannot_rewrite_into_critical_safety_token(self):
+        class Dictionary:
+            def lookup(self,word):return word not in {'condicaoo'}
+            def suggest(self,word):return ['condição']
+        with patch('berofel.services.transcript_proofing.load_pt_br_dictionary',
+                   return_value=Dictionary()):
+            from berofel.services.automatic_cleanup import _analysis_alias
+            _analysis_alias.cache_clear()
+            self.assertEqual(_analysis_alias('condicaoo'),'condicaoo')
+            _analysis_alias.cache_clear()
+
     def test_overlapping_candidates_remain_separate_and_are_flagged(self):
         first=CutCandidate('clip-1',1.,2.,'Silêncio',(),90,'silence','s1')
         second=CutCandidate('clip-1',1.5,2.5,'Vício',(),80,'filler','f1')
