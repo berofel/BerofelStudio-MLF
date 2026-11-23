@@ -96,6 +96,18 @@ ele, `SequenceMatcher` permanece funcional. Tempos de VAD, transcrição, cache 
 contagem de candidatos aparecem no status ao terminar. Métricas só representam
 etapas medidas nesta execução; não são benchmark universal.
 
+O detector de vícios também reconhece inícios literais repetidos, como “eu
+vou, eu vou mostrar”, somente quando encontra a mesma abertura, pontuação de
+reinício, intervalo curto e continuação depois da segunda ocorrência. Repetir
+apenas “muito”, “mais”, “bem” e outros intensificadores conhecidos é preservado
+como possível ênfase. Os cortes continuam como sugestões revisáveis.
+
+Em um microbenchmark sintético de 50.000 palavras sem reinícios candidatos,
+as regras de vícios levaram 0,108 s de mediana em sete execuções aquecidas. O
+pico temporário rastreado por `tracemalloc` foi 4,47 MiB em uma execução; essa
+métrica não inclui RSS do processo, áudio, VAD nem Whisper e não é uma garantia
+para hardware diferente.
+
 ## Smoke local deste change
 
 No ambiente Windows do editor, o VAD real do `faster-whisper`/Silero foi

@@ -7,6 +7,13 @@
 - O corretor não reescreve transcrições, palavras temporizadas ou arquivos de origem; não usa LLM e funciona offline depois de instalado.
 - Adicionados testes de spans, sugestões, texto obsoleto, descoberta da pasta versionada e aplicação pelo painel Qt. Neste ambiente, Spylls 0.1.7 e o VERO pt-BR foram instalados localmente, os checksums foram validados e uma palavra com erro produziu uma sugestão real.
 
+## Disfluências e ênfase — 23/11/2026
+
+- O módulo Vícios detecta aberturas curtas literalmente reiniciadas, como “eu vou, eu vou mostrar”, exigindo pontuação de reinício, proximidade temporal e continuação da fala.
+- Palavras de ênfase repetidas, como “muito muito”, deixam de virar cortes lexicais automáticos.
+- Os intervalos mantêm os tempos da mídia original e continuam sujeitos à revisão existente.
+- Microbenchmark sintético de 50 mil palavras: mediana 0,108 s em sete execuções aquecidas e 4,47 MiB de pico temporário via `tracemalloc` (sem medir RSS, VAD ou Whisper).
+
 ## Pesquisa open source e ASR local — 23/11/2026
 
 - Reduzida a coleta de hotwords de projeto: processamento incremental evita cópias e ordenação de todos os tokens; microbenchmark sintético de 50 mil palavras caiu de 0,1556 s para 0,1462 s e de 19,36 MiB para 0,035 MiB de alocação temporária medida.

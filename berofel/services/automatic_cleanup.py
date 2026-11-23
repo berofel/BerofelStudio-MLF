@@ -84,6 +84,16 @@ _NEGATION = frozenset({'não', 'nunca', 'jamais', 'sem', 'nem', 'nenhum', 'nenhu
 _CUES = ('quer dizer', 'ou melhor', 'na verdade', 'vamos de novo', 'pera', 'não,')
 _CONTINUATION = frozenset({'e', 'mas', 'porque', 'pois', 'então', 'quando', 'que', 'com'})
 _FILLERS = frozenset({'ahn', 'hum', 'hmm', 'ããã', 'ééé', 'éh'})
+_EMPHASIS_WORDS = frozenset({'bem', 'demais', 'mais', 'menos', 'muito', 'muita',
+                             'muitos', 'muitas', 'super', 'tão'})
+_PRESERVED_REPEAT_WORDS = frozenset({'é', 'não', 'tipo', 'né'}) | _EMPHASIS_WORDS
+_RESTART_PREFIXES = frozenset({
+    ('eu', 'vou'), ('eu', 'quero'), ('eu', 'posso'), ('eu', 'preciso'),
+    ('eu', 'estou'), ('eu', 'estava'), ('nós', 'vamos'), ('nos', 'vamos'),
+    ('a', 'gente', 'vai'), ('a', 'gente', 'quer'), ('a', 'gente', 'pode'),
+    ('vou', 'fazer'), ('vou', 'mostrar'), ('vou', 'ensinar'),
+    ('vamos', 'fazer'), ('vamos', 'mostrar'), ('vamos', 'começar'),
+})
 _NUMBER_WORDS = frozenset('zero um uma dois duas tres três quatro cinco seis sete oito nove dez onze doze treze catorze quatorze quinze dezesseis dezassete dezessete dezoito dezenove vinte'.split())
 _CONCEPT_BY_LEMMA={
     'começar':'iniciar','mostrar':'demonstrar','exibir':'demonstrar',
@@ -444,16 +454,50 @@ def _filler_candidates(clip, report: dict) -> list[CutCandidate]:
             found.append(CutCandidate(clip.id,max(0,start-clip.start),min(clip.end-clip.start,end-clip.start),
                 'Hesitação lexical isolada com timestamp confirmado.',(text,),88,'filler',
                 f'fill:{clip.id}:{round(start*1000)}:{round(end*1000)}'))
-        clean.append((normalized,start,end,text))
+        try:
+            probability=float(item.get('probability',1.) or 0.)
+        except (TypeError,ValueError):
+            probability=0.
+        clean.append((normalized,start,end,text,probability))
     # Remove only earlier items in an adjacent stutter; preserve the final
     # occurrence and do not treat syntactic "é", "não", "tipo" or "né" as filler.
     for i in range(len(clean)-1):
-        token,start,end,text=clean[i]
-        nxt,nstart,nend,_=clean[i+1]
-        if token==nxt and nstart-end <= .28 and token not in {'é','não','tipo','né'}:
+        token,start,end,text,_probability=clean[i]
+        nxt,nstart,nend,_,_next_probability=clean[i+1]
+        if (token==nxt and nstart-end <= .28
+                and token not in _PRESERVED_REPEAT_WORDS):
             found.append(CutCandidate(clip.id,max(0,start-clip.start),min(clip.end-clip.start,end-clip.start),
                 'Repetição adjacente da mesma palavra; ocorrência seguinte preservada.',
                 (text, clean[i+1][3]),82,'filler',f'rep:{clip.id}:{round(start*1000)}'))
+    # A short repeated speech starter is a common restart even when Whisper
+    # emits no separate sentence ("eu vou, eu vou mostrar"). Require a known
+    # starter, a restart mark, a close boundary and a continuation after the
+    # second copy; this deliberately leaves rhetorical repetitions intact.
+    for length in (2, 3):
+        last_start=len(clean)-2*length
+        for first in range(max(0,last_start+1)):
+            second=first+length
+            phrase=tuple(clean[first+offset][0] for offset in range(length))
+            if phrase not in _RESTART_PREFIXES:
+                continue
+            if any(clean[second+offset][0]!=phrase[offset] for offset in range(length)):
+                continue
+            if second+length>=len(clean):
+                continue
+            start,end=clean[first][1],clean[second-1][2]
+            next_start=clean[second][1]
+            marker=clean[second-1][3]
+            if (not re.search(r'[,;:…]\s*$|\.{2,}\s*$|[—–-]\s*$',marker)
+                    or next_start-end < -.05 or next_start-end > .65
+                    or any(clean[index][4] < .4
+                           for index in range(first,second+length))):
+                continue
+            evidence=' '.join(clean[index][3] for index in range(first,second))
+            found.append(CutCandidate(
+                clip.id, max(0.,start-clip.start), min(clip.end-clip.start,end-clip.start),
+                'Reinício literal de uma abertura de fala; a repetição seguinte continua a frase.',
+                (evidence, 'abertura repetida com pontuação de reinício'), 78, 'filler',
+                f'restart:{clip.id}:{round(start*1000)}:{round(end*1000)}'))
     return [c for c in found if c.end-c.start >= .025]
 
 

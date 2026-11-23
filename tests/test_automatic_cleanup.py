@@ -150,6 +150,22 @@ class AutomaticCleanupTests(unittest.TestCase):
         self.assertTrue(any('Repetição adjacente' in c.reason for c in found))
         self.assertFalse(any(c.evidence[0].lower() in {'tipo','não','é','né'} for c in found))
 
+    def test_filler_detector_finds_restarted_phrase_without_cutting_emphasis(self):
+        restarted=words('Eu vou, eu vou mostrar a timeline.',1.)
+        found=_filler_candidates(clip(),{'words':restarted})
+        phrase_cuts=[candidate for candidate in found if candidate.id.startswith('restart:')]
+        self.assertEqual(len(phrase_cuts),1)
+        self.assertEqual((phrase_cuts[0].start,phrase_cuts[0].end),(1.,1.57))
+
+        emphasis=words('Muito muito importante para todos.',1.)
+        found=_filler_candidates(clip(),{'words':emphasis})
+        self.assertFalse(any(candidate.evidence[0].lower()=='muito'
+                             for candidate in found))
+
+        no_continuation=words('Eu vou, eu vou.',1.)
+        found=_filler_candidates(clip(),{'words':no_continuation})
+        self.assertFalse(any(candidate.id.startswith('restart:') for candidate in found))
+
     def test_partial_known_transcript_avoids_transcription_when_covered(self):
         item=clip(); known=[{'text':'Olá','source_start':1.,'source_end':1.3,'source':'x'}]
         calls=[]
