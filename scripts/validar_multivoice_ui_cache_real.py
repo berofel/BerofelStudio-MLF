@@ -1,8 +1,8 @@
 """Offline Qt + Qwen smoke through the editor's multivoice panel.
 
-Uses one authorized local profile for two identical V1/V2 lines. It validates
-the real editor callback, cache behavior, separate timeline clips, project
-round-trip and full-script WAV export. It does not test distinct speakers.
+The default mode maps one authorized profile to two identical lines to verify
+cache reuse. Supplying three distinct authorized profiles runs the full
+100-line, 70/20/10-speaker acceptance script through the Qt editor.
 """
 from __future__ import annotations
 
@@ -21,6 +21,9 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from berofel.services.voice_profiles import VoiceProfileManager
+from scripts.validar_multivoice_distinct_profiles import (
+    build_100_line_acceptance_script, select_authorized_distinct_profiles,
+)
 
 
 ENGINES = ('qwen3-tts-purec-int8', 'qwen3-tts-purec-mixed',
@@ -92,23 +95,34 @@ def _wait_task(window, app, timeout_ms: int = 180_000) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--confirm-own-or-authorized-voice', action='store_true',
-                        help='Confirma autorização para usar o perfil vocal local.')
-    parser.add_argument('--profile-id', help='ID do perfil; obrigatório quando há vários autorizados.')
+                        help='Confirma autorização para usar os perfis vocais locais selecionados.')
+    parser.add_argument('--profile-id', '--profile-v1', dest='profile_v1',
+                        help='ID do perfil V1; obrigatório quando há vários autorizados.')
+    parser.add_argument('--profile-v2', help='ID distinto para V2; ativa validação de duas vozes.')
+    parser.add_argument('--profile-v3', help='ID distinto para V3; ativa o roteiro Qt de 100 falas.')
     parser.add_argument('--engine', choices=ENGINES, required=True)
     args = parser.parse_args()
     if not args.confirm_own_or_authorized_voice:
         parser.error('confirme autorização para usar a referência vocal local.')
+    if args.profile_v3 and not args.profile_v2:
+        parser.error('--profile-v3 exige também um perfil distinto em --profile-v2.')
 
     manager = VoiceProfileManager()
     profiles = [item for item in manager.list_profiles()
                 if item.get('authorized') and Path(item.get('sample_path', '')).is_file()]
-    if args.profile_id:
-        profiles = [item for item in profiles if item['id'] == args.profile_id]
+    if args.profile_v1:
+        profiles = [item for item in profiles if item['id'] == args.profile_v1]
     elif len(profiles) != 1:
-        parser.error('informe --profile-id quando houver mais de um perfil autorizado.')
+        parser.error('informe --profile-v1 quando houver mais de um perfil autorizado.')
     if not profiles:
         raise SystemExit('Não há perfil local autorizado correspondente à seleção.')
-    profile = profiles[0]
+    if args.profile_v2:
+        selected_profiles, _fingerprints = select_authorized_distinct_profiles(
+            manager, profiles[0]['id'], args.profile_v2, args.profile_v3)
+        profiles_by_voice = {f'V{index}': selected_profiles[profile_id]
+                             for index, profile_id in enumerate(selected_profiles, 1)}
+    else:
+        profiles_by_voice = {'V1': profiles[0], 'V2': profiles[0]}
 
     os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
     from PySide6.QtCore import QSettings
@@ -169,17 +183,17 @@ def main() -> int:
             Image.new('RGB', (320, 180), (28, 38, 54)).save(video)
             project = Project(width=320, height=180, fps=12)
             project.path = str(project_path)
-            project.add_clip(Clip(str(video), 0, 15,
-                                  track_id=project.tracks[0].id,
-                                  kind='image', title='multivoice smoke background'))
+            background_clip = project.add_clip(Clip(str(video), 0, 15,
+                                                     track_id=project.tracks[0].id,
+                                                     kind='image', title='multivoice smoke background'))
             window = MainWindow()
             window.project = project
             window.refresh([])
             panel = window.narration_panel.multivoice_panel
             panel.refresh_profiles()
-            for voice_id in ('V1', 'V2'):
+            for voice_id, voice_profile in profiles_by_voice.items():
                 combo = panel.assignments[voice_id]
-                index = combo.findData(profile['id'])
+                index = combo.findData(voice_profile['id'])
                 if index < 0:
                     raise RuntimeError(f'O perfil autorizado não apareceu no slot {voice_id}.')
                 combo.setCurrentIndex(index)
@@ -187,7 +201,15 @@ def main() -> int:
             if engine_index < 0:
                 raise RuntimeError(f'O perfil {args.engine} não está disponível no painel.')
             panel.engine.setCurrentIndex(engine_index)
-            panel.script_text.setPlainText(f'[001 | V1]\n{TEXT}\n[002 | V2]\n{TEXT}')
+            if args.profile_v3:
+                smoke_script_text = build_100_line_acceptance_script()
+            elif args.profile_v2:
+                smoke_script_text = (
+                    f'[001 | V1]\n{TEXT}\n'
+                    '[002 | V2]\nUma resposta diferente confirma a troca de personagem.')
+            else:
+                smoke_script_text = f'[001 | V1]\n{TEXT}\n[002 | V2]\n{TEXT}'
+            panel.script_text.setPlainText(smoke_script_text)
             script = panel.build_script(title='Smoke multivozes no editor')
             panel.set_active_script(script)
             window.generate_multivoice_ui(script)
@@ -200,29 +222,42 @@ def main() -> int:
             result = MultiVoiceScript.from_dict(saved_data)
             clips = [clip for clip in window.project.clips
                      if clip.narration_script_id == script.id]
-            if len(clips) != 2 or len(result.lines) != 2:
-                raise RuntimeError('O editor não inseriu os dois blocos na timeline.')
-            first, second = result.lines
+            expected_line_count = 100 if args.profile_v3 else 2
+            if len(clips) != expected_line_count or len(result.lines) != expected_line_count:
+                raise RuntimeError(f'O editor inseriu {len(clips)} clips e {len(result.lines)} falas; '
+                                   f'esperado: {expected_line_count}.')
             clips_by_line = {clip.narration_line_id: clip for clip in clips}
-            first_clip = clips_by_line.get(first.id)
-            second_clip = clips_by_line.get(second.id)
-            if first_clip is None or second_clip is None:
-                raise RuntimeError('Os clips não mantiveram o ID estável de cada fala.')
-            expected_second_start = first_clip.timeline_end + result.pause_ms / 1000.0
-            if abs(second_clip.timeline_start - expected_second_start) > 0.001:
-                raise RuntimeError('A pausa entre as falas não foi respeitada na timeline.')
-            if not (first.status == second.status == 'generated' and
-                    first.cache_hit is False and second.cache_hit is True):
-                raise RuntimeError('Estado/cache das falas não corresponde à validação esperada.')
-            if first.audio_path == second.audio_path or _sha256(first.audio_path) != _sha256(second.audio_path):
-                raise RuntimeError('As falas não mantiveram WAVs independentes equivalentes.')
+            ordered_clips = []
+            for line in result.lines:
+                clip = clips_by_line.get(line.id)
+                if clip is None:
+                    raise RuntimeError('Os clips não mantiveram o ID estável de cada fala.')
+                ordered_clips.append(clip)
+            if any(a.timeline_start > b.timeline_start for a, b in zip(ordered_clips, ordered_clips[1:])):
+                raise RuntimeError('A timeline não respeitou a ordem narrativa do roteiro.')
+            for previous_clip, next_clip in zip(ordered_clips, ordered_clips[1:]):
+                expected_start = previous_clip.timeline_end + result.pause_ms / 1000.0
+                if abs(next_clip.timeline_start - expected_start) > 0.001:
+                    raise RuntimeError('A pausa entre as falas não foi respeitada na timeline.')
+            if not all(line.status == 'generated' for line in result.lines):
+                raise RuntimeError('Uma ou mais falas não foram finalizadas com sucesso.')
+            expected_synthesis_calls = expected_line_count if args.profile_v2 else 1
+            synthesis_calls = sum(not line.cache_hit for line in result.lines)
+            if synthesis_calls != expected_synthesis_calls:
+                raise RuntimeError(f'Número inesperado de sínteses: {synthesis_calls}; '
+                                   f'esperado: {expected_synthesis_calls}.')
+            audio_paths = [line.audio_path for line in result.lines]
+            if len(set(audio_paths)) != expected_line_count:
+                raise RuntimeError('Cada fala precisa ter um WAV independente.')
+            if not args.profile_v2 and _sha256(result.lines[0].audio_path) != _sha256(result.lines[1].audio_path):
+                raise RuntimeError('O cache não reutilizou o áudio idêntico no smoke de uma voz.')
             if not window._save_at(str(project_path)):
                 raise RuntimeError('O projeto do smoke não pôde ser salvo.')
             reopened = load_project(str(project_path))
             restored = MultiVoiceScript.from_dict(reopened.narration_scripts[0])
             reopened_script_clips = [clip for clip in reopened.clips
                                      if clip.narration_script_id == script.id]
-            if (len(reopened_script_clips) != 2 or
+            if (len(reopened_script_clips) != expected_line_count or
                     [line.id for line in restored.lines] != [line.id for line in result.lines]):
                 raise RuntimeError('Salvar/reabrir não preservou falas e timeline.')
 
@@ -231,12 +266,17 @@ def main() -> int:
                 window.export_multivoice_script(result)
             _wait_task(window, app)
             export_metrics = _measure_wav(export_path)
-            expected_export_duration = first.duration + second.duration + result.pause_ms / 1000.0
+            expected_export_duration = sum(line.duration for line in result.lines) + (
+                result.pause_ms / 1000.0 * max(0, len(result.lines) - 1))
             if abs(export_metrics['duration_seconds'] - expected_export_duration) > 0.03:
                 raise RuntimeError('A duração exportada não corresponde aos WAVs e à pausa da timeline.')
+            video_duration = max(clip.timeline_end for clip in ordered_clips) + 0.1
+            background_clip.end = max(background_clip.end, video_duration)
+            background_clip.source_length = max(background_clip.source_length, video_duration)
             export_project(window.project, str(mp4_path))
             mp4_duration, has_video, has_audio = media_info(str(mp4_path))
-            if not has_video or not has_audio or mp4_duration <= 0:
+            if (not has_video or not has_audio or
+                    mp4_duration + 0.1 < max(clip.timeline_end for clip in ordered_clips)):
                 raise RuntimeError('O MP4 multivozes não contém vídeo e áudio válidos.')
             decoded_audio = root / 'multivoice_mp4_audio.wav'
             import subprocess
@@ -247,14 +287,21 @@ def main() -> int:
             mp4_audio_metrics = _measure_wav(decoded_audio)
             fresh_synthesis_audio_seconds = sum(
                 line.duration for line in result.lines if not line.cache_hit)
+            cache_hits = [line.cache_hit for line in result.lines]
+            voice_counts = {voice_id: sum(line.voice_id == voice_id for line in result.lines)
+                            for voice_id in sorted({line.voice_id for line in result.lines})}
             report = {
                 'offline': True,
                 'through_editor_ui': True,
                 'engine': args.engine,
                 'model': 'Qwen/Qwen3-TTS-12Hz-0.6B-Base',
-                'speaker_identity_distinct': False,
-                'synthesis_calls': 1,
-                'cache_hit_per_line': [first.cache_hit, second.cache_hit],
+                'speaker_identity_distinct': bool(args.profile_v2),
+                'voice_profile_ids': {voice_id: item['id']
+                                      for voice_id, item in profiles_by_voice.items()},
+                'voice_line_counts': voice_counts,
+                'script_line_count': len(result.lines),
+                'synthesis_calls': synthesis_calls,
+                'cache_hit_per_line': cache_hits,
                 'timeline_clips': len(clips),
                 'timeline_pause_ms_preserved': result.pause_ms,
                 'timeline_order_and_spacing_verified': True,
@@ -266,9 +313,11 @@ def main() -> int:
                 'profile_preparation_seconds': round(result.profile_preparation_seconds, 3),
                 'model_load_seconds': round(result.model_load_seconds, 3),
                 'project_reopen_preserved_script_and_clips': True,
-                'individual_wav_metrics': [_measure_wav(first.audio_path),
-                                           _measure_wav(second.audio_path)],
-                'individual_wav_hashes_equal': True,
+                'individual_wav_metrics': [_measure_wav(line.audio_path)
+                                           for line in result.lines],
+                'individual_wav_hashes_equal': (
+                    _sha256(result.lines[0].audio_path) == _sha256(result.lines[1].audio_path)
+                    if not args.profile_v2 else None),
                 'full_script_wav_export': export_metrics,
                 'mp4_export': {'duration_seconds': round(mp4_duration, 3),
                                'has_video': has_video, 'has_audio': has_audio,
