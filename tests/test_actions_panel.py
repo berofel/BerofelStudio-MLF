@@ -222,7 +222,7 @@ class ActionsUITests(unittest.TestCase):
             source.write_bytes(b'audio fixture')
             clip=win.project.add_clip(Clip(str(source),0.,6.,kind='audio',
                 track_id=win.project.tracks[-1].id))
-            from tests.test_clipper import transcript
+            from test_clipper import transcript
             words=transcript(source,count=48,step=.1)
             win.project.transcripts=words
             win.refresh([clip.id])
