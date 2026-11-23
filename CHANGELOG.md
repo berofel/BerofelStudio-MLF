@@ -1,5 +1,14 @@
 # Limpeza automática modular local
 
+## Evolução linguística local — 23/11/2026
+
+- O detector contextual agora agrupa frases usando uma assinatura linguística em cache e equivalências pequenas, controladas e específicas do editor; elas ajudam na busca de candidatos e não decidem cortes isoladamente.
+- Pausas curtas entre palavras deixam de forçar novos blocos por conta própria, e reticências permanecem com a tentativa interrompida até uma pausa VAD ou pontuação final confiável.
+- Marcadores de autocorreção podem reconhecer correções explícitas de números e negação apenas quando a nova oração mantém evidências do mesmo tópico; mudanças de ação ou entidades distintas continuam protegidas.
+- A limpeza pode fornecer vocabulário local do produto ao Faster-Whisper somente quando precisa criar uma transcrição. A dica é incluída na chave do cache, não altera o texto/timestamps e não ativa Qwen/LLM.
+- Normalização controlada de formas coloquiais/sem acento serve somente para comparação; o texto original permanece intacto.
+- Cobertura adicionada para correções, continuidade, equivalências protegidas, normalização e passagem/cache de hotwords. A precisão editorial ainda precisa de um corpus de voz PT-BR anotado por humanos.
+
 - A fila principal de limpeza agora exibe somente **Remover silêncios**, **Vícios de linguagem** e **Contexto**; “Edição completa” marca apenas esses três módulos.
 - Silêncios reutiliza o Silero existente sem Whisper; Vícios reutiliza a transcrição do projeto ou executa somente Faster-Whisper; Contexto usa o mesmo VAD como metadado de pausas e não remove pausas por si só.
 - Vícios e reformulações são analisados por regras Python determinísticas, sem Qwen/LLM. Contradições de negação, números escritos/digitais, ações opostas, continuidade e informação distintiva bloqueiam cortes automáticos.

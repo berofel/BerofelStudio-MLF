@@ -13,6 +13,7 @@ class WhisperCompatTest(unittest.TestCase):
         class FakeWhisper:
             def __init__(self): self.called = False
             def transcribe(self, audio, **kwargs):
+                self.kwargs=kwargs
                 import numpy as np
                 self.called = True
                 self.assert_array = isinstance(audio, np.ndarray) and audio.dtype == np.dtype('float32')
@@ -33,6 +34,28 @@ class WhisperCompatTest(unittest.TestCase):
             self.assertEqual(result['words'][0]['text'],'Olá')
             self.assertEqual(result['words'][0]['start'],0.05)
             self.assertEqual(result['language'],'pt')
+            self.assertNotIn('hotwords',fake.kwargs)
+
+    def test_optional_hotwords_are_passed_to_whisper_without_changing_word_timing_path(self):
+        class FakeWhisper:
+            def transcribe(self, audio, **kwargs):
+                import numpy as np
+                self.audio=audio;self.kwargs=kwargs
+                word=SimpleNamespace(start=.05,end=.3,word='Berofel Studio',probability=.9)
+                segment=SimpleNamespace(start=0.,end=.5,text=' Berofel Studio',words=[word])
+                return iter([segment]),SimpleNamespace(language='pt',duration=.5)
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'audio.wav'
+            with wave.open(str(path),'wb') as wav:
+                wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000)
+                wav.writeframes(b'\0\0'*8000)
+            fake=FakeWhisper()
+            result=_whisper({'audio_path':str(path),'model':'base','language':'pt',
+                             'hotwords':'Berofel Studio, timeline'},model=fake)
+            self.assertEqual(fake.kwargs['hotwords'],'Berofel Studio, timeline')
+            self.assertTrue(fake.kwargs['word_timestamps'])
+            self.assertFalse(fake.kwargs['vad_filter'])
+            self.assertEqual(result['words'][0]['text'],'Berofel Studio')
 
     def test_installer_searches_releases_and_fallback(self):
         path=Path(__file__).resolve().parents[1]/'scripts'/'instalar_qwen.ps1'

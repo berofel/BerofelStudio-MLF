@@ -91,6 +91,9 @@ class AIOptions:
     language: str = 'pt'
     device: str = 'cpu'
     compute_type: str = 'int8'
+    # Optional local domain hints passed to Faster-Whisper. Empty by default,
+    # so existing transcription behavior and cache keys remain unchanged.
+    whisper_hotwords: str = ''
     chunk_seconds: int = 120
     min_silence: float = 0.65
     silence_padding: float = 0.12
@@ -397,10 +400,15 @@ class Pipeline:
             params={'model_revision':model_fingerprint,'model':opts.whisper_model,'lang':opts.language,
                     'compute':opts.compute_type,'device':opts.device,'threads':opts.cpu_threads,
                     'word_timestamps':True}
-            return params,{'audio_path':ch['extract']['audio_path'],
+            payload={'audio_path':ch['extract']['audio_path'],
                            'model':opts.whisper_model,'language':opts.language,
                            'compute_type':opts.compute_type,'device':opts.device,
                            'cpu_threads':runtime_threads,'offline_only':opts.offline_only}
+            hotwords=str(getattr(opts,'whisper_hotwords','') or '').strip()
+            if hotwords:
+                params['hotwords']=hotwords
+                payload['hotwords']=hotwords
+            return params,payload
         if needs_whisper:
             pending=[ch for ch in chunks if ch['clip'].id not in known_words]
             self._notify(f'Faster-Whisper • {len(pending)} trecho(s) sem cobertura válida')

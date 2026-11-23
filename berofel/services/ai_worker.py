@@ -147,9 +147,15 @@ def _whisper(d: dict, model=None) -> dict:
     # diretamente, evitamos essa incompatibilidade e uma segunda decodificação.
     # Cada lote tem duração limitada, então o vetor não cresce com o vídeo todo.
     audio = _read_wav(d['audio_path'])
-    segments, info = model.transcribe(audio, language=d.get('language') or None,
-                                      beam_size=3, word_timestamps=True, vad_filter=False,
-                                      condition_on_previous_text=False)
+    transcribe_options={'language':d.get('language') or None,
+                        'beam_size':3,'word_timestamps':True,'vad_filter':False,
+                        'condition_on_previous_text':False}
+    # Domain hints can improve recognition of product/tool names. Keep this
+    # optional: an empty hint must preserve the existing Whisper behavior.
+    hotwords=str(d.get('hotwords') or '').strip()
+    if hotwords:
+        transcribe_options['hotwords']=hotwords
+    segments, info = model.transcribe(audio, **transcribe_options)
     out_segments, words = [], []
     for si, seg in enumerate(segments):
         seg_words=[]

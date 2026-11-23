@@ -24,6 +24,36 @@ termos informativos e proteções para negação, números e ações opostas. Pa
 longa isolada ou mera sobreposição textual não aprova corte. Casos duvidosos
 permanecem preservados.
 
+O comparador também calcula e mantém em cache uma assinatura curta por frase
+(tokens normalizados, conceitos, ações, números e negação). Há equivalências
+controladas para alguns termos comuns do editor, usadas somente para encontrar
+candidatos. Uma lista pequena de vocabulário do produto pode ser passada ao
+Faster-Whisper quando a limpeza precisa criar uma transcrição; ela participa da
+chave de cache e não reescreve palavras nem seus timestamps. Uma transcrição já
+existente continua sendo reutilizada sem executar Whisper.
+
+Autocorreções explícitas como “na verdade”, “quer dizer” e “ou melhor” recebem
+tratamento direcional. Uma mudança de número ou negação só pode passar pela
+proteção quando a nova oração retém evidência suficiente do mesmo tópico; o
+marcador sozinho não autoriza remoção. Ainda assim, essas regras são heurísticas
+conservadoras, não uma medida de precisão validada em gravações anotadas.
+
+## Reconhecimento de fala e comandos de voz
+
+Word e Google Docs documentam ditado com pontuação e comandos de edição por
+voz. Isso serve como referência de interação: reconhecer corretamente palavras,
+pontuação e correções é parte importante de um bom fluxo de ditado. A
+documentação pública não descreve os algoritmos internos desses produtos, então
+o Berofel não tenta reproduzi-los. Aqui, o Faster-Whisper continua responsável
+pela transcrição com timestamps por palavra; as regras locais só propõem
+edições e nunca inventam tempos.
+
+Referências:
+
+* [Ditado no Microsoft Word](https://support.microsoft.com/en-gb/word/dictate-your-documents-in-word-for-the-web?redirectsourcepath=%2Farticle%2Fdictate-with-your-voice-in-office-d4fd296e-8f15-4168-afec-1f95b13a6408)
+* [Digitação por voz no Google Docs](https://support.google.com/docs/answer/4492226?hl=en-PE)
+* [Opções de transcrição do Faster-Whisper](https://github.com/SYSTRAN/faster-whisper/blob/master/faster_whisper/transcribe.py)
+
 O fallback linguístico é Python padrão, sem spaCy nem downloads em tempo de uso.
 Se `rapidfuzz` já estiver instalado, a razão textual o usa opcionalmente; sem
 ele, `SequenceMatcher` permanece funcional. Tempos de VAD, transcrição, cache e

@@ -3,7 +3,8 @@ from types import SimpleNamespace
 import unittest
 
 from berofel.services.automatic_cleanup import (
-    EditOptions, analyze_automatic_cleanup, _context_candidates, _filler_candidates,
+    EditOptions, analyze_automatic_cleanup, _context_candidates,
+    _filler_candidates, _sentences, _tokens, _phrase_signature,
 )
 
 
@@ -68,6 +69,62 @@ class AutomaticCleanupTests(unittest.TestCase):
         phrase=words('Eu vou mostrar como…',2.)+words('Eu vou mostrar como funciona o editor.',8.)
         candidates,_=_context_candidates(clip(),{'words':phrase},[(3.6,7.8)])
         self.assertEqual(len(candidates),1)
+
+    def test_ellipsis_stays_attached_to_repair_unless_vad_marks_a_pause(self):
+        transcript=words('O programa demora cinco minutos… não, na verdade, seis minutos.',1.)
+        grouped=_sentences(transcript,0.,[])
+        self.assertEqual(len(grouped),1)
+        for index,item in enumerate(transcript[5:]):
+            item['source_start']=4.+index*.35
+            item['source_end']=item['source_start']+.22
+        paused=_sentences(transcript,0.,[(2.7,3.9)])
+        self.assertEqual(len(paused),2)
+
+    def test_explicit_number_self_repair_can_replace_a_prior_complete_attempt(self):
+        first=words('O programa demora cinco minutos para processar.',1.)
+        second=words('Na verdade, o programa demora seis minutos para processar.',8.)
+        candidates,protected=_context_candidates(clip(),{'words':first+second},[(3.5,7.8)])
+        self.assertEqual(len(candidates),1,protected)
+        self.assertIn('Autocorreção explícita',candidates[0].reason)
+        self.assertTrue(any('marcador de correção' in evidence for evidence in candidates[0].evidence))
+
+    def test_explicit_negation_repair_is_recognized_only_when_suffix_covers_topic(self):
+        first=words('O programa não funciona no Windows.',1.)
+        second=words('Na verdade, o programa funciona no Windows.',8.)
+        candidates,_=_context_candidates(clip(),{'words':first+second},[(3.5,7.8)])
+        self.assertEqual(len(candidates),1)
+        unrelated=words('Na verdade, o filme funciona muito bem.',8.)
+        candidates,_=_context_candidates(clip(),{'words':first+unrelated},[(3.5,7.8)])
+        self.assertEqual(candidates,[])
+
+    def test_controlled_action_equivalence_does_not_merge_distinct_actions(self):
+        first=words('Vou ensinar vocês a editar vídeos no programa.',1.)
+        second=words('Vou mostrar como editar vídeos no aplicativo.',8.)
+        candidates,_=_context_candidates(clip(),{'words':first+second},[(4.5,7.8)])
+        self.assertEqual(len(candidates),1)
+        distinct=words('Vou configurar o editor para exportar o projeto.',8.)
+        candidates,_=_context_candidates(clip(),{'words':first+distinct},[(4.5,7.8)])
+        self.assertEqual(candidates,[])
+
+    def test_small_word_gap_without_vad_or_sentence_boundary_does_not_split(self):
+        first=words('Quando terminar de instalar o programa',1.)
+        second=words('vai aparecer uma janela pedindo reinício.',4.)
+        # The gap from the previous token is deliberately short and there is
+        # no VAD pause; continuity must remain one phrase.
+        second[0]['source_start']=first[-1]['source_end']+.4
+        second[0]['source_end']=second[0]['source_start']+.22
+        spans=_sentences(first+second,0.,[])
+        self.assertEqual(len(spans),1)
+
+    def test_spoken_and_unaccented_variants_normalize_for_matching_only(self):
+        accented='Você não viu três legendas.'
+        casual='Voce nao viu tres subtitulos.'
+        left=_phrase_signature(accented)
+        right=_phrase_signature(casual)
+        self.assertTrue(left.negation and right.negation)
+        self.assertEqual(left.concepts,right.concepts)
+        self.assertIn('não',_tokens(casual))
+        self.assertIn('não',accented.casefold())
 
     def test_negation_numbers_opposite_actions_and_continuations_are_protected(self):
         cases=[('Não pode fazer isso.','Pode fazer isso.'),

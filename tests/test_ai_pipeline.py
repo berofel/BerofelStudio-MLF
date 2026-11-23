@@ -130,6 +130,15 @@ class AITest(unittest.TestCase):
         p=Pipeline(self.cache,self.fake).analyze([self.clip],AIOptions())
         self.assertEqual(p['cache_misses'],3)
 
+    def test_cleanup_hotwords_reach_whisper_and_only_invalidate_transcript_cache(self):
+        base=Pipeline(self.cache,self.fake).analyze([self.clip],AIOptions(enable_qwen=False))
+        self.assertEqual(base['cache_misses'],3)
+        hinted=Pipeline(self.cache,self.fake).analyze([self.clip],AIOptions(
+            enable_qwen=False,whisper_hotwords='Berofel Studio, timeline'))
+        self.assertEqual(hinted['cache_misses'],1)
+        call=[details for details in self.fake.call_details if details[0]=='whisper'][-1]
+        self.assertEqual(call[1]['hotwords'],'Berofel Studio, timeline')
+
     def test_qwen_option_only_executes_when_model_available_and_after_whisper(self):
         cli=Path(self.temp.name)/'llama-cli.exe';cli.write_bytes(b'fake')
         model=Path(self.temp.name)/'model.gguf';model.write_bytes(b'fake')

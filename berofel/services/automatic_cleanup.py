@@ -13,6 +13,7 @@ from functools import lru_cache
 import re
 import threading
 import time
+import unicodedata
 from typing import Callable
 
 from .ai_pipeline import AIOptions, run_analysis
@@ -35,6 +36,16 @@ class TranscriptWord:
     start: float  # original source time
     end: float
     probability: float = 1.0
+
+
+@dataclass(frozen=True)
+class PhraseSignature:
+    """Cached, compact evidence used to compare transcript spans directionally."""
+    tokens: tuple[str, ...]
+    concepts: frozenset[str]
+    actions: frozenset[str]
+    numbers: frozenset[str]
+    negation: bool
 
 
 @dataclass(frozen=True)
@@ -68,12 +79,31 @@ class EditPlan:
 
 
 _WORD_RE = re.compile(r"[\wÀ-ÿ]+(?:['’][\wÀ-ÿ]+)?", re.UNICODE)
-_STOP = frozenset('a o os as um uma uns umas de do da dos das em no na nos nas por para com e ou que se ao aos à às eu você voces nós eles elas ele ela isso isto aquele aquela hoje vídeo hoje como'.split())
+_STOP = frozenset('a o os as um uma uns umas de do da dos das em no na nos nas por para com e ou que se ao aos à às eu você voces vocês nós eles elas ele ela isso isto aquele aquela hoje vídeo hoje como está estou estão estava'.split())
 _NEGATION = frozenset({'não', 'nunca', 'jamais', 'sem', 'nem', 'nenhum', 'nenhuma'})
 _CUES = ('quer dizer', 'ou melhor', 'na verdade', 'vamos de novo', 'pera', 'não,')
 _CONTINUATION = frozenset({'e', 'mas', 'porque', 'pois', 'então', 'quando', 'que', 'com'})
 _FILLERS = frozenset({'ahn', 'hum', 'hmm', 'ããã', 'ééé', 'éh'})
 _NUMBER_WORDS = frozenset('zero um uma dois duas tres três quatro cinco seis sete oito nove dez onze doze treze catorze quatorze quinze dezesseis dezassete dezessete dezoito dezenove vinte'.split())
+_CONCEPT_BY_LEMMA={
+    'começar':'iniciar','mostrar':'demonstrar','exibir':'demonstrar',
+    'apresentar':'demonstrar','ensinar':'demonstrar','demonstrar':'demonstrar',
+    'remover':'retirar','retirar':'retirar','excluir':'retirar',
+    'programa':'aplicativo','aplicativo':'aplicativo','software':'aplicativo',
+    'legenda':'legenda','subtítulo':'legenda','subtitular':'legenda',
+}
+_ACTION_LEMMAS=frozenset({'começar','iniciar','mostrar','exibir','apresentar','ensinar','demonstrar',
+    'fazer','instalar','desinstalar','configurar','editar','remover','retirar','excluir',
+    'legendar','transcrever','exportar','abrir','salvar','gerar','permitir','funcionar',
+    'processar','adicionar','criar','aparecer','reiniciar','usar','gravar','corrigir'})
+_REPAIR_PATTERNS=(('na','verdade'),('quer','dizer'),('ou','melhor'),
+                  ('melhor','dizendo'),('corrigindo',),('espera',),('pera',))
+_TOKEN_CANONICAL={
+    'nao':'não','voce':'você','voces':'vocês','tres':'três',
+    'subtitulo':'subtítulo','subtitulos':'subtítulos',
+    'ta':'está','tá':'está','to':'estou','tô':'estou',
+    'cê':'você','ce':'você','pra':'para',
+}
 
 
 class _ProcessMemorySampler:
@@ -120,7 +150,10 @@ def _spacy_pipeline():
 
 @lru_cache(maxsize=8192)
 def _token_cache(text: str) -> tuple[str, ...]:
-    return tuple(token.casefold().replace('’', "'") for token in _WORD_RE.findall(text or ''))
+    normalized=unicodedata.normalize('NFC',unicodedata.normalize('NFKC',text or ''))
+    return tuple(_TOKEN_CANONICAL.get(token.casefold().replace('’', "'"),
+                                      token.casefold().replace('’', "'"))
+                 for token in _WORD_RE.findall(normalized))
 
 
 def _tokens(text: str) -> list[str]:
@@ -130,7 +163,7 @@ def _tokens(text: str) -> list[str]:
 @lru_cache(maxsize=8192)
 def _lemma(token: str) -> str:
     """Use installed small PT spaCy model on demand, else deterministic fallback."""
-    token = token.casefold()
+    token = _TOKEN_CANONICAL.get(token.casefold(),token.casefold())
     nlp=_spacy_pipeline()
     if nlp is not None:
         try:
@@ -163,22 +196,7 @@ def _lemma(token: str) -> str:
 
 
 def _core(tokens: list[str]) -> set[str]:
-    return set(_core_cache(' '.join(tokens)))
-
-
-@lru_cache(maxsize=8192)
-def _core_cache(text: str) -> frozenset[str]:
-    tokens=_token_cache(text)
-    result=set()
-    for i,token in enumerate(tokens):
-        lemma=_lemma(token)
-        # "vou/iremos/ vamos + infinitivo" marks future modality, not a
-        # second informational action competing with the infinitive.
-        if lemma=='ir' and i+1<len(tokens) and _lemma(tokens[i+1]).endswith(('ar','er','ir')):
-            continue
-        if token not in _STOP and len(lemma)>1:
-            result.add(lemma)
-    return frozenset(result)
+    return set(_phrase_signature(' '.join(tokens)).concepts)
 
 
 def _sequence_tokens(tokens: list[str]) -> list[str]:
@@ -187,12 +205,41 @@ def _sequence_tokens(tokens: list[str]) -> list[str]:
         lemma=_lemma(token)
         if lemma=='ir' and i+1<len(tokens) and _lemma(tokens[i+1]).endswith(('ar','er','ir')):
             continue
-        output.append(lemma)
+        output.append(_CONCEPT_BY_LEMMA.get(lemma,lemma))
     return output
 
 
 def _numbers(tokens: list[str]) -> set[str]:
     return {t for t in tokens if any(char.isdigit() for char in t) or t in _NUMBER_WORDS}
+
+
+@lru_cache(maxsize=8192)
+def _phrase_signature(text: str) -> PhraseSignature:
+    tokens=_token_cache(text)
+    concepts=[]
+    for i,token in enumerate(tokens):
+        lemma=_lemma(token)
+        if lemma=='ir' and i+1<len(tokens) and _lemma(tokens[i+1]).endswith(('ar','er','ir')):
+            continue
+        if token not in _STOP and lemma not in _STOP and len(lemma)>1:
+            concepts.append(_CONCEPT_BY_LEMMA.get(lemma,lemma))
+    concept_set=frozenset(concepts)
+    action_concepts=set(_ACTION_LEMMAS)|{'iniciar','demonstrar','retirar'}
+    return PhraseSignature(tokens,concept_set,
+        frozenset(concept_set & action_concepts),
+        frozenset(_numbers(list(tokens))),bool(set(tokens)&_NEGATION))
+
+
+def _repair_suffix(tokens: list[str]) -> tuple[int, tuple[str, ...], str] | None:
+    """Return the text after an explicit self-repair marker, if present."""
+    for index in range(len(tokens)):
+        for pattern in _REPAIR_PATTERNS:
+            if tuple(tokens[index:index+len(pattern)])==pattern:
+                after=index+len(pattern)
+                suffix=tuple(tokens[after:])
+                if len(suffix)>=2:
+                    return after,suffix,' '.join(pattern)
+    return None
 
 
 def _important_names(words: list[TranscriptWord]) -> set[str]:
@@ -209,7 +256,8 @@ def _important_names(words: list[TranscriptWord]) -> set[str]:
 
 def _ngram_overlap(left: list[str], right: list[str]) -> float:
     def grams(items):
-        normalized=[_lemma(t) for t in items if t not in _STOP]
+        normalized=[_CONCEPT_BY_LEMMA.get(_lemma(t),_lemma(t))
+                    for t in items if t not in _STOP]
         return Counter(tuple(normalized[i:i+n]) for n in (1,2,3)
                        for i in range(max(0,len(normalized)-n+1)))
     a,b=grams(left),grams(right)
@@ -247,11 +295,17 @@ def _sentences(words: list[dict], clip_start: float, pauses: list[tuple[float, f
             continue
         if not text or end <= start:
             continue
-        if current and (start-last_end >= .32 or any(last_end <= p0 and start >= p1 for p0, p1 in pauses)):
+        # Split on an actual VAD pause or reliable hard punctuation. A generic
+        # Whisper word gap is not enough to declare a sentence boundary.
+        if current and (any(last_end <= p0 and start >= p1 and p1-p0 >= .22
+                            for p0,p1 in pauses) or
+                        re.search(r'[.!?]["”\']?$',current[-1].text)):
             result.append(current); current = []
         word = TranscriptWord(text, start, end, float(item.get('probability') or 1.0))
         current.append(word); last_end = end
-        if re.search(r'[.!?…]["”\']?$', text):
+        # Ellipsis marks an interrupted thought and must stay attached to a
+        # following repair ("cinco… na verdade, seis").
+        if re.search(r'[.!?]["”\']?$', text):
             result.append(current); current = []
     if current:
         result.append(current)
@@ -283,11 +337,31 @@ def _context_candidates(clip, report: dict, pause_spans: list[tuple[float, float
             ot = _tokens(old_text)
             if len(ot) < 2:
                 continue
+            old_signature=_phrase_signature(old_text)
+            new_signature=_phrase_signature(new_text)
+            repair=_repair_suffix(nt)
+            repair_signature=None
+            repair_targeted=False
+            correction=''
+            if repair:
+                _,repair_tokens,correction=repair
+                repair_signature=_phrase_signature(' '.join(repair_tokens))
+                # A correction cue only overrides a critical mismatch when
+                # the corrected clause still carries the old topic/action.
+                # This prevents "na verdade" from acting as a universal pass.
+                old_noncritical=set(old_signature.concepts)-set(old_signature.numbers)-set(_NEGATION)
+                suffix_overlap=(len(old_noncritical & set(repair_signature.concepts)) /
+                                max(1,len(old_noncritical)))
+                repair_targeted=(suffix_overlap>=.65 and
+                    ((old_signature.numbers and repair_signature.numbers and
+                      old_signature.numbers!=repair_signature.numbers) or
+                     old_signature.negation!=repair_signature.negation))
             # Contrastive facts that are not safely interchangeable.
             old_lemmas, new_lemmas = {_lemma(t) for t in ot}, {_lemma(t) for t in nt}
-            if bool(old_lemmas & _NEGATION) != bool(new_lemmas & _NEGATION):
+            if old_signature.negation != new_signature.negation and not repair_targeted:
                 protected.append('negação diferente'); continue
-            if _numbers(ot) and _numbers(nt) and _numbers(ot) != _numbers(nt):
+            if (old_signature.numbers and new_signature.numbers and
+                    old_signature.numbers != new_signature.numbers and not repair_targeted):
                 protected.append('quantidades diferentes'); continue
             old_names,new_names=_important_names(older),_important_names(newer)
             if old_names and new_names and old_names != new_names:
@@ -304,7 +378,7 @@ def _context_candidates(clip, report: dict, pause_spans: list[tuple[float, float
             rapid=_rapidfuzz_available()
             fuzzy=(float(rapid(' '.join(_sequence_tokens(ot)),
                                ' '.join(_sequence_tokens(nt))))/100 if rapid else seq)
-            cue = any(cue in new_text.casefold() for cue in _CUES)
+            cue = bool(repair) or any(cue in new_text.casefold() for cue in _CUES)
             first_incomplete = not re.search(r'[.!?]["”\']?$', older[-1].text)
             newer_complete = bool(re.search(r'[.!?]["”\']?$', newer[-1].text)) or len(nt) >= 7
             if seq >= .98 and not first_incomplete and not cue:
@@ -313,6 +387,18 @@ def _context_candidates(clip, report: dict, pause_spans: list[tuple[float, float
             # Coverage is directional: every substantive idea from the first
             # attempt must survive in the later one. Additions are safe.
             old_core, new_core = _core(ot), _core(nt)
+            if repair_targeted and repair_signature:
+                # The value before the correction cue is an abandoned claim;
+                # do not require it to reappear after the correction.
+                if old_signature.numbers and repair_signature.numbers:
+                    old_core-=set(old_signature.numbers)
+                    prefix_end=repair[0]-len(correction.split())
+                    prefix_numbers=_numbers(nt[:prefix_end])
+                    new_core-=prefix_numbers-set(repair_signature.numbers)
+                if old_signature.negation!=repair_signature.negation:
+                    old_core-=set(_NEGATION)
+                    new_core-=set(_NEGATION)
+                new_core.update(repair_signature.concepts)
             covered = len(old_core & new_core) / max(1, len(old_core))
             old_distinct = old_core - new_core
             if overlap >= .72 and max(seq,fuzzy) >= .42 and ngrams >= .4 and covered >= .78 and newer_complete and not old_distinct:
@@ -322,10 +408,13 @@ def _context_candidates(clip, report: dict, pause_spans: list[tuple[float, float
                     relative_start=max(0., old_start-clip.start)
                     relative_end=max(relative_start, old_end-clip.start)
                     if relative_end-relative_start >= .04:
-                        reason = 'Reformulação próxima após pausa; a tentativa posterior cobre o núcleo anterior.'
+                        reason = ('Autocorreção explícita após pausa; a versão posterior preserva o tópico.'
+                                  if repair_targeted else
+                                  'Reformulação próxima após pausa; a tentativa posterior cobre o núcleo anterior.')
                         evidence=(f'pausa {gap:.2f}s', f'conteúdo coberto {covered:.0%}',
                                   f'alinhamento {max(seq,fuzzy):.0%}',
                                   f'n-gramas {ngrams:.0%}', 'versão posterior completa')
+                        if repair_targeted:evidence+=(f'marcador de correção: {correction}',)
                         found.append(CutCandidate(clip.id, relative_start, relative_end, reason,
                             evidence, min(98, 70+covered*20+seq*8), 'context',
                             f'ctx:{clip.id}:{round(old_start*1000)}:{round(old_end*1000)}'))
@@ -393,7 +482,7 @@ def analyze_automatic_cleanup(clips, options: EditOptions, *, known_words=None,
     Faster-Whisper route. This function never calls Qwen or a generative model.
     """
     started=time.perf_counter(); plan=EditPlan(options)
-    feature_cache_before=(_token_cache.cache_info(),_lemma.cache_info(),_core_cache.cache_info())
+    feature_cache_before=(_token_cache.cache_info(),_lemma.cache_info(),_phrase_signature.cache_info())
     if options.empty:
         plan.stats={'empty_selection':True,'vad_calls':0,'transcription_calls':0}
         return plan
@@ -476,7 +565,7 @@ def analyze_automatic_cleanup(clips, options: EditOptions, *, known_words=None,
                        'silence_candidates':sum('silence' in c.source_module for c in plan.candidates),
                        'filler_candidates':sum('filler' in c.source_module for c in plan.candidates),
                        'context_candidates':sum('context' in c.source_module for c in plan.candidates)})
-    feature_cache_after=(_token_cache.cache_info(),_lemma.cache_info(),_core_cache.cache_info())
+    feature_cache_after=(_token_cache.cache_info(),_lemma.cache_info(),_phrase_signature.cache_info())
     plan.stats['text_feature_cache_hits']=sum(after.hits-before.hits for before,after in zip(feature_cache_before,feature_cache_after))
     plan.stats['text_feature_cache_misses']=sum(after.misses-before.misses for before,after in zip(feature_cache_before,feature_cache_after))
     return plan

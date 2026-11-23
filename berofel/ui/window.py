@@ -3788,7 +3788,12 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self,'Alcance','Escolha blocos de áudio/vídeo para analisar.')
             self.open_actions();return
         originals=copy.deepcopy({t.original_id:self.project.clip(t.original_id) for t in targets})
-        opts=AIOptions(enable_qwen=False)
+        # Small fixed vocabulary helps Faster-Whisper recognize the editor's
+        # domain when this cleanup action needs a fresh transcript. Existing
+        # project transcripts still bypass ASR; hints never rewrite the text.
+        opts=AIOptions(enable_qwen=False,
+                       whisper_hotwords=('Berofel Studio, Faster-Whisper, Silero, '
+                                         'FFmpeg, timeline, transcrição, legendas'))
         known={c.id:words_in_clip(self.project,c) for c in selected
                if has_coverage(self.project,c,opts.whisper_model,opts.language)}
         count,seconds=scope_summary(targets)
