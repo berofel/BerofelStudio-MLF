@@ -11,26 +11,38 @@ LLM, API ou download de modelos.
 | Silêncios | Silero VAD | Sugestões de pausas; sem transcrição |
 | Vícios | Transcrição persistida ou Faster-Whisper se faltar | Hesitações e repetições adjacentes confirmadas |
 | Contexto | Silero para âncoras de pausa + transcrição persistida/Whisper | Sugestões conservadoras de reformulação; pausas não são cortadas |
-| Combinações | Reutiliza VAD/transcrição da execução e os caches existentes | Plano consolidado, intervalos sobrepostos unificados |
+| Combinações | Reutiliza VAD/transcrição da execução e os caches existentes | Plano consolidado; sobreposições ficam separadas e conflitantes não podem ser aplicadas juntas |
 
 Os tempos do plano são segundos relativos à mídia original. A aplicação continua
 passando pela revisão de cortes, preserva o arquivo de origem e usa o sistema
 existente de corte não destrutivo, sincronismo de áudio/legendas e Undo. Nenhuma
 seleção marcada significa que nenhuma análise é iniciada.
 
-O detector contextual usa proximidade de pausa, agrupamento de palavras,
-normalização leve de flexões/PT-BR, alinhamento de sequência, cobertura de
-termos informativos e proteções para negação, números e ações opostas. Pausa
-longa isolada ou mera sobreposição textual não aprova corte. Casos duvidosos
-permanecem preservados.
+O detector contextual usa proximidade de pausa e reinícios reconhecíveis sem
+pausa, agrupamento de palavras, normalização leve de flexões/PT-BR, alinhamento
+de sequência, n-gramas, cobertura direcional de informação e busca de sufixos
+em falas anteriores longas. A proposta cobre somente o sufixo correspondente,
+preservando informação distintiva anterior. Protege negação, números, condições,
+modalidade, referências temporais, entidades, ações opostas, mudanças de
+locutor conhecidos, complementos e continuações. Pausa longa isolada ou mera
+sobreposição textual não aprova corte. Casos duvidosos permanecem preservados.
 
 O comparador também calcula e mantém em cache uma assinatura curta por frase
-(tokens normalizados, conceitos, ações, números e negação). Há equivalências
+(tokens normalizados, conceitos, ações, números, negação, condições, modalidade,
+entidades e referências temporais). Há equivalências
 controladas para alguns termos comuns do editor, usadas somente para encontrar
 candidatos. Uma lista pequena de vocabulário do produto pode ser passada ao
 Faster-Whisper quando a limpeza precisa criar uma transcrição; ela participa da
 chave de cache e não reescreve palavras nem seus timestamps. Uma transcrição já
 existente continua sendo reutilizada sem executar Whisper.
+
+Quando **Contexto** está ativo, palavras desconhecidas também podem receber um
+alias de ortografia para a comparação: a função usa o carregador VERO/Hunspell
+já existente, com cache de sessão e limite de 512 formas. Só aplica um alias
+quando a sugestão é única e muito próxima; termos aprovados, números e palavras
+funcionais são preservados. O alias não altera o Faster-Whisper, o texto salvo,
+as legendas nem os timestamps. Se VERO estiver ausente, o comparador segue com
+as regras determinísticas sem instalar ou baixar nada.
 
 Essa lista também é usada pelas rotas de transcrição e legendas iniciadas pelo
 editor, não apenas pela limpeza. Legendas digitadas ou corrigidas pelo usuário
@@ -46,8 +58,23 @@ ortográfica confirmada.
 Autocorreções explícitas como “na verdade”, “quer dizer” e “ou melhor” recebem
 tratamento direcional. Uma mudança de número ou negação só pode passar pela
 proteção quando a nova oração retém evidência suficiente do mesmo tópico; o
-marcador sozinho não autoriza remoção. Ainda assim, essas regras são heurísticas
-conservadoras, não uma medida de precisão validada em gravações anotadas.
+marcador sozinho não autoriza remoção. Divergências com marcador de correção
+recebem risco de revisão individual e ficam fora de “Selecionar todos” e da
+aprovação em massa. Nenhuma sugestão de contexto é automaticamente aplicada.
+Ainda assim, essas regras são heurísticas conservadoras, não uma medida de
+precisão validada em gravações anotadas.
+
+Sugestões de módulos diferentes nunca são fundidas em um intervalo maior. A
+fila preserva cada origem e marca propostas sobrepostas; se duas conflitantes
+forem selecionadas para o mesmo bloco, a aplicação inteira é recusada até que
+uma delas seja desmarcada. A edição segue pela revisão existente, com origem
+intacta e Undo.
+
+O refino de borda por energia RMS do pacote V2 não foi conectado: os relatórios
+do pipeline atual não entregam um buffer PCM original em memória ao planejador.
+O código não reabre nem renderiza o áudio apenas para refinar um corte; os
+limites atuais continuam usando timestamps de palavra e as margens já presentes
+na aplicação da timeline.
 
 ## Reconhecimento de fala e comandos de voz
 
@@ -125,3 +152,24 @@ Para validar: abra **Assistente IA**, escolha o alcance, marque qualquer
 combinação dos três controles e use **Aplicar edição**. Cada sugestão começa
 desmarcada e precisa ser aprovada explicitamente na revisão. Para contexto sem
 remoção de silêncio, marque somente **Contexto**.
+
+Os testes determinísticos da integração ficam em
+`tests/test_automatic_cleanup.py`. A suíte principal foi executada pelo Python
+do ambiente `%LOCALAPPDATA%\\BFS\\venv`: 441 passaram e 5 foram ignorados. Os
+28 testes do ZIP V2 executaram sem falha; 2 testes opcionais do refinador RMS
+foram ignorados por NumPy ausente.
+
+Benchmark sintético, não representativo de voz ou do pipeline completo: 46.000
+palavras e 1.999 pausas artificiais foram processadas pelo comparador integrado
+em cinco repetições aquecidas, com p50 de 5,627 s e máximo observado (p95
+empírico conservador nesta amostra pequena) de 5,631 s; pico RSS amostrado do
+processo 38,2 MiB, incluindo o corpus sintético em memória, e pico temporário
+Python medido separadamente com `tracemalloc` de 5,42 MiB. O CPU reportou
+família AMD 25/modelo 80, 8 núcleos/16 lógicos; a consulta do modelo comercial
+exato foi negada, então não atribuímos o resultado especificamente ao Ryzen
+7 5700G. Não foram medidos Whisper, Silero, aplicação/exportação, latência de
+áudio, p95 estatístico robusto nem precisão/cobertura em fala humana.
+
+Ainda é necessário validar propostas contra um corpus PT-BR anotado e executar
+o fluxo visual com mídia real. A integração não declara benchmark end-to-end nem
+precisão editorial em áudio humano.

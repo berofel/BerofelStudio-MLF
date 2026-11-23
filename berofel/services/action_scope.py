@@ -117,6 +117,31 @@ def local_to_original_proposal(proposal: dict, target: ScopeTarget, original) ->
     return entry
 
 
+def selected_proposals_conflict(proposals, *, tolerance: float = .02) -> bool:
+    """Whether selected source-time cuts overlap within the same original clip.
+
+    Conflicts are not merged: callers must leave the review queue intact and
+    ask the user to choose which proposal to apply.
+    """
+    grouped={}
+    for proposal in proposals:
+        try:
+            clip_id=str(proposal['clip_id'])
+            start=float(proposal['a']);end=float(proposal['b'])
+        except (KeyError,TypeError,ValueError):
+            continue
+        if end<=start:continue
+        grouped.setdefault(clip_id,[]).append((start,end))
+    for intervals in grouped.values():
+        intervals.sort()
+        furthest_end=None
+        for start,end in intervals:
+            if furthest_end is not None and start<furthest_end-tolerance:
+                return True
+            furthest_end=end if furthest_end is None else max(furthest_end,end)
+    return False
+
+
 def scope_is_still_valid(project, originals, targets) -> bool:
     """Não aplica resultado obsoleto se algum bloco-alvo mudou enquanto IA rodava."""
     for target in targets:

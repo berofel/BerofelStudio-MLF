@@ -1,10 +1,12 @@
 """Deterministic tests for the non-generative cleanup decision engine."""
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from berofel.services.automatic_cleanup import (
     EditOptions, analyze_automatic_cleanup, _context_candidates,
-    _filler_candidates, _sentences, _tokens, _phrase_signature,
+    _filler_candidates, _sentences, _tokens, _phrase_signature, _merge_candidates,
+    CutCandidate,
 )
 
 
@@ -85,7 +87,9 @@ class AutomaticCleanupTests(unittest.TestCase):
         second=words('Na verdade, o programa demora seis minutos para processar.',8.)
         candidates,protected=_context_candidates(clip(),{'words':first+second},[(3.5,7.8)])
         self.assertEqual(len(candidates),1,protected)
-        self.assertIn('Autocorreção explícita',candidates[0].reason)
+        self.assertTrue(candidates[0].requires_individual_review)
+        self.assertIn('aprovação individual',candidates[0].reason)
+        self.assertIn('marcador de correção explícita',candidates[0].risk_flags)
         self.assertTrue(any('marcador de correção' in evidence for evidence in candidates[0].evidence))
 
     def test_explicit_negation_repair_is_recognized_only_when_suffix_covers_topic(self):
@@ -143,6 +147,13 @@ class AutomaticCleanupTests(unittest.TestCase):
         self.assertEqual(candidates,[])
         self.assertIn('repetição integral pode ser intencional',protected)
 
+    def test_long_complete_repetition_is_not_cut_via_a_shorter_suffix(self):
+        sentence='Hoje nós vamos mostrar como configurar o programa e adicionar legendas automaticamente no vídeo.'
+        sequence=words(sentence,1.)+words(sentence,8.)
+        candidates,protected=_context_candidates(clip(),{'words':sequence},[(4.,7.8)])
+        self.assertEqual(candidates,[])
+        self.assertTrue(any('repetição integral' in reason for reason in protected))
+
     def test_filler_detector_keeps_semantic_words_and_only_cuts_confirmed_repeat(self):
         clip_item=clip()
         data={'words':words('Eu eu eu vou mostrar, tipo de coisa, não é isso, né?',1.)}
@@ -179,7 +190,7 @@ class AutomaticCleanupTests(unittest.TestCase):
         self.assertEqual(calls,['silence'])
         self.assertEqual(plan.stats['transcription_calls'],0)
 
-    def test_candidates_merge_overlaps_once_and_keep_original_clip_relative_bounds(self):
+    def test_silence_candidate_keeps_clip_relative_bounds(self):
         item=clip(10,20)
         def fake(clips,**kwargs):
             return {'reports':[{'clip_id':item.id,'title':item.title,'source':'x','start':10.,'end':20.,
@@ -190,6 +201,63 @@ class AutomaticCleanupTests(unittest.TestCase):
         self.assertEqual((plan.candidates[0].start,plan.candidates[0].end),(2.,4.))
         self.assertGreaterEqual(plan.candidates[0].start,0)
         self.assertLess(plan.candidates[0].end,item.end-item.start)
+
+    def test_context_finds_long_attempt_suffix_without_cutting_unique_prefix(self):
+        first=words('O editor tem uma seção de configuração, hoje iremos fazer uma demonstração do programa.',1.)
+        second=words('No vídeo de hoje faremos uma demonstração do programa.',13.)
+        candidates,_=_context_candidates(clip(),{'words':first+second},[(5.5,12.7)])
+        self.assertTrue(candidates)
+        self.assertGreater(candidates[0].start,first[0]['source_start'])
+        self.assertTrue(any('sufixo' in evidence for evidence in candidates[0].evidence))
+
+    def test_no_pause_restart_is_detected_only_after_repeated_starter(self):
+        sequence=words('Eu vou ensinar como instalar o editor, Eu vou mostrar como instalar o editor.',1.,step=.4)
+        # Restart cue after a comma, with only a small word gap and no VAD pause.
+        candidates,_=_context_candidates(clip(),{'words':sequence},[])
+        self.assertTrue(candidates)
+
+    def test_critical_conditions_modality_and_entities_are_preserved(self):
+        cases=[('Se você puder abrir o projeto no Windows.','Você pode abrir o projeto no Linux.'),
+               ('O editor deve exportar cinco arquivos no Windows.','O editor pode exportar seis arquivos no Windows.'),
+               ('Hoje vamos abrir o projeto no Windows.','Amanhã vamos abrir o projeto no Windows.')]
+        for left,right in cases:
+            candidates,_=_context_candidates(clip(),{'words':words(left,1.)+words(right,9.)},[(4.,8.8)])
+            self.assertEqual(candidates,[],(left,right))
+
+    def test_speaker_change_blocks_context_candidate(self):
+        left=words('Hoje nós iremos fazer uma demonstração completa.',1.)
+        right=words('No vídeo de hoje faremos uma demonstração completa.',8.)
+        for item in left:item['speaker_id']='speaker-1'
+        for item in right:item['speaker_id']='speaker-2'
+        candidates,protected=_context_candidates(clip(),{'words':left+right},[(3.5,7.8)])
+        self.assertEqual(candidates,[])
+        self.assertIn('locutor diferente',protected)
+
+    def test_complement_and_continuation_are_not_context_cuts(self):
+        cases=[('Hoje vamos preparar o projeto.','Também vamos exportar o projeto.'),
+               ('Quando você terminar de instalar o editor','vai aparecer uma janela para reiniciar.')]
+        for left,right in cases:
+            words_all=words(left,1.)+words(right,8.)
+            candidates,_=_context_candidates(clip(),{'words':words_all},[(4.,7.8)])
+            self.assertEqual(candidates,[],(left,right))
+
+    def test_context_aliases_are_comparison_only_and_transcript_untouched(self):
+        raw='Hoje iremos instalar o programa no computador.'
+        transcript=words(raw,1.)
+        before=[dict(item) for item in transcript]
+        with patch('berofel.services.automatic_cleanup._analysis_alias',
+                   side_effect=lambda token: {'instalarr':'instalar'}.get(token,token)):
+            _phrase_signature('Hoje iremos instalarr o programa no computador.')
+        self.assertEqual(transcript,before)
+        self.assertEqual(' '.join(item['text'] for item in transcript),raw)
+
+    def test_overlapping_candidates_remain_separate_and_are_flagged(self):
+        first=CutCandidate('clip-1',1.,2.,'Silêncio',(),90,'silence','s1')
+        second=CutCandidate('clip-1',1.5,2.5,'Vício',(),80,'filler','f1')
+        result,conflicts=_merge_candidates([first,second])
+        self.assertEqual(len(result),2)
+        self.assertEqual(conflicts,1)
+        self.assertTrue(all('overlaps another module suggestion' in c.risk_flags for c in result))
 
 
 if __name__=='__main__': unittest.main()

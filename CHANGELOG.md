@@ -1,5 +1,16 @@
 # Limpeza automática modular local
 
+## Motor Contextual Python V2 integrado — 23/11/2026
+
+- Mescladas ao motor existente as comparações direcionais por informação, busca de sufixos longos, retomadas marcadas e reinícios sem pausa, sem adicionar outro serviço ASR/VAD, motor contextual ou opção à interface.
+- Assinaturas locais/cacheadas agora consideram condições, modalidade, referências temporais e entidades, além de ações, quantidades e negação; mudanças de locutor conhecidas, complementos e continuidades ficam protegidos.
+- Correções com marcador explícito e divergência ficam obrigatoriamente para confirmação individual, fora de seleção/aprovação em massa.
+- Propostas de módulos diferentes não são mais fundidas. Sobreposições são sinalizadas, não entram na seleção em massa e bloqueiam aplicação conjunta até desmarcar uma.
+- O comparador pode reutilizar o carregador VERO/Hunspell existente para alias ortográfico apenas na análise, com cache limitado; transcrição, legendas e timestamps permanecem intactos.
+- O refino RMS opcional não foi integrado porque o pipeline não mantém PCM original em memória no planejador; não há reabertura/renderização adicional de mídia.
+- Testes existentes de limpeza foram ampliados para sufixos, retomada sem pausa, informação crítica, locutor, complemento, alias sem mutação e sobreposição. Suíte principal: 441 passaram, 5 ignorados; suíte V2: 28 sem falhas, 2 opcionais de RMS ignorados por NumPy ausente.
+- Benchmark sintético integrado (46 mil palavras/1.999 pausas): cinco repetições, p50 5,627 s, máximo observado 5,631 s, 38,2 MiB RSS amostrado incluindo os dados de entrada e 5,42 MiB de alocação temporária rastreada. O equipamento reportou CPU AMD família 25/modelo 80, 8C/16T; o modelo comercial exato não pôde ser consultado. Não inclui VAD/ASR/áudio humano e não demonstra precisão editorial.
+
 ## Revisão ortográfica local pt-BR — 23/11/2026
 
 - Adicionado botão **Revisar ortografia** no painel de legendas, com sugestões pontuais e aplicação individual; o usuário confirma no campo e salva com **Aplicar texto**.

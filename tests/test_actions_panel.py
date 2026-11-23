@@ -795,6 +795,49 @@ class ActionsUITests(unittest.TestCase):
         self.assertEqual(len(dialog.accepted_findings()),0)
         dialog.close();panel.close()
 
+    def test_context_corrections_and_overlaps_are_excluded_from_bulk_review(self):
+        findings=[
+            {'clip_id':'same','title':'Seguro','a':5.,'b':6.,'type':'contexto','note':'Reformulação'},
+            {'clip_id':'same','title':'Correção','a':3.,'b':4.,'type':'contexto','note':'Corrigido',
+             'requires_individual_review':True,'risk_flags':['marcador de correção explícita']},
+            {'clip_id':'same','title':'Sobreposição','a':3.5,'b':4.5,'type':'silencio','note':'Pausa',
+             'risk_flags':['overlaps another module suggestion']},
+        ]
+        dialog=SuggestionsDialog(findings)
+        dialog._set_all(True)
+        self.assertEqual([index for index,check in enumerate(dialog.checks) if check.isChecked()],[0])
+        self.assertIn('revisar individualmente',dialog.checks[1].text())
+        dialog.checks[1].setChecked(True)  # explicit human decision is allowed
+        self.assertEqual(len(dialog.accepted_findings()),2)
+        dialog.close()
+
+    def test_review_keeps_queue_when_overlapping_cuts_are_confirmed_together(self):
+        win=MainWindow()
+        try:
+            clip=win.project.add_clip(Clip('',0,10,track_id=win.project.tracks[0].id))
+            anchor={'source':clip.source,'start':clip.start,'end':clip.end,
+                    'speed':clip.speed,'track_id':clip.track_id}
+            findings=[{'clip_id':clip.id,'title':'A','a':1.,'b':3.,'type':'contexto',
+                       'note':'Contexto','_review_anchor':anchor,'checked':False},
+                      {'clip_id':clip.id,'title':'B','a':2.,'b':4.,'type':'silencio',
+                       'note':'Silêncio','_review_anchor':anchor,'checked':False}]
+            win._pending_review_findings=findings
+            win._pending_review_title='Limpeza'
+            win.project.review_queue=list(findings)
+            def select_both(dialog):
+                for check in dialog.checks:check.setChecked(True)
+                return QDialog.DialogCode.Accepted
+            with patch.object(SuggestionsDialog,'exec',new=select_both), \
+                 patch('berofel.ui.window.QMessageBox.warning') as warning, \
+                 patch.object(win,'_autosave'):
+                win._show_pending_review()
+            warning.assert_called_once()
+            self.assertIsNotNone(win._pending_review_findings)
+            self.assertEqual(len(win.project.review_queue),2)
+            self.assertEqual(len(win.project.clips),1)
+        finally:
+            win.close();self.app.processEvents()
+
     def test_context_shortcut_uses_local_cleanup_entrypoint(self):
         win=MainWindow()
         try:

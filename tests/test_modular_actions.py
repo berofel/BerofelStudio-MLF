@@ -7,7 +7,7 @@ import wave
 
 from berofel.core.project import Project, Clip
 from berofel.services.action_scope import (ScopeSpec,resolve_scope,scope_summary,
-    local_to_original_proposal,scope_is_still_valid)
+    local_to_original_proposal,scope_is_still_valid,selected_proposals_conflict)
 from berofel.services.ai_cache import CacheStore,CACHE_SCHEMA,write_json
 from berofel.services.ai_pipeline import Pipeline, AIOptions
 from berofel.services.caption_actions import (create_manual_caption,create_auto_captions,
@@ -54,6 +54,14 @@ class ModularActionsTests(unittest.TestCase):
                     track_id=self.prj.tracks[1].id,timeline_start=5)
         for c in (self.a,self.b,self.c):self.prj.add_clip(c)
         self.fake=FakeModels();self.cache=CacheStore(Path(self.tmp.name)/'cache')
+
+    def test_conflicting_review_cuts_are_detected_per_clip(self):
+        self.assertTrue(selected_proposals_conflict([
+            {'clip_id':'same','a':1.,'b':2.}, {'clip_id':'same','a':1.5,'b':2.5}]))
+        self.assertFalse(selected_proposals_conflict([
+            {'clip_id':'one','a':1.,'b':2.}, {'clip_id':'two','a':1.5,'b':2.5}]))
+        self.assertFalse(selected_proposals_conflict([
+            {'clip_id':'same','a':1.,'b':2.}, {'clip_id':'same','a':2.,'b':3.}]))
 
     def test_one_selected_and_multiple_across_tracks(self):
         clips,targets=resolve_scope(self.prj,ScopeSpec('one',(self.a.id,)))

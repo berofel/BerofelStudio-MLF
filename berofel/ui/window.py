@@ -34,7 +34,7 @@ from berofel.services.batch_editing import plan_actions, run_edit_queue, apply_r
 from berofel.services.automatic_cleanup import EditOptions, analyze_automatic_cleanup
 from berofel.services.subtitles import merge_reports, export_srt, timeline_words
 from berofel.services.action_scope import (ScopeSpec, resolve_scope, scope_summary,
-    local_to_original_proposal, scope_is_still_valid)
+    local_to_original_proposal, scope_is_still_valid, selected_proposals_conflict)
 from berofel.services.caption_actions import (create_manual_caption, create_auto_captions,
     export_scoped_srt, scoped_cues)
 from berofel.services.transcript_coverage import (record_coverage,has_coverage,words_in_clip)
@@ -431,7 +431,13 @@ class SuggestionsDialog(QDialog):
                    f.get('score') is not None else '')
             c=QCheckBox(f"{f['title']}  {f['a']:.2f}–{f['b']:.2f}s  {note}{score}")
             c.setStyleSheet('QCheckBox{spacing:8px;}')
-            c.setToolTip('Tempos relativos ao bloco selecionado, nunca ao vídeo inteiro.')
+            flags=list(f.get('risk_flags') or [])
+            if f.get('requires_individual_review'):
+                c.setText(c.text()+'  ·  revisar individualmente')
+                flags.append('Não entra em aprovação em massa; confirme este item isoladamente.')
+            if flags:c.setText(c.text()+'  ·  risco')
+            c.setToolTip('Tempos relativos ao bloco selecionado, nunca ao vídeo inteiro.'+
+                (('\nRiscos: '+'; '.join(str(flag) for flag in flags)) if flags else ''))
             c.setChecked(f.get('checked',False))
             lay.addWidget(c);self.checks.append(c)
         lay.addStretch();scroll.setWidget(inside);root.addWidget(scroll)
@@ -491,16 +497,21 @@ class SuggestionsDialog(QDialog):
                                     float(finding.get('a',0)),float(finding.get('b',0)))
 
     def _set_all(self, checked: bool):
-        for box in self.checks:
+        for finding,box in zip(self.findings,self.checks):
             box.blockSignals(True)
-            box.setChecked(checked)
+            box.setChecked(bool(checked and self._bulk_safe(finding)))
             box.blockSignals(False)
         self._update_count()
 
+    @staticmethod
+    def _bulk_safe(finding):
+        return (not finding.get('requires_individual_review') and
+                'overlaps another module suggestion' not in (finding.get('risk_flags') or []))
+
     def _set_visible(self,checked: bool):
-        for box in self.checks:
+        for finding,box in zip(self.findings,self.checks):
             if box.isHidden():continue
-            box.blockSignals(True);box.setChecked(checked);box.blockSignals(False)
+            box.blockSignals(True);box.setChecked(bool(checked and self._bulk_safe(finding)));box.blockSignals(False)
         self._update_count()
 
     def _apply_filters(self,*_):
@@ -3847,7 +3858,7 @@ class MainWindow(QMainWindow):
                 f'{metrics.get("transcription_pipeline_seconds",0):.1f}s · '
                 f'regras {metrics.get("text_rules_seconds",0):.2f}s · '
                 f'cache {metrics.get("cache_hits",0)} acertos · '
-                f'{stats.get("overlap_merges",0)} sobreposição(ões) unificada(s)'
+                f'{stats.get("overlap_conflicts",0)} conflito(s) de sobreposição preservado(s) para revisão'
                 f'{memory_text}.')
 
         self._ai_busy=True
@@ -4385,6 +4396,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self,'Revisão desatualizada',
                 'O projeto mudou desde a análise ou a faixa está bloqueada. Nenhum corte foi '
                 'aplicado. Reanalise os blocos antes de aprovar estas sugestões.')
+            return
+        if selected_proposals_conflict(choices):
+            self.project.review_queue=copy.deepcopy(findings)
+            self.project.review_title=title
+            self._autosave()
+            QMessageBox.warning(self,'Cortes conflitantes',
+                'Há sugestões sobrepostas selecionadas no mesmo bloco. Nenhum corte foi aplicado. '
+                'Desmarque uma das sugestões conflitantes e aplique novamente.')
             return
         self._pending_review_findings=None
         self._pending_review_title=''
