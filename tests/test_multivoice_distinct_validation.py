@@ -9,8 +9,10 @@ from scripts.validar_troca_perfis_trechos_voz_autorizada import (
     ENGINES as VOICE_SWITCH_ENGINES, select_speech_segments,
 )
 from scripts.validar_multivoice_distinct_profiles import (
+    ACCEPTANCE_VOICE_ORDER, build_100_line_acceptance_script,
     select_authorized_distinct_profiles,
 )
+from berofel.services.multivoice_narration import parse_berofel_script
 from berofel.services.voice_profiles import VoiceProfileManager
 
 
@@ -50,6 +52,28 @@ class DistinctProfileAcceptanceTests(unittest.TestCase):
         self.assertEqual(set(profiles), {first['id'], second['id']})
         self.assertEqual(set(fingerprints), {first['id'], second['id']})
         self.assertNotEqual(fingerprints[first['id']], fingerprints[second['id']])
+
+    def test_selects_three_authorized_profiles_for_100_line_acceptance(self):
+        sources = [self.root / f'voice-{index}.wav' for index in range(1, 4)]
+        profiles = []
+        for index, source in enumerate(sources, 1):
+            _write_reference(source, 400 + index * 200)
+            profiles.append(self._profile(f'Voz {index}', source, True))
+
+        selected, fingerprints = select_authorized_distinct_profiles(
+            self.manager, *(profile['id'] for profile in profiles))
+
+        self.assertEqual(set(selected), {profile['id'] for profile in profiles})
+        self.assertEqual(len(set(fingerprints.values())), 3)
+
+    def test_100_line_acceptance_script_is_mixed_and_has_70_20_10_voice_counts(self):
+        parsed = parse_berofel_script(build_100_line_acceptance_script())
+        counts = {f'V{i}': sum(line.voice_id == f'V{i}' for line in parsed)
+                  for i in range(1, 4)}
+        self.assertEqual(len(parsed), 100)
+        self.assertEqual(counts, {'V1': 70, 'V2': 20, 'V3': 10})
+        self.assertEqual([line.voice_id for line in parsed], list(ACCEPTANCE_VOICE_ORDER))
+        self.assertEqual([line.number for line in parsed], list(range(1, 101)))
 
     def test_rejects_two_profile_ids_that_copy_the_same_reference(self):
         reference = self.root / 'same.wav'

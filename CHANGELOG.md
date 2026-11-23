@@ -1,3 +1,9 @@
+## Preparação do teste de aceitação com três locutores
+
+- O validador offline aceita `--profile-v3` e monta o roteiro real de 100 falas na proporção V1/V2/V3 de 70/20/10; rejeita perfis não autorizados e gravações repetidas.
+- O modo de 100 falas Qwen fica pronto para rodar com três referências autorizadas diferentes. Nesta máquina, apenas uma referência distinta está cadastrada; houve teste sintético de fila, não inferência Qwen com três locutores.
+- A regeneração de uma fala agora tem cobertura de teste para o ripple dos blocos seguintes e Undo/Redo sem alterar os demais WAVs.
+
 ## Alternância multivozes sem recarga no perfil Native Q4
 
 - O diagnóstico offline agora também mede `qwen3-tts-native-q4`, preservando executável e modelo instalados e isolando embeddings/cache temporários.

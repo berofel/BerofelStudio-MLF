@@ -101,7 +101,23 @@ python scripts/validar_multivoice_distinct_profiles.py `
   --engine qwen3-tts-purec-int8
 ```
 
-Use `qwen3-tts-purec-mixed` para o Turbo Pure C Mixer ou `qwen3-tts-local` para o Original. O script rejeita IDs iguais, referências duplicadas ou perfis sem autorização; mantém WAVs e caches em diretório temporário e retorna métricas sem nomes ou caminhos pessoais. `tests/test_multivoice_distinct_validation.py` cobre a seleção segura sem carregar o modelo. Uma gravação diferente não prova, sozinha, que a pessoa que fala é diferente; escolha perfis de locutores distintos e autorizados e avalie as saídas por escuta. O smoke real ainda aguarda a gravação do segundo perfil autorizado.
+Use `qwen3-tts-purec-mixed` para o Turbo Pure C Mixer ou `qwen3-tts-local` para o Original. O script rejeita IDs iguais, referências duplicadas ou perfis sem autorização; mantém WAVs e caches em diretório temporário e retorna métricas sem nomes ou caminhos pessoais. `tests/test_multivoice_distinct_validation.py` cobre a seleção segura sem carregar o modelo. Uma gravação diferente não prova, sozinha, que a pessoa que fala é diferente; escolha perfis de locutores distintos e autorizados e avalie as saídas por escuta. O smoke real com dois perfis distintos ainda aguarda uma segunda gravação autorizada.
+
+### Roteiro Qwen de aceitação com 100 falas e três locutores
+
+O validador também aceita `--profile-v3` para montar o roteiro V1/V2/V3 com 100 falas misturadas na ordem narrativa e distribuição 70/20/10. Selecione três perfis locais autorizados cujas gravações sejam diferentes e representem os locutores desejados:
+
+```powershell
+& "$env:LOCALAPPDATA\BFS\venv\Scripts\python.exe" `
+  scripts/validar_multivoice_distinct_profiles.py `
+  --confirm-own-or-authorized-voice `
+  --profile-v1 ID_DO_PERFIL_V1 `
+  --profile-v2 ID_DO_PERFIL_V2 `
+  --profile-v3 ID_DO_PERFIL_V3 `
+  --engine qwen3-tts-purec-int8
+```
+
+O modo verifica lotes na ordem V1 (70), V2 (20), V3 (10), um WAV audível e independente por fala e métricas de preparo/carga. Os WAVs, projeto e caches ficam temporários. Essa execução Qwen de 100 falas ainda não foi realizada com três referências autorizadas distintas: há apenas uma gravação autorizada diferente no computador. O teste unitário do cronograma e a fila de 100 falas com gerador WAV sintético validam orquestração, agrupamento, cache e regeneração; não substituem inferência Qwen nem avaliação auditiva.
 
 ### Diagnosticar troca Pure C sem usar gravações pessoais
 

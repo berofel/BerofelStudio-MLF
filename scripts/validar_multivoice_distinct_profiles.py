@@ -1,6 +1,7 @@
-"""Validate two authorized, distinct local Qwen3 voices without network access.
+"""Validate two or three authorized, distinct local Qwen3 voices offline.
 
 The generated WAVs and temporary prompt caches stay in a temporary directory.
+Pass --profile-v3 to execute the 100-line V1/V2/V3 acceptance script (70/20/10).
 The report contains timings and audio measurements, but no voice names or paths.
 """
 from __future__ import annotations
@@ -27,6 +28,16 @@ from berofel.services.voice_profiles import VoiceProfileManager
 ENGINES = ('qwen3-tts-local', 'qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8')
 TEXTS = ('Esta é a primeira voz do teste offline.',
          'Esta é a segunda voz do teste offline.')
+ACCEPTANCE_VOICE_ORDER = ('V1', 'V1', 'V1', 'V2', 'V1',
+                          'V1', 'V3', 'V1', 'V2', 'V1') * 10
+
+
+def build_100_line_acceptance_script() -> str:
+    """Return a mixed-order 70/20/10 acceptance script with stable numbering."""
+    return '\n'.join(
+        f'[{number:03d} | {voice}]\n'
+        f'Esta é a fala {number:03d} da personagem {voice} no teste offline.'
+        for number, voice in enumerate(ACCEPTANCE_VOICE_ORDER, 1))
 
 
 def _sha256(path: str | Path) -> str:
@@ -46,35 +57,41 @@ def _list_profiles(manager: VoiceProfileManager) -> int:
 
 
 def select_authorized_distinct_profiles(manager: VoiceProfileManager,
-                                        profile_v1: str, profile_v2: str
+                                        profile_v1: str, profile_v2: str,
+                                        profile_v3: str | None = None
                                         ) -> tuple[dict[str, dict], dict[str, str]]:
-    """Load only the chosen, authorized profiles and reject duplicate references."""
+    """Load two or three selected voices and reject duplicate references."""
     if not profile_v1 or not profile_v2:
         raise ValueError('Informe os IDs dos perfis V1 e V2.')
-    if profile_v1 == profile_v2:
-        raise ValueError('V1 e V2 precisam usar IDs de perfil diferentes.')
-    profiles = {profile_v1: manager.get(profile_v1),
-                profile_v2: manager.get(profile_v2)}
-    for voice_id, profile in zip(('V1', 'V2'), profiles.values()):
+    requested_ids = [profile_v1, profile_v2]
+    if profile_v3:
+        requested_ids.append(profile_v3)
+    if len(set(requested_ids)) != len(requested_ids):
+        raise ValueError('V1, V2 e V3 precisam usar IDs de perfil diferentes.')
+    voice_ids = tuple(f'V{index}' for index in range(1, len(requested_ids) + 1))
+    profiles = {profile_id: manager.get(profile_id) for profile_id in requested_ids}
+    for voice_id, profile_id in zip(voice_ids, requested_ids):
+        profile = profiles[profile_id]
         if not profile.get('authorized'):
             raise PermissionError(f'O perfil associado a {voice_id} não está autorizado.')
         if not Path(str(profile.get('sample_path', ''))).is_file():
             raise FileNotFoundError(f'A gravação do perfil associado a {voice_id} não existe.')
     hashes = {profile_id: _sha256(profile['sample_path'])
               for profile_id, profile in profiles.items()}
-    if len(set(hashes.values())) != 2:
-        raise ValueError('As duas referências precisam ser gravações diferentes.')
+    if len(set(hashes.values())) != len(requested_ids):
+        raise ValueError('As referências precisam ser gravações diferentes entre si.')
     return profiles, hashes
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--confirm-own-or-authorized-voice', action='store_true',
-                        help='Confirma autorização para usar os dois perfis selecionados.')
+                        help='Confirma autorização para usar os perfis selecionados.')
     parser.add_argument('--list-profiles', action='store_true',
                         help='Lista IDs e nomes dos perfis locais já autorizados.')
     parser.add_argument('--profile-v1', help='ID do perfil local autorizado para V1.')
     parser.add_argument('--profile-v2', help='ID do perfil local autorizado para V2.')
+    parser.add_argument('--profile-v3', help='ID do perfil local autorizado para V3; ativa o teste de 100 falas.')
     parser.add_argument('--engine', choices=ENGINES, default='qwen3-tts-purec-int8',
                         help='Backend local instalado; padrão: Pure C INT8.')
     args = parser.parse_args()
@@ -82,10 +99,10 @@ def main() -> int:
     if args.list_profiles:
         return _list_profiles(manager)
     if not args.confirm_own_or_authorized_voice:
-        parser.error('confirme que os dois perfis têm autorização de uso.')
+        parser.error('confirme que os perfis selecionados têm autorização de uso.')
     try:
         profiles, hashes = select_authorized_distinct_profiles(
-            manager, args.profile_v1, args.profile_v2)
+            manager, args.profile_v1, args.profile_v2, args.profile_v3)
     except (ValueError, PermissionError, FileNotFoundError, KeyError) as exc:
         raise SystemExit(str(exc)) from exc
 
@@ -99,12 +116,17 @@ def main() -> int:
             raise SystemExit('O backend Pure C não está instalado localmente.')
 
     ordered_ids = [args.profile_v1, args.profile_v2]
-    assignments = {'V1': {'profile_id': ordered_ids[0]},
-                    'V2': {'profile_id': ordered_ids[1]}}
-    script = create_script(
-        f'[001 | V1]\n{TEXTS[0]}\n[002 | V2]\n{TEXTS[1]}',
-        assignments, args.engine, title='Validação multivozes offline')
-    lookup = {hashes[ordered_ids[0]]: 'V1', hashes[ordered_ids[1]]: 'V2'}
+    if args.profile_v3:
+        ordered_ids.append(args.profile_v3)
+    assignments = {f'V{index}': {'profile_id': profile_id}
+                   for index, profile_id in enumerate(ordered_ids, 1)}
+    script_text = (build_100_line_acceptance_script() if args.profile_v3 else
+                   f'[001 | V1]\n{TEXTS[0]}\n[002 | V2]\n{TEXTS[1]}')
+    script = create_script(script_text, assignments, args.engine,
+                           title=('Validação multivozes 100 falas' if args.profile_v3
+                                  else 'Validação multivozes offline'))
+    lookup = {hashes[profile_id]: f'V{index}'
+              for index, profile_id in enumerate(ordered_ids, 1)}
     measurements = []
     started = time.perf_counter()
 
@@ -146,6 +168,13 @@ def main() -> int:
             result = generate_script_audio(
                 script, profiles, str(root / 'validation.berofel.json'),
                 generator=measured_generator)
+            expected_voice_order = (list(ACCEPTANCE_VOICE_ORDER) if args.profile_v3
+                                    else ['V1', 'V2'])
+            if [item['voice'] for item in measurements] != expected_voice_order:
+                raise RuntimeError('A fila não processou os lotes vocais na ordem esperada.')
+            independent_wavs = len({line.audio_path for line in result.lines})
+            if independent_wavs != len(result.lines):
+                raise RuntimeError('Cada fala deve ter seu próprio arquivo WAV.')
             line_metrics = []
             for line in result.lines:
                 if line.status != 'generated' or not line.audio_path:
@@ -166,6 +195,13 @@ def main() -> int:
                 'offline_mode': True,
                 'distinct_authorized_reference_files': True,
                 'generated_wavs': len(line_metrics),
+                'independent_wavs': independent_wavs,
+                'voice_distribution': {voice: sum(line.voice_id == voice
+                                                   for line in result.lines)
+                                       for voice in assignments},
+                'processed_group_order': [item['voice'] for item in measurements],
+                'profile_preparation_seconds': round(result.profile_preparation_seconds, 3),
+                'model_load_seconds': round(result.model_load_seconds, 3),
                 'line_audio': line_metrics,
                 'profile_runs': measurements,
                 'worker_process_ids': [item['process_id'] for item in measurements],
