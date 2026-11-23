@@ -1,3 +1,11 @@
+## Correção da narração silenciosa — 22/11/2026
+
+- Gerar uma narração de Uma voz não encaminha mais PCM ao `QAudioSink`; o backend continua sintetizando e salvando o WAV, e a escuta só começa pelos comandos manuais.
+- Removido o vínculo de chunks de áudio do dispatcher de tarefas da janela. A inserção de WAVs na timeline e a geração/regeneração multivozes não iniciam Play.
+- Os controles **Ouvir narração**, **Ouvir última narração**, **Ouvir fala selecionada** e Play da timeline permanecem explícitos.
+- Validado nos dois perfis Pure C aprovados, com 6 threads, pelo aplicativo Qt em modo offscreen; suíte completa: 393 testes aprovados.
+- O validador Qt de multivozes agora também pode regenerar uma fala real e verificar os hashes dos WAVs não selecionados. Esta validação foi realizada com uma referência autorizada; teste com locutores distintos continua dependendo de perfis adicionais.
+
 ## Preparação do teste de aceitação com três locutores
 
 - O validador offline aceita `--profile-v3` e monta o roteiro real de 100 falas na proporção V1/V2/V3 de 70/20/10; rejeita perfis não autorizados e gravações repetidas.

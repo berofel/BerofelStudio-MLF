@@ -266,6 +266,24 @@ Foram repetidos testes reais offline nos dois perfis aprovados, sempre com seis 
 
 O smoke Qt de 20 textos inéditos com uma voz foi executado nos dois backends. Em cada um: 20 sínteses reais, 20 WAVs, 20 clips, timeline ordenada, salvar/reabrir, WAV e MP4 válidos; foram registrados 40 pontos de acesso ao servidor com um único PID. Nenhuma das falas 2–20 repetiu preparação do perfil ou carga do modelo. Mixer: 95,03 s para 117,92 s de áudio (RTF 0,806), primeiro áudio disponível em 9,156 s, RSS máximo amostrado de 3,619 GiB e CPU média da árvore de 7,636 núcleos. INT8: 104,875 s para 115,60 s (RTF 0,907), primeiro áudio em 9,349 s, RSS 3,666 GiB e CPU média de 7,708 núcleos. A amostragem de recursos ocorre a cada 200 ms; a CPU física deste ambiente não foi identificada, portanto os valores não são atribuídos ao Ryzen de referência. Os WAVs temporários foram verificados como não silenciosos e removidos após a execução.
 
-A suíte completa foi repetida com os testes opcionais Native Qwen e Pure C habilitados, modo Qt offscreen e os modelos locais/offline: **392 testes passaram, zero falhas e zero ignorados em 114,008 s**. O teste real Native Q4 grava cache e WAV sob diretório temporário isolado; antes dessa correção, a execução tentava escrever no cache persistente do usuário e falhava com `PermissionError`. O relatório bruto está em `logs/full_suite_final_20261122.log` (arquivo local ignorado pelo Git).
+A suíte completa foi repetida com os testes opcionais Native Qwen e Pure C habilitados, modo Qt offscreen e os modelos locais/offline: **393 testes passaram, zero falhas e zero ignorados em 108,044 s**. O teste real Native Q4 grava cache e WAV sob diretório temporário isolado; antes dessa correção, a execução tentava escrever no cache persistente do usuário e falhava com `PermissionError`. O relatório bruto da execução anterior está em `logs/full_suite_final_20261122.log` (arquivo local ignorado pelo Git); a execução mais recente foi observada diretamente no terminal.
+
+## Regeneração individual real pela interface — 2026-11-22
+
+O smoke Qt `scripts/validar_multivoice_ui_cache_real.py` agora pode editar uma fala concluída pela tabela do painel, acionar **Regenerar somente esta fala**, esperar a síntese Qwen real, e comparar SHA-256 de todos os outros WAVs antes/depois. O roteiro de duas falas foi executado offline com Pure C INT8: a fala 2 recebeu um novo WAV mono PCM16/24 kHz válido (8,00 s; RMS 1.060,4) e o hash do WAV não selecionado permaneceu idêntico. O projeto foi salvo/reaberto e as exportações WAV/MP4 foram validadas no mesmo smoke. A execução marcou `automatic_playback_started=false` tanto após a fila quanto após a regeneração.
+
+Reproduzir o teste em Windows com o ambiente Qwen local:
+
+```powershell
+$env:HF_HUB_OFFLINE = '1'
+$env:TRANSFORMERS_OFFLINE = '1'
+$env:QT_QPA_PLATFORM = 'offscreen'
+& "$env:LOCALAPPDATA\BFS\venv\Scripts\python.exe" `
+  scripts/validar_multivoice_ui_cache_real.py `
+  --confirm-own-or-authorized-voice --one-voice-lines 2 `
+  --verify-individual-regeneration --engine qwen3-tts-purec-int8
+```
+
+Esse ensaio comprova a regeneração isolada de uma fala no aplicativo, mas usa um único perfil vocal; não demonstra a alternância acústica entre pessoas diferentes. A geração e a regeneração foram observadas com os players da interface parados. O teste executou Qt offscreen, então não é uma avaliação auditiva por alto-falantes.
 
 Este resultado comprova a implementação local e a validação com uma voz. Não comprova três identidades vocais distintas: no inventário atual existe uma gravação/perfil autorizado. Também não foi executado um lote real de 100 falas com três locutores; a fila 70/20/10, parser de 1.000 falas, persistência e regeneração exclusiva da fala 047 continuam cobertos por testes automatizados de orquestração, incluindo verificação de hash dos 99 WAVs restantes. Para completar a validação de identidade, o computador precisa disponibilizar dois outros perfis com gravações independentes e autorizadas.
