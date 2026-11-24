@@ -29,6 +29,12 @@ downloads, os motores locais funcionam sem API, conforme seus módulos. A
 assistente local Qwen 1.7B, Parakeet e runtimes experimentais continuam
 opcionais e não são instalados por padrão.
 
+O pacote é montado com NSIS e usa somente o compressor zlib. O código e esse
+compressor são distribuídos sob licença zlib/libpng, que permite uso comercial;
+veja [a licença oficial do NSIS](https://nsis.sourceforge.io/License). Esta
+escolha evita a licença comercial exigida pelo Inno Setup para uso comercial
+do compilador.
+
 O caminho de instalação é `%LOCALAPPDATA%\BerofelStudio`; o ambiente Python e
 os modelos permanecem em `%LOCALAPPDATA%\BFS`. Desinstalar o editor não apaga
 automaticamente perfis de voz, modelos, caches, projetos ou mídias privados.
@@ -37,7 +43,7 @@ fazer cópias de segurança.
 
 ## Compilar localmente
 
-Requer Windows x64, Inno Setup 6, Git, a versão do projeto já registrada em
+Requer Windows x64, NSIS, Git, a versão do projeto já registrada em
 `berofel/__init__.py` e uma árvore Git limpa. No PowerShell, na raiz do repo:
 
 ```powershell
@@ -47,9 +53,9 @@ git commit -m "build: update Windows application icon"
 .\scripts\build_windows_installer.ps1
 ```
 
-O pacote vem de `git archive HEAD`, não inclui arquivos não rastreados,
-modelos, mídias, runtimes locais, `.git`, caches ou ambientes Python. O EXE e
-seu arquivo `.sha256` saem em `dist/`, diretório ignorado pelo Git.
+O pacote vem de `git archive HEAD`; a área temporária de build exclui modelos,
+mídias, runtimes locais, `.git`, caches, dados de teste e ambientes Python. O
+EXE e seu `.sha256` saem em `dist/`, diretório ignorado pelo Git.
 
 ## Publicar no GitHub
 

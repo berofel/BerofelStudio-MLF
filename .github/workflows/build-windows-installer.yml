@@ -3,6 +3,8 @@ name: Build Windows installer
 on:
   workflow_dispatch:
   push:
+    branches:
+      - 'fix/functional-ui-tts-clipper'
     tags:
       - 'v*'
 
@@ -18,13 +20,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Inno Setup 6
+      - name: Install NSIS
         shell: powershell
-        run: choco install innosetup --yes --no-progress
+        run: choco install nsis --yes --no-progress
 
       - name: Compile one-file bootstrap installer
         shell: powershell
-        run: .\scripts\build_windows_installer.ps1 -CompilerPath 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+        run: .\scripts\build_windows_installer.ps1 -CompilerPath 'C:\Program Files (x86)\NSIS\makensis.exe'
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -44,4 +46,4 @@ jobs:
         run: |
           $installer = Get-ChildItem dist -Filter 'BerofelStudio-*-Setup-x64.exe' | Select-Object -First 1
           if (-not $installer) { throw 'Installer não encontrado em dist.' }
-          gh release create $env:GITHUB_REF_NAME $installer.FullName ($installer.FullName + '.sha256') --verify-tag --title "BerofelStudio $env:GITHUB_REF_NAME" --generate-notes
+          gh release create $env:GITHUB_REF_NAME $installer.FullName ($installer.FullName + '.sha256') --verify-tag --prerelease --title "BerofelStudio $env:GITHUB_REF_NAME" --generate-notes
