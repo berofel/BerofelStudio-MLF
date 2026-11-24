@@ -58,7 +58,9 @@ def inspect_voice_reference(voice: str | Path) -> dict:
         rms=float(np.sqrt(np.mean(signal*signal)))
         rms_dbfs=20*np.log10(max(rms,1e-12))
         clipped=float(np.mean(np.abs(signal)>=.999))
-        silence=float(np.mean(np.abs(signal)<.005))
+        quiet=np.abs(signal)<.005
+        silence=float(np.mean(quiet))
+        audible_signal_seconds=float(np.count_nonzero(~quiet)/float(rate))
         warnings=[]
         if duration<3: warnings.append('Amostra curta; grave ao menos 3 segundos de fala contínua.')
         if duration>30: warnings.append('A preparação usa no máximo os primeiros 30 segundos.')
@@ -66,6 +68,7 @@ def inspect_voice_reference(voice: str | Path) -> dict:
         if clipped>.01: warnings.append('Há clipping perceptível; reduza o ganho e grave novamente se possível.')
         if silence>.50: warnings.append('Mais de 50% do trecho está quase silencioso; escolha uma fala mais contínua ou grave uma amostra com menos pausas.')
         return {'duration':duration,'sample_rate':int(rate),'rms_dbfs':float(rms_dbfs),
+                'audible_signal_seconds':audible_signal_seconds,
                 'peak_dbfs':float(20*np.log10(max(peak,1e-12))),
                 'clipped_fraction':clipped,'silence_fraction':silence,
                 'warnings':warnings}

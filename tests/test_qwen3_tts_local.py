@@ -345,6 +345,7 @@ class QwenLocalCloneTests(unittest.TestCase):
                 return_value=(str(normalized),None)):
                 report=audio_reference.inspect_voice_reference(source)
             self.assertAlmostEqual(report['duration'],3.0,places=2)
+            self.assertAlmostEqual(report['audible_signal_seconds'],3.0,delta=.05)
             self.assertGreater(report['rms_dbfs'],-15)
             self.assertEqual(source.read_bytes(),original)
 

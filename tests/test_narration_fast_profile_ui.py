@@ -163,5 +163,42 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             finally:
                 panel.close()
 
+    def test_clone_guidance_explains_purec_reference_limit_and_portuguese_dialect(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_clone_guidance_ui_') as folder:
+            sample=Path(folder)/'reference.wav';sample.write_bytes(b'RIFF'+b'a'*200)
+            report={'warnings':[],'duration':12.0,'sample_rate':24000,
+                    'rms_dbfs':-20.0,'peak_dbfs':-3.0,
+                    'silence_fraction':.35,'clipped_fraction':0.0,
+                    'audible_signal_seconds':9.6}
+            panel=NarrationPanel()
+            try:
+                with patch('berofel.services.audio_reference.inspect_voice_reference',
+                           return_value=report):
+                    panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+                    panel.sample_path.setText(str(sample))
+                    panel.language.setCurrentIndex(panel.language.findData('portuguese'))
+                    panel.reference_text.setText('transcrição literal da amostra')
+                    panel.clone_engine.setCurrentIndex(
+                        panel.clone_engine.findData('qwen3-tts-purec-int8'))
+                    panel._update_custom()
+                    purec_note=panel.license_note.text()
+                    self.assertIn('não envia a transcrição',purec_note)
+                    self.assertIn('não oferece um seletor separado de sotaque',purec_note)
+                    self.assertIn('Original Qwen3-TTS Base',purec_note)
+                    self.assertIn('9.6 s com sinal acima do piso de silêncio',purec_note)
+                    panel.reference_text.setText('uma transcrição nova')
+                    self.assertIn('não envia a transcrição',panel.license_note.text())
+                    self.assertEqual(panel.license_note.text().count(
+                        'PT-BR usa o idioma Português'),1)
+
+                    panel.clone_engine.setCurrentIndex(
+                        panel.clone_engine.findData('qwen3-tts-local'))
+                    original_note=panel.license_note.text()
+                    self.assertIn('envia o áudio e a transcrição literal',original_note)
+                    self.assertNotIn('não envia a transcrição',original_note)
+                    self.assertEqual(original_note.count('PT-BR usa o idioma Português'),1)
+            finally:
+                panel.close()
+
 
 if __name__=='__main__':unittest.main()

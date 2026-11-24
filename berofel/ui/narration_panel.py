@@ -28,6 +28,7 @@ class NarrationPanel(QScrollArea):
         self.on_prepare_voice = None
         self.last_audio = ''
         self.audio_history=[]
+        self._voice_reference_quality_cache={}
         self.setWidgetResizable(True)
         self.setVerticalScrollBarPolicy(self.verticalScrollBarPolicy())
         self.setHorizontalScrollBarPolicy(self.horizontalScrollBarPolicy())
@@ -161,7 +162,7 @@ class NarrationPanel(QScrollArea):
         layout.addWidget(self.purec_thread_label)
         layout.addWidget(self.purec_threads)
         self.reference_text = QLineEdit()
-        self.reference_text.setPlaceholderText('Transcrição exata do que é falado na gravação (recomendado)')
+        self.reference_text.setPlaceholderText('Transcrição exata da referência — necessária para a clonagem detalhada no Original')
         layout.addWidget(self.reference_text)
         self.install_qwen = QPushButton('⬇ Preparar Qwen3 local (download explícito)')
         self.install_qwen.clicked.connect(self._install_qwen)
@@ -391,6 +392,9 @@ class NarrationPanel(QScrollArea):
         self.clone_engine.currentIndexChanged.connect(self._schedule_preferences_save)
         self.purec_threads.currentIndexChanged.connect(self._schedule_preferences_save)
         self.reference_text.textChanged.connect(self._schedule_preferences_save)
+        self.reference_text.textChanged.connect(self._refresh_clone_guidance)
+        self.sample_path.textChanged.connect(self._refresh_clone_guidance)
+        self.language.currentIndexChanged.connect(self._refresh_clone_guidance)
         from berofel.services.qwen3_tts_local import is_ready as qwen_local_ready
         if qwen_local_ready():
             self.qwen_status.setText('Qwen3-TTS local pronto. As referências e gerações ficam no PC.')
@@ -801,6 +805,44 @@ class NarrationPanel(QScrollArea):
                 self.license_note.setText('Importe uma referência de voz autorizada para gerar com Qwen3-TTS Base.')
         else:
             self.license_note.setText('Qwen3-TTS Base usa áudio de referência e sua transcrição para clonagem local. A amostra não sai deste computador.')
+        self._clone_engine_note=self.license_note.text()
+        self._refresh_clone_guidance(engine)
+
+    def _refresh_clone_guidance(self,*args):
+        """Keep the selected clone path and its real limitations visible in the UI."""
+        if not hasattr(self,'license_note'):
+            return
+        engine=self.clone_engine.currentData()
+        base=getattr(self,'_clone_engine_note',self.license_note.text())
+        notes=[]
+        if self.language.currentData()=='portuguese':
+            notes.append('PT-BR usa o idioma Português aceito pelo modelo. O Qwen3 Base não oferece um seletor separado de sotaque brasileiro/português; o sotaque vem principalmente da gravação de referência.')
+        if engine in ('qwen3-tts-purec-int8','qwen3-tts-purec-mixed',
+                      'qwen3-tts-native-q4','qwen3-tts-native-q4-balanced'):
+            notes.append('Este backend rápido condiciona a voz pelo x-vector e não envia a transcrição da referência. Para maximizar a clonagem e a pronúncia regional, escolha “Original Qwen3-TTS Base” e preencha a transcrição exata.')
+        elif not self.reference_text.text().strip():
+            notes.append('A transcrição da referência está vazia: o Original também cairá no modo x-vector-only. Preencha o texto exato para o Qwen usar áudio e transcrição juntos.')
+        else:
+            notes.append('Original Qwen3-TTS Base envia o áudio e a transcrição literal da referência juntos (clonagem por contexto), preservando melhor a pronúncia e o estilo da amostra.')
+        path=self.sample_path.text().strip()
+        if path and Path(path).is_file():
+            try:
+                stat=Path(path).stat()
+                key=(str(Path(path).resolve()),stat.st_size,stat.st_mtime_ns)
+                report=self._voice_reference_quality_cache.get(key)
+                if report is None:
+                    from berofel.services.audio_reference import inspect_voice_reference
+                    report=inspect_voice_reference(path)
+                    self._voice_reference_quality_cache={key:report}
+                if (report.get('warnings') or
+                        float(report.get('silence_fraction',0))>=.30):
+                    notes.append('A referência pode reduzir a semelhança: '+
+                        f'{report.get("audible_signal_seconds",0):.1f} s com sinal acima do piso de silêncio, '
+                        f'{report.get("silence_fraction",0):.0%} quase silencioso. Grave fala contínua, limpa e no sotaque desejado; 10–20 s são uma boa referência prática.')
+            except (OSError,ValueError,RuntimeError):
+                pass
+        text=base+('\n\n'+'\n'.join(notes) if notes else '')
+        self.license_note.setText(text)
 
     def _choose_sample(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -823,8 +865,9 @@ class NarrationPanel(QScrollArea):
         if report['warnings']:
             details='\n'.join('• '+warning for warning in report['warnings'])
             QMessageBox.warning(self,'Amostra pode prejudicar a clonagem',
-                f'Trecho quase silencioso: {report["silence_fraction"]:.0%}.\n'
-                f'As condições detectadas podem reduzir a clareza ou a semelhança vocal.\n\n'
+                f'{report.get("audible_signal_seconds",0):.1f} s com sinal acima do piso de silêncio; '
+                f'trecho quase silencioso: {report["silence_fraction"]:.0%}.\n'
+                f'Essas condições podem reduzir a clareza ou a semelhança vocal. Para uma clonagem mais estável, grave 10–20 s de fala contínua, limpa e no sotaque desejado.\n\n'
                 f'{details}\n\nA gravação original será preservada; você pode escolher outra amostra.')
 
     def _validate_voice_sample(self):
@@ -839,6 +882,7 @@ class NarrationPanel(QScrollArea):
             QMessageBox.warning(self,'Gravação de referência',str(exc))
             return
         lines=[f'Duração analisada: {report["duration"]:.2f} s',
+               f'Sinal acima do piso de silêncio: {report.get("audible_signal_seconds",0):.2f} s',
                f'Taxa: {report["sample_rate"]} Hz mono',
                f'Nível RMS: {report["rms_dbfs"]:.1f} dBFS',
                f'Pico: {report["peak_dbfs"]:.1f} dBFS',
