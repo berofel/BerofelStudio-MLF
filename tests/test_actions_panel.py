@@ -114,6 +114,102 @@ class ActionsUITests(unittest.TestCase):
                          'Foco no controle não deve habilitar alteração pela roda.')
         area.close()
 
+    def test_timeline_context_menu_selects_clicked_clip_and_keeps_stable_multiselection(self):
+        from berofel.ui import timeline as timeline_module
+        win=MainWindow()
+        project=Project()
+        track=project.tracks[0].id
+        first=project.add_clip(Clip('first.mp4',0,2,track_id=track,timeline_start=0))
+        second=project.add_clip(Clip('second.mp4',0,2,track_id=track,timeline_start=2))
+        third=project.add_clip(Clip('third.mp4',0,2,track_id=track,timeline_start=4))
+        win.project=project;win.refresh([first.id])
+        view=win.timeline.view
+
+        class MenuAction:
+            def __init__(self,text):self._text=text
+            def text(self):return self._text
+        class FakeMenu:
+            callback=None
+            def __init__(self,*_args):self._actions=[]
+            def addAction(self,text):
+                action=MenuAction(text);self._actions.append(action);return action
+            def addSeparator(self):pass
+            def exec(self,_position):
+                return self.callback(self) if self.callback else None
+            def actions(self):return list(self._actions)
+        class ContextEvent:
+            def __init__(self,point):self._point=point;self.accepted=False
+            def pos(self):return self._point
+            def globalPos(self):return view.mapToGlobal(self._point)
+            def accept(self):self.accepted=True
+        def event_for(clip):
+            item=view.items_by_id[clip.id]
+            point=view.mapFromScene(item.mapToScene(item.rect().center()))
+            return ContextEvent(point)
+
+        try:
+            # An unselected right-click first selects that clip.
+            with patch.object(timeline_module,'QMenu',FakeMenu):
+                win.selected_ids=[first.id];view.rebuild([first.id])
+                event=event_for(second);view.contextMenuEvent(event)
+                self.assertEqual(win.selected_ids,[second.id])
+                self.assertTrue(event.accepted)
+
+                # Right-click on one selected member preserves the whole set.
+                view.rebuild([first.id,second.id])
+                event=event_for(second);view.contextMenuEvent(event)
+                self.assertEqual(set(win.selected_ids),{first.id,second.id})
+
+                # The action receives the immutable selection captured before
+                # opening the menu, even if a refresh changes the live selection.
+                view.rebuild([first.id,second.id])
+                def change_live_selection(menu):
+                    view.rebuild([third.id])
+                    return next(action for action in menu.actions()
+                                if action.text()=='Agrupar clipes selecionados')
+                FakeMenu.callback=staticmethod(change_live_selection)
+                event=event_for(first);view.contextMenuEvent(event)
+                self.assertEqual(project.clip(first.id).group_id,
+                                 project.clip(second.id).group_id)
+                self.assertTrue(project.clip(first.id).group_id)
+                self.assertEqual(project.clip(third.id).group_id,'')
+                self.assertEqual(set(win.selected_ids),{first.id,second.id})
+        finally:
+            win.close()
+
+    def test_generated_wav_can_be_added_from_library_without_running_tts(self):
+        import wave
+        win=MainWindow()
+        project=Project()
+        win.project=project
+        with tempfile.TemporaryDirectory() as folder:
+            wav_path=Path(folder)/'narracao_pronta.wav'
+            with wave.open(str(wav_path),'wb') as wav:
+                wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000)
+                wav.writeframes(b'\0\0'*16000)
+            win.narration_panel.set_result(str(wav_path),1.0,False,'qwen3-tts-local',title='Voz pronta')
+            win._register_narration_media(str(wav_path))
+            self.assertIn(str(wav_path.resolve()),project.media)
+            self.assertEqual(win.library.media_list.count(),1)
+            self.assertTrue(win.narration_panel.add_last.isEnabled())
+            callback=MagicMock()
+            win.narration_panel.on_add_last_to_timeline=callback
+            win.narration_panel.add_last.click()
+            callback.assert_called_once_with(str(wav_path),1.0,'Voz pronta')
+            win.narration_panel.on_add_last_to_timeline=win.add_last_narration_to_timeline
+            win.narration_panel.add_last.click()
+            self.assertEqual(len(project.clips),1)
+            self.assertEqual(project.clips[0].source,str(wav_path.resolve()))
+            self.assertEqual(len(project.media),1)
+            self.assertEqual(win.library.media_list.count(),1)
+            self.assertFalse(win.narration_panel._player.playbackState().value)
+            project_file=Path(folder)/'narracao.bfsproj'
+            project.save(str(project_file))
+            reopened=Project.load(str(project_file))
+            self.assertIn(str(wav_path.resolve()),reopened.media)
+            self.assertEqual(reopened.clips[0].source,str(wav_path.resolve()))
+        win.close()
+
     def test_timecode_and_scope_ui(self):
         self.assertEqual(parse_timecode('01:02:03.500'),3723.5)
         self.assertEqual(parse_timecode('00:12.5'),12.5)

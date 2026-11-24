@@ -287,7 +287,7 @@ class TimelineView(QGraphicsView):
     media_dropped = Signal(str,str,float)
     mode_changed = Signal(bool)
     play_toggle_requested = Signal()
-    context_action_requested = Signal(str,str)
+    context_action_requested = Signal(str,object)
     batch_move_requested = Signal(object)
     volume_keyframe_changed = Signal(str,float,float,float)
     volume_keyframe_delete_requested = Signal(str,float)
@@ -723,6 +723,19 @@ class TimelineView(QGraphicsView):
         item=self._clip_at(point)
         menu=QMenu(self)
         if item:
+            # Right-click establishes an explicit target before the menu opens.
+            # Clicking an already-selected clip keeps the whole multiselection.
+            selected_before=tuple(self.selected_ids())
+            if item.clip_id not in selected_before:
+                for selected_id in selected_before:
+                    selected_item=self.items_by_id.get(selected_id)
+                    if selected_item is not None:
+                        selected_item.setSelected(False)
+                item.setSelected(True)
+            context_target={
+                'clip_id':str(item.clip_id),
+                'selected_ids':tuple(self.selected_ids()),
+            }
             keyframe_at=None
             clip=self.project.clip(item.clip_id) if self.project else None
             if clip:
@@ -781,13 +794,13 @@ class TimelineView(QGraphicsView):
             action=next((name for name,act in actions.items() if act==chosen),None)
             if action:
                 if action=='split':self.split_requested.emit(item.clip_id,point.x()/self.pps)
-                else:self.context_action_requested.emit(action,item.clip_id)
+                else:self.context_action_requested.emit(action,context_target)
         else:
             add=menu.addAction('Adicionar marcador aqui [M]')
             chosen=menu.exec(event.globalPos())
             if chosen==add:
                 self.set_cursor(max(0,point.x()/self.pps))
-                self.context_action_requested.emit('marker','')
+                self.context_action_requested.emit('marker',{'clip_id':'','selected_ids':()})
         event.accept()
 
     def wheelEvent(self,event):
@@ -950,7 +963,7 @@ class TimelineWidget(QWidget):
     mode_changed = Signal(bool)
     play_toggle_requested = Signal()
     track_change_requested = Signal(str,str)
-    context_action_requested = Signal(str,str)
+    context_action_requested = Signal(str,object)
     batch_move_requested = Signal(object)
     volume_keyframe_changed = Signal(str,float,float,float)
     volume_keyframe_delete_requested = Signal(str,float)

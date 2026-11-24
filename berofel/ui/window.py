@@ -858,6 +858,7 @@ class MainWindow(QMainWindow):
         self.side_tabs.addTab(self.props_scroll, 'Propriedades')
         self.narration_panel=NarrationPanel(self)
         self.narration_panel.on_generate=self.generate_narration_ui
+        self.narration_panel.on_add_last_to_timeline=self.add_last_narration_to_timeline
         self.narration_panel.multivoice_panel.on_generate=self.generate_multivoice_ui
         self.narration_panel.multivoice_panel.on_regenerate=self.regenerate_multivoice_line
         self.narration_panel.multivoice_panel.on_script_changed=self.update_multivoice_script
@@ -1402,22 +1403,10 @@ class MainWindow(QMainWindow):
             path=result['path']
             duration=result['duration']
             self.narration_panel.set_result(path,duration,result['cache_hit'],
-                result.get('engine',''),result.get('threads'))
+                result.get('engine',''),result.get('threads'),result.get('title',''))
+            self._register_narration_media(path)
             if add_to_timeline:
-                self.snapshot()
-                narration_track=next((t for t in self.project.tracks if t.name=='Narração' and not t.locked),None)
-                if narration_track is None:
-                    narration_track=self.project.add_track('Narração',0)
-                self.active_track_id=narration_track.id
-                clip=Clip(source=path,start=0,end=duration,title=result['title'],
-                          track_id=narration_track.id,timeline_start=position,
-                          kind='audio',include_audio=True,source_length=duration)
-                self.project.add_clip(clip)
-                if path not in self.project.media:
-                    self.project.media.append(path)
-                self.refresh([clip.id])
-                self.open_narration()
-                self.statusBar().showMessage(f'Narração adicionada à timeline ({duration:.1f}s).')
+                self.add_last_narration_to_timeline(path,duration,result['title'],position)
             else:
                 self.statusBar().showMessage('Narração WAV salva. Clique em Ouvir para conferir.')
         task=self._task(generate_narration,ready,request,label=f'{engine_label} · narração')
@@ -1429,6 +1418,62 @@ class MainWindow(QMainWindow):
             self._ai_busy=False
             self.narration_panel.busy(False)
         task.signals.finished.connect(finish)
+
+    def _refresh_media_library(self):
+        """Refresh visible media references without stopping the transport."""
+        if not hasattr(self,'library'):
+            return
+        library=[];seen=set()
+        for source in [*self.project.media,*(clip.source for clip in self.project.clips if clip.source)]:
+            key=str(Path(source).resolve()).casefold()
+            if key not in seen:
+                seen.add(key);library.append(source)
+        self.library.set_media(library)
+
+    def _register_narration_media(self,path):
+        """Keep a completed WAV in the project's media bin, even before insertion."""
+        source=str(Path(path).resolve())
+        if not any(str(Path(item).resolve()).casefold()==source.casefold()
+                   for item in self.project.media):
+            self.project.media.append(source)
+        self._refresh_media_library()
+        return source
+
+    def add_last_narration_to_timeline(self,path,duration,title=None,position=None):
+        """Insert an existing generated WAV; this path never invokes the TTS engine."""
+        source=Path(str(path))
+        if not source.is_file():
+            QMessageBox.warning(self,'Adicionar narração','O WAV da última narração não está disponível.')
+            return
+        try:
+            duration=float(duration)
+        except (TypeError,ValueError):
+            duration=0.0
+        if duration<=0:
+            import wave
+            try:
+                with wave.open(str(source),'rb') as wav:
+                    duration=wav.getnframes()/max(1,wav.getframerate())
+            except (OSError,wave.Error):
+                QMessageBox.warning(self,'Adicionar narração','Não foi possível ler a duração do WAV.')
+                return
+        if position is None:
+            position=max(0.0,float(self.timeline.view.cursor_time))
+        self.snapshot()
+        narration_track=next((track for track in self.project.tracks
+                              if track.name=='Narração' and not track.locked),None)
+        if narration_track is None:
+            narration_track=self.project.add_track('Narração',0)
+        self.active_track_id=narration_track.id
+        source_path=str(source.resolve())
+        clip=Clip(source=source_path,start=0,end=duration,title=title or source.stem,
+                  track_id=narration_track.id,timeline_start=float(position),
+                  kind='audio',include_audio=True,source_length=duration)
+        self.project.add_clip(clip)
+        self._register_narration_media(source_path)
+        self.refresh([clip.id])
+        self.open_narration()
+        self.statusBar().showMessage(f'Narração existente adicionada à timeline ({duration:.1f}s); nenhuma nova síntese foi executada.')
 
     def generate_multivoice_ui(self, script):
         """Queue one script serially by voice and place its WAVs in narrative order."""
@@ -3248,14 +3293,26 @@ class MainWindow(QMainWindow):
     def fit_timeline(self):
         self.timeline.view.zoom_to_fit()
 
-    def timeline_context_action(self,action,clip_id):
+    def timeline_context_action(self,action,target):
         if action=='marker':self.add_marker();return
+        if isinstance(target,dict):
+            clip_id=str(target.get('clip_id') or '')
+            requested=tuple(str(cid) for cid in target.get('selected_ids',()))
+        else:
+            # Compatibility for actions triggered by older integrations/tests.
+            clip_id=str(target or '')
+            requested=(clip_id,) if clip_id else ()
         c=self.project.clip(clip_id)
         if not c:return
-        if action not in ('group','ungroup'):
-            self.selected_ids=[clip_id]
-            if action in ('ripple',) and c.group_id:
-                self.selected_ids=[x.id for x in self.project.clips if x.group_id==c.group_id]
+        multi_actions={'copy','group','ungroup','ripple','slip','transition'}
+        selected=[cid for cid in requested if self.project.clip(cid)]
+        self.selected_ids=(selected if action in multi_actions and clip_id in selected
+                            else [clip_id])
+        if action=='ripple':
+            groups={clip.group_id for clip in (self.project.clip(cid) for cid in self.selected_ids)
+                    if clip and clip.group_id}
+            self.selected_ids=list(dict.fromkeys(self.selected_ids+[member.id
+                for member in self.project.clips if member.group_id in groups]))
         if action=='ripple':self.ripple_delete_selected()
         elif action=='slip':self.slip_selected()
         elif action=='copy':self.copy_selected_clips()

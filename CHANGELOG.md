@@ -1,5 +1,12 @@
 # Limpeza automática modular local
 
+## Revisão global em andamento — 23/11/2026
+
+- Corrigido o clique direito na timeline: seleciona o clipe alvo, preserva multisseleção quando apropriado e captura IDs estáveis para o menu de contexto.
+- WAVs de narração concluídos passam a ser registrados na biblioteca mesmo quando a geração não insere o áudio imediatamente na timeline.
+- Adicionado comando para inserir a última narração já gerada; reutiliza o WAV e não reinicia a síntese nem a reprodução.
+- Validação Qt direcionada: 81 testes do painel/timeline passaram; suíte completa: 458 passaram, 5 ignorados, sem falhas (63,1 s). Um teste imprimiu uso esperado do parser de benchmark ao validar argumento inválido.
+
 ## Motor contextual Python V3 — 23/11/2026
 
 - Integrados ao motor existente comandos falados de regravação e busca reversa de tentativas; os comandos servem como âncora e não são incluídos nos cortes sugeridos.

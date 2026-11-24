@@ -23,6 +23,7 @@ class NarrationPanel(QScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.on_generate = None
+        self.on_add_last_to_timeline = None
         self.on_use_transcript = None
         self.on_prepare_voice = None
         self.last_audio = ''
@@ -328,6 +329,10 @@ class NarrationPanel(QScrollArea):
         self.generate_file = QPushButton('♬ Gerar só o WAV')
         self.generate_file.clicked.connect(lambda: self._generate(False))
         layout.addWidget(self.generate_file)
+        self.add_last = QPushButton('＋ Adicionar última narração à timeline')
+        self.add_last.setEnabled(False)
+        self.add_last.clicked.connect(self._add_last_to_timeline)
+        layout.addWidget(self.add_last)
         self.listen = QPushButton('♫ Ouvir última narração')
         self.listen.setEnabled(False)
         self.listen.clicked.connect(self._listen)
@@ -343,6 +348,7 @@ class NarrationPanel(QScrollArea):
             (self.install_qwen,'⬇ Preparar Qwen3 local','⬇ Preparar Qwen3'),
             (self.insert,'▶ Gerar e adicionar na timeline','▶ Gerar na timeline'),
             (self.generate_file,'♬ Gerar somente o WAV','♬ Gerar WAV'),
+            (self.add_last,'＋ Adicionar última narração à timeline','＋ Adicionar WAV'),
             (self.listen,'♫ Ouvir a última narração','♫ Ouvir narração'),
             (self.listen_previous,'♫ Ouvir geração anterior','♫ Ouvir anterior'),
         ])
@@ -1062,8 +1068,10 @@ class NarrationPanel(QScrollArea):
             self.status.setText('Qwen3-TTS em processo local isolado; o modelo é reutilizado durante esta sessão.')
 
     def set_result(self, path: str, duration: float, cache_hit: bool, engine: str='',
-                   threads: int | None = None):
+                   threads: int | None = None, title: str=''):
         self.last_audio = path
+        self.last_duration = float(duration)
+        self.last_title = str(title or Path(path).stem)
         mode={'qwen3-tts-local':'Original','qwen3-tts-native-q4':'Turbo · Q4 · 6 threads',
               'qwen3-tts-native-q4-balanced':'Equilibrado · Q4 · 8 threads',
               'qwen3-tts-purec-mixed':f'Turbo · Pure C mixed · {threads or self.purec_threads.currentData()} threads (experimental)',
@@ -1073,9 +1081,15 @@ class NarrationPanel(QScrollArea):
             self.audio_history=self.audio_history[-8:]
         self.listen_previous.setEnabled(len(self.audio_history)>1)
         self.listen.setEnabled(True)
+        self.add_last.setEnabled(True)
         self.status.setText(f'WAV pronto · {mode} ({duration:.1f}s). ' +
                             ('Reaproveitado do cache.' if cache_hit else 'Salvo no cache.') +
                             '\n' + str(Path(path)))
+
+    def _add_last_to_timeline(self):
+        if self.last_audio and Path(self.last_audio).is_file() and self.on_add_last_to_timeline:
+            self.on_add_last_to_timeline(self.last_audio, getattr(self,'last_duration',0.0),
+                                         getattr(self,'last_title',Path(self.last_audio).stem))
 
     def _listen(self):
         if self.last_audio and Path(self.last_audio).is_file():
