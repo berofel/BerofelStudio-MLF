@@ -1,3 +1,11 @@
+# Preparação do instalador Windows único — 24/11/2026
+
+- Fonte do ícone segue o vetor existente `berofel_studio_mark.svg`, igual ao símbolo da referência do usuário; adicionado ícone Windows multi-resolução, ícone da janela Qt e atalhos de desktop/Menu Iniciar no instalador.
+- Criado instalador Inno Setup por usuário, bootstrap idempotente do editor, dependências fixadas, FFmpeg validado por SHA-256 e tarefas para modelos locais Whisper Base/Silero e Qwen3-TTS Base.
+- Criado workflow GitHub para compilar no Windows, publicar EXE+SHA-256 em Releases via tag e anexar artefato em execução manual.
+- Limite documentado: o EXE baixa Python, bibliotecas e modelos na instalação; não é offline. Qwen 0.6B (~2,5 GB) e modelos privados não entram em Git/GitHub.
+- A compilação Inno Setup e a instalação em uma máquina Windows limpa ainda precisam ser executadas antes de publicar uma Release. O workflow está preparado, mas nenhum instalador foi publicado nesta etapa.
+
 # Limpeza automática modular local
 
 ## Correções funcionais e acessibilidade de ferramentas — 24/11/2026

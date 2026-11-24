@@ -1,5 +1,11 @@
 # BerofelStudio bootstrap for clean Windows 10/11 x64.
 # Installs the fully functional editor core. IA is optional.
+param(
+    [switch]$InstallWhisperBase,
+    [switch]$InstallQwen3,
+    [switch]$SkipQwenPrompt
+)
+
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -144,12 +150,25 @@ try {
     Step '5/7 - FFmpeg e FFprobe (progresso e fonte alternativa)'
     & (Join-Path $PSScriptRoot 'instalar_ffmpeg.ps1') -ProjectRoot $root
 
-    Step '6/8 - Autoteste do motor FFmpeg (dois videos + audio)'
+    Step '6/9 - Autoteste do motor FFmpeg (dois videos + audio)'
     Run-Python @((Join-Path $root 'scripts\diagnostico_motor.py'))
 
-    Step '7/8 - Qwen3-TTS Base 0.6B (motor único de voz, ambiente isolado)'
-    $installQwen3 = Read-Host 'Preparar Qwen3-TTS Base local agora? Sao baixados aprox. 2,5 GB [s/N]'
-    if ($installQwen3 -match '^(s|sim|y|yes)$') {
+    if ($InstallWhisperBase) {
+        Step '7/9 - Faster-Whisper Base, Silero e dicionário pt-BR offline'
+        $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'instalar_ia.ps1')
+        if ($LASTEXITCODE -ne 0) { throw 'A instalação de Faster-Whisper/Silero falhou. Consulte o log próprio.' }
+    } else {
+        Write-Host 'Modelo de transcrição offline adiado. O editor principal permanece instalado.' -ForegroundColor Yellow
+    }
+
+    Step '8/9 - Qwen3-TTS Base 0.6B (motor único de voz, ambiente isolado)'
+    $prepareQwen3 = [bool]$InstallQwen3
+    if (-not $prepareQwen3 -and -not $SkipQwenPrompt) {
+        $answer = Read-Host 'Preparar Qwen3-TTS Base local agora? Sao baixados aprox. 2,5 GB [s/N]'
+        $prepareQwen3 = $answer -match '^(s|sim|y|yes)$'
+    }
+    if ($prepareQwen3) {
         $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
         & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'instalar_qwen3_tts_local.ps1')
         if ($LASTEXITCODE -ne 0) { throw 'A instalacao local do Qwen3-TTS falhou. Consulte o log proprio do Qwen3.' }
@@ -157,7 +176,7 @@ try {
         Write-Host 'Qwen3-TTS foi adiado. Use Narração > Preparar Qwen3 local quando desejar.' -ForegroundColor Yellow
     }
 
-    Step '8/8 - Verificacao final da instalacao principal'
+    Step '9/9 - Verificacao final da instalacao principal'
     Run-Python @((Join-Path $root 'scripts\verificar.py'),'--strict','--quick','--editor-only')
     $env:BEROFEL_APP_ROOT = $root
     $versionCode = 'import os,sys;sys.path.insert(0,os.environ["BEROFEL_APP_ROOT"]);from berofel import __version__;print(__version__)'

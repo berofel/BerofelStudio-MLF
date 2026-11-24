@@ -68,6 +68,14 @@ Cada botão executa apenas o necessário:
 
 ## Instalação em Windows 10/11 x64
 
+Para uma instalação de um clique, use `BerofelStudio-<versão>-Setup-x64.exe`
+na seção **Releases** do GitHub quando houver uma versão publicada. O instalador
+prepara Python, bibliotecas, FFmpeg e atalhos; por padrão oferece Faster-Whisper
+Base/Silero e Qwen3-TTS Base, baixados das fontes oficiais durante a instalação.
+O Qwen de voz exige cerca de 2,5 GB e internet. O instalador não é offline e
+pesos/modelos não são redistribuídos dentro do EXE. Consulte
+[`installer/README.md`](installer/README.md) para conteúdo, limites e build.
+
 1. Extraia em `C:\BerofelStudio` (ou pasta curta equivalente).
 2. Execute **`instalar_dependencias.bat`** para preparar o ambiente do editor.
 3. Execute **`INSTALAR_QWEN3_TTS_LOCAL.bat`** para preparar o único modelo de narração/clonagem e, quando desejar, **`INSTALAR_TODAS_AS_IAS.bat`** para Whisper/Silero e Qwen de análise.
