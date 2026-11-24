@@ -187,6 +187,14 @@ class NarrationPanel(QScrollArea):
         self.reference_text.setPlaceholderText('Transcrição exata do trecho escolhido — confira o horário em Verificar gravação')
         self.reference_text.setToolTip('A gravação completa é varrida e o Qwen usa uma janela curta. No Original, o texto precisa corresponder exatamente ao áudio dessa janela, não à transcrição do arquivo inteiro.')
         layout.addWidget(self.reference_text)
+        self.reference_text_reviewed=QCheckBox(
+            'Conferi que a transcrição corresponde à janela vocal selecionada')
+        self.reference_text_reviewed.setToolTip(
+            'O Qwen usa o áudio e este texto juntos para clonar a voz. Revise o rascunho '
+            'local, confira o intervalo informado e marque esta opção somente quando '
+            'o texto corresponder ao trecho falado.')
+        self.reference_text_reviewed.setVisible(False)
+        layout.addWidget(self.reference_text_reviewed)
         self.transcribe_reference=QPushButton('Transcrever referência (Whisper local)')
         self.transcribe_reference.setToolTip(
             'Transcreve a janela vocal selecionada com o Faster-Whisper local. '
@@ -426,6 +434,9 @@ class NarrationPanel(QScrollArea):
         self.purec_threads.currentIndexChanged.connect(self._schedule_preferences_save)
         self.reference_text.textChanged.connect(self._schedule_preferences_save)
         self.reference_text.textChanged.connect(self._refresh_clone_guidance)
+        self.reference_text.textChanged.connect(self._reference_text_edited)
+        self.reference_text_reviewed.toggled.connect(self._refresh_clone_guidance)
+        self.sample_path.textChanged.connect(self._reference_audio_changed)
         self.sample_path.textChanged.connect(self._refresh_clone_guidance)
         self.language.currentIndexChanged.connect(self._refresh_clone_guidance)
         from berofel.services.qwen3_tts_local import is_ready as qwen_local_ready
@@ -726,6 +737,9 @@ class NarrationPanel(QScrollArea):
         if thread_index<0:thread_index=self.purec_threads.findData(6)
         if thread_index>=0:self.purec_threads.setCurrentIndex(thread_index)
         self.reference_text.setText(str(settings.value('narration/reference_text','')))
+        # An unprofiled reference has no durable proof that this transcript was
+        # checked against the selected audio. Require confirmation per session.
+        self.reference_text_reviewed.setChecked(False)
         self.text.setPlainText(str(settings.value('narration/draft','')))
         self.name.setText(str(settings.value('narration/title','Narração')))
         self.quantize.setChecked(bool(settings.value('narration/quantize',False,type=bool)))
@@ -787,6 +801,8 @@ class NarrationPanel(QScrollArea):
                 profile=self.voice_profiles.get(profile_id)
                 self.sample_path.setText(profile['sample_path'])
                 self.reference_text.setText(profile.get('reference_text',''))
+                self.reference_text_reviewed.setChecked(
+                    bool(profile.get('reference_text_reviewed', False)))
                 language_index=self.language.findData(profile.get('language','portuguese'))
                 if language_index>=0:self.language.setCurrentIndex(language_index)
                 self.authorized.setChecked(bool(profile.get('authorized',False)))
@@ -799,6 +815,7 @@ class NarrationPanel(QScrollArea):
                 self.authorized.setChecked(False)
                 self.authorized.setEnabled(True)
         else:
+            self.reference_text_reviewed.setChecked(False)
             self.authorized.setChecked(False)
             self.authorized.setEnabled(True)
         self.sample_path.setVisible(custom)
@@ -819,6 +836,9 @@ class NarrationPanel(QScrollArea):
         self.purec_thread_label.setVisible(use_thread_choice)
         self.purec_threads.setVisible(use_thread_choice)
         self.reference_text.setVisible(qwen)
+        self.reference_text_reviewed.setVisible(
+            qwen and self.language.currentData()=='portuguese' and
+            engine=='qwen3-tts-local')
         self.transcribe_reference.setVisible(qwen and self.language.currentData()=='portuguese')
         self.update_voice_reference.setVisible(bool(profile_id) and qwen)
         self.install_qwen.setVisible(qwen and engine=='qwen3-tts-local')
@@ -857,6 +877,8 @@ class NarrationPanel(QScrollArea):
             notes.append('A transcrição da referência está vazia. Em PT-BR, a geração fica bloqueada até o Qwen usar áudio e transcrição juntos. Clique em “Transcrever referência” e revise o texto.')
         else:
             notes.append('Original Qwen3-TTS Base envia o áudio e a transcrição literal da referência juntos (clonagem por contexto), preservando melhor a pronúncia e o estilo da amostra.')
+            if not self.reference_text_reviewed.isChecked():
+                notes.append('Confira o rascunho/transcrição exata da janela vocal e marque a confirmação antes de gerar; um erro no texto pode prejudicar a clonagem.')
         if self.sample_path.text().strip():
             notes.append('A gravação será varrida por inteiro para localizar o trecho usado na clonagem; o modelo recebe somente uma janela curta.')
         text=base+('\n\n'+'\n'.join(notes) if notes else '')
@@ -1023,8 +1045,16 @@ class NarrationPanel(QScrollArea):
                     'qwen3-tts-purec-mixed','qwen3-tts-purec-int8'):
                 QMessageBox.warning(self,'Perfil de voz','Informe a transcrição exata da gravação para ativar a clonagem Qwen3 com referência textual.')
                 return
+            reviewed=(self.language.currentData()!='portuguese' or
+                      self.clone_engine.currentData()!='qwen3-tts-local' or
+                      self.reference_text_reviewed.isChecked())
+            if not reviewed:
+                QMessageBox.warning(self,'Revisar transcrição',
+                    'Confira a transcrição da janela vocal e marque a confirmação antes de salvar este perfil PT-BR para clonagem detalhada.')
+                return
             profile=self.voice_profiles.create(name,source,self.language.currentData() or 'portuguese',
-                                               reference_text,authorized=True)
+                                               reference_text,authorized=True,
+                                               reference_text_reviewed=reviewed)
             data=f'voice-profile:{profile["id"]}'
             self._append_voice_profile_items(data)
             self.multivoice_panel.refresh_profiles()
@@ -1038,10 +1068,23 @@ class NarrationPanel(QScrollArea):
     def _update_voice_reference_text(self):
         profile_id=self._voice_profile_id(self.voice.currentData())
         if not profile_id:return
+        if (self.language.currentData()=='portuguese' and
+                self.clone_engine.currentData()=='qwen3-tts-local' and
+                not self.reference_text_reviewed.isChecked()):
+            QMessageBox.warning(self,'Revisar transcrição',
+                'Confira a transcrição da janela vocal e marque a confirmação antes de salvá-la no perfil.')
+            return
         try:
             profile=self.voice_profiles.update_reference_text(
-                profile_id,self.reference_text.text())
-            self.reference_text.setText(profile['reference_text'])
+                profile_id,self.reference_text.text(),
+                reviewed=self.reference_text_reviewed.isChecked())
+            signals_were_blocked=self.reference_text.blockSignals(True)
+            try:
+                self.reference_text.setText(profile['reference_text'])
+            finally:
+                self.reference_text.blockSignals(signals_were_blocked)
+            self.reference_text_reviewed.setChecked(
+                bool(profile.get('reference_text_reviewed',False)))
             self.save_preferences()
             self.status.setText(
                 f'Transcrição de “{profile["name"]}” atualizada. A gravação original foi preservada.')
@@ -1192,6 +1235,11 @@ class NarrationPanel(QScrollArea):
         except ValueError as exc:
             QMessageBox.warning(self,'Clonagem PT-BR',str(exc))
             return
+        if (req.language=='portuguese' and req.engine=='qwen3-tts-local' and
+                not self.reference_text_reviewed.isChecked()):
+            QMessageBox.warning(self,'Revisar transcrição da referência',
+                'Antes de gerar em PT-BR, confira se o texto corresponde exatamente à janela vocal selecionada e marque “Conferi que a transcrição corresponde à janela vocal selecionada”. Um rascunho do Whisper não é usado sem essa confirmação.')
+            return
         if self.on_generate:
             self.on_generate(req, add_to_timeline)
 
@@ -1215,6 +1263,7 @@ class NarrationPanel(QScrollArea):
         if not text:
             raise ValueError('A transcrição local não contém texto para revisar.')
         self.reference_text.setText(text)
+        self.reference_text_reviewed.setChecked(False)
         window=result.get('reference_window') or {}
         start=float(window.get('start',0.0));duration=float(window.get('duration',0.0))
         confidence=result.get('mean_word_confidence')
@@ -1224,6 +1273,16 @@ class NarrationPanel(QScrollArea):
             f'Rascunho Whisper local pronto{confidence_note} · janela {start:.1f}–'
             f'{start+duration:.1f}s. Revise a transcrição e corrija qualquer erro antes '
             'de gerar; o texto da gravação não foi alterado automaticamente.')
+
+    def _reference_text_edited(self,*_args):
+        """Editing a transcript invalidates any prior review confirmation."""
+        if self.reference_text_reviewed.isChecked():
+            self.reference_text_reviewed.setChecked(False)
+
+    def _reference_audio_changed(self,*_args):
+        """Selecting another recording invalidates transcript review."""
+        if self.reference_text_reviewed.isChecked():
+            self.reference_text_reviewed.setChecked(False)
 
     def set_reference_transcription_busy(self,busy:bool):
         self.transcribe_reference.setDisabled(bool(busy))

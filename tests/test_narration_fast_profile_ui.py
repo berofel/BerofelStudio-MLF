@@ -64,7 +64,8 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             sample.write_bytes(b'RIFF'+b'a'*300)
             with patch.dict(os.environ,{'BEROFEL_VOICE_PROFILE_DIR':str(store)}):
                 profile=VoiceProfileManager().create('Voz de teste',sample,
-                    'portuguese','texto exato da referência',authorized=True)
+                    'portuguese','texto exato da referência',authorized=True,
+                    reference_text_reviewed=True)
                 panel=NarrationPanel()
                 try:
                     index=panel.voice.findData(f'voice-profile:{profile["id"]}')
@@ -72,6 +73,7 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                     panel.voice.setCurrentIndex(index)
                     panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
                     panel.set_text('Uma frase nova para narrar rapidamente.')
+                    self.assertTrue(panel.reference_text_reviewed.isChecked())
                     self.assertTrue(panel.authorized.isChecked())
                     self.assertFalse(panel.authorized.isEnabled())
                     captured=[]
@@ -104,12 +106,15 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                     panel.clone_engine.setCurrentIndex(original_engine)
                     self.assertFalse(panel.update_voice_reference.isHidden())
                     panel.reference_text.setText('  texto   corrigido da referência  ')
+                    panel.reference_text_reviewed.setChecked(True)
                     prepared=[]
                     panel.on_prepare_voice=lambda *args:prepared.append(args)
                     panel.update_voice_reference.click()
                     reopened=VoiceProfileManager(store).get(profile['id'])
                     self.assertEqual(reopened['reference_text'],
                                      'texto corrigido da referência')
+                    self.assertTrue(reopened['reference_text_reviewed'])
+                    self.assertTrue(panel.reference_text_reviewed.isChecked())
                     self.assertTrue(reopened['authorized'])
                     self.assertEqual(Path(reopened['sample_path']).read_bytes(),private_bytes)
                     self.assertEqual(sample.read_bytes(),original)
@@ -156,6 +161,7 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             try:
                 panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
                 panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
+                self.assertFalse(panel.reference_text_reviewed.isHidden())
                 panel.sample_path.setText(str(sample))
                 panel.reference_text.clear()
                 panel.authorized.setChecked(True)
@@ -178,7 +184,14 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                 self.assertIn('vetor vocal',warning.call_args.args[2])
                 panel.clone_engine.setCurrentIndex(
                     panel.clone_engine.findData('qwen3-tts-local'))
+                self.assertFalse(panel.reference_text_reviewed.isHidden())
                 panel.authorized.setChecked(True)
+                with patch.object(QMessageBox,'warning') as warning:
+                    panel._generate(False)
+                self.assertEqual(captured,[])
+                warning.assert_called_once()
+                self.assertIn('conferi',warning.call_args.args[2].lower())
+                panel.reference_text_reviewed.setChecked(True)
                 panel._generate(False)
                 self.assertEqual(len(captured),1)
                 request,insert=captured[0]
@@ -270,6 +283,43 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             self.assertIn('não utiliza a transcrição',panel.status.text())
         finally:
             panel.close()
+
+    def test_asr_reference_draft_requires_review_and_text_changes_invalidate_it(self):
+        from PySide6.QtWidgets import QMessageBox
+        with tempfile.TemporaryDirectory(prefix='bfs_asr_review_gate_') as folder:
+            sample=Path(folder)/'reference.wav';sample.write_bytes(b'RIFF'+b'a'*300)
+            panel=NarrationPanel()
+            try:
+                panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+                panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
+                panel.sample_path.setText(str(sample))
+                panel.authorized.setChecked(True)
+                panel.text.setPlainText('Uma frase diferente da referência.')
+                panel.set_reference_transcript({'text':'Rascunho do Whisper.',
+                    'reference_window':{'start':2.0,'duration':12.0},
+                    'mean_word_confidence':.64})
+                self.assertFalse(panel.reference_text_reviewed.isChecked())
+                captured=[];panel.on_generate=lambda request,insert:captured.append(request)
+                with patch.object(QMessageBox,'warning') as warning:
+                    panel._generate(False)
+                self.assertEqual(captured,[])
+                warning.assert_called_once()
+                panel.reference_text_reviewed.setChecked(True)
+                panel._generate(False)
+                self.assertEqual(len(captured),1)
+                panel.reference_text.setText('Texto corrigido pelo usuário.')
+                self.assertFalse(panel.reference_text_reviewed.isChecked())
+                panel.reference_text_reviewed.setChecked(True)
+                replacement=Path(folder)/'different_reference.wav'
+                replacement.write_bytes(b'RIFF'+b'b'*300)
+                panel.sample_path.setText(str(replacement))
+                self.assertFalse(panel.reference_text_reviewed.isChecked())
+                with patch.object(QMessageBox,'warning') as warning:
+                    panel._generate(False)
+                self.assertEqual(len(captured),1)
+                warning.assert_called_once()
+            finally:
+                panel.close()
 
     def test_clone_guidance_explains_purec_reference_limit_and_portuguese_dialect(self):
         with tempfile.TemporaryDirectory(prefix='bfs_clone_guidance_ui_') as folder:

@@ -30,9 +30,24 @@ class VoiceProfileManagerTests(unittest.TestCase):
             manager=VoiceProfileManager(root/'profile_store')
             profile=manager.create('Minha voz',source,'portuguese','texto da referência')
             self.assertFalse(profile['authorized'])
+            self.assertFalse(profile['reference_text_reviewed'])
             self.assertTrue(manager.authorize(profile['id'])['authorized'])
             reopened=VoiceProfileManager(root/'profile_store')
             self.assertTrue(reopened.get(profile['id'])['authorized'])
+
+    def test_transcript_review_confirmation_persists_with_profile(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_reviewed_voice_profile_') as folder:
+            root=Path(folder);source=root/'recording.wav';source.write_bytes(b'RIFF'+b'a'*300)
+            manager=VoiceProfileManager(root/'profiles')
+            profile=manager.create('Voz confirmada',source,'portuguese',
+                'transcrição conferida',authorized=True,reference_text_reviewed=True)
+            self.assertTrue(profile['reference_text_reviewed'])
+            manager.update_reference_text(profile['id'],'transcrição editada',reviewed=True)
+            reopened=VoiceProfileManager(root/'profiles').get(profile['id'])
+            self.assertEqual(reopened['reference_text'],'transcrição editada')
+            self.assertTrue(reopened['reference_text_reviewed'])
+            manager.update_reference_text(profile['id'],'rascunho novo',reviewed=False)
+            self.assertFalse(manager.get(profile['id'])['reference_text_reviewed'])
 
     def test_reference_transcript_update_preserves_authorization_and_audio(self):
         with tempfile.TemporaryDirectory(prefix='bfs_voice_profiles_') as folder:

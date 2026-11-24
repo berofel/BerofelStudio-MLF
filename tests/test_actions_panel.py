@@ -526,6 +526,7 @@ class ActionsUITests(unittest.TestCase):
             panel.sample_path.setText(str(sample))
             panel.authorized.setChecked(True)
             panel.reference_text.setText('Texto exato da referência gravada.')
+            panel.reference_text_reviewed.setChecked(True)
             panel.text.setPlainText('Teste de voz local.')
             captured=[]
             panel.on_generate=lambda request,insert:captured.append((request,insert))
@@ -543,6 +544,7 @@ class ActionsUITests(unittest.TestCase):
             panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
             panel.sample_path.setText(str(source));panel.authorized.setChecked(True)
             panel.reference_text.setText('A referência usada para esta voz local.')
+            panel.reference_text_reviewed.setChecked(True)
             with patch('berofel.ui.narration_panel.QInputDialog.getText',
                        return_value=('Minha voz',True)):
                 panel._save_voice_profile()
@@ -579,6 +581,7 @@ class ActionsUITests(unittest.TestCase):
         panel.authorized.setChecked(True)
         panel.text.setPlainText('Olá, esta é uma narração de teste.')
         panel.reference_text.setText('Este texto foi falado na gravação original.')
+        panel.reference_text_reviewed.setChecked(True)
         requests=[]
         panel.on_generate=lambda request,insert:requests.append((request,insert))
         panel._generate(False)

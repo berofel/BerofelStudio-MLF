@@ -13,7 +13,7 @@ O idioma PT-BR seleciona o token de idioma `Portuguese`; Qwen3-TTS Base não for
 ## Preparar e usar
 
 1. Rode `INSTALAR_QWEN3_TTS_LOCAL.bat` ou escolha Qwen3-TTS no instalador principal. O script pode retomar arquivos já baixados e não reinstala se o ambiente/modelo estiverem prontos.
-2. No editor, abra `Narração`, selecione `Minha voz / amostra com autorização`, escolha WAV/MP3/FLAC/OGG/M4A, marque a autorização e informe a transcrição exata da amostra.
+2. No editor, abra `Narração`, selecione `Minha voz / amostra com autorização`, escolha WAV/MP3/FLAC/OGG/M4A, marque a autorização e informe a transcrição exata da janela selecionada. Para rascunhos do Whisper, confira o trecho e marque a confirmação de revisão antes de gerar PT-BR; qualquer edição posterior invalida essa confirmação. Perfis salvos guardam a confirmação junto da transcrição e do áudio privado.
 3. Digite uma frase diferente da gravação e escolha `Gerar e adicionar na timeline` ou `Gerar só o WAV`.
 4. `Salvar perfil` guarda uma cópia local privada da gravação e o texto de referência, para reutilização. O arquivo original permanece inalterado. Ao salvar, o perfil é preparado em segundo plano.
 
@@ -28,6 +28,8 @@ Para evitar que silêncio no começo seja usado como identidade vocal, a aplica�
 O texto `ref_text` do modo Original deve corresponder ao trecho escolhido, não à transcrição de uma hora inteira. Confira o horário exibido e forneça o texto falado nessa janela. O botão **Transcrever referência (Whisper local)** cria um rascunho offline dessa janela para você revisar; a transcrição não é salva nem usada sem sua confirmação no campo. Para PT-BR, a geração fica bloqueada enquanto o texto estiver vazio ou enquanto estiver selecionado um backend rápido somente x-vector. Isso evita cair silenciosamente no condicionamento mais fraco. Para outros idiomas, os modos x-vector continuam disponíveis.
 
 Em resumo: um áudio longo é examinado por inteiro para encontrar uma janela vocal adequada, mas o Qwen não aprende nem recebe uma hora inteira. Ele recebe até 30 segundos selecionados (ou menos, quando o arquivo contém menos atividade). O perfil é um condicionamento/prompt de inferência, não um treinamento persistente do modelo. A transcrição também precisa ser somente dessa janela; texto de outra parte pode desalinhar a clonagem. A varredura identifica fala por Silero quando disponível; o fallback `silencedetect` só distingue silêncio acústico de atividade e pode confundir música/ruído com fala.
+
+Para a rota PT-BR Original, um rascunho Whisper não é aceito como conferido automaticamente. A geração exige uma confirmação explícita no painel; se o texto for editado depois, a confirmação é removida. Perfis anteriores ao campo de revisão são tratados como não confirmados até o usuário revisar e salvar a transcrição. Isso reduz falhas causadas por palavras reconhecidas incorretamente no trecho de referência.
 
 Não é necessário fazer login no Hugging Face para inferência. A geração não tenta baixar modelos pela rede. As bibliotecas e modelos instalados permanecem no ambiente isolado do app. O wrapper Python `sox==1.5.0` testa o executável `sox` no import e imprime um aviso quando ele não está no `PATH`; o executável não está instalado neste PC. O Qwen 12Hz Base ainda gerou WAV válido em testes reais sem ele (o código que chama `sox.Transformer()` está no tokenizer 25Hz, não no caminho Base 12Hz testado). FlashAttention também não está instalado e o Qwen usou o caminho PyTorch manual. Não fazemos instalação global silenciosa dessas ferramentas.
 
@@ -51,7 +53,7 @@ Uma frase nova foi gerada com Qwen3-TTS 0.6B Base em CPU usando `conditioning_mo
 
 Como diagnóstico adicional, o speaker encoder do próprio Qwen produziu cossenos referência↔saída de 0,96639 para essa amostra `audio+transcript`, 0,96614 para a amostra Original x-vector anterior e 0,97964 para a amostra Pure C INT8 anterior. Essa métrica não é calibrada para aprovar clonagem, sotaque ou gênero percebido e não substitui escuta humana. A confiança da transcrição também não foi revisada pelo usuário; portanto esta execução prova que o caminho técnico audio+transcript gera WAV, mas **não comprova que a voz final corresponde auditivamente ao homem da referência ou que o sotaque está correto**. A saída continua pendente de audição/aceite.
 
-Na mesma revisão, a suíte foi executada no venv de produção com `QT_QPA_PLATFORM=offscreen`: 492 testes passaram e 5 foram ignorados (quatro integrações reais opt-in de backends e VERO ausente). Os testes Qt exercitam a interface em modo offscreen, não uma janela visível do editor. A geração acima passou pelo serviço canônico e pelo worker real do Qwen, mas ainda não foi acionada pela janela visível do BerofelStudio.
+Na mesma revisão, a suíte foi executada no venv de produção com `QT_QPA_PLATFORM=offscreen`: **494 testes passaram e 5 foram ignorados** (quatro integrações reais opt-in de backends e VERO ausente). Nesta continuação, os testes Qt cobriram o bloqueio de rascunho ASR não revisado, invalidação ao trocar áudio/texto e persistência da confirmação em perfis. Os testes Qt exercitam a interface em modo offscreen, não uma janela visível do editor. A geração acima passou pelo serviço canônico e pelo worker real do Qwen, mas ainda não foi acionada pela janela visível do BerofelStudio.
 
 ## Limitações conhecidas
 

@@ -69,6 +69,9 @@ class VoiceProfileManager:
                 'sample_sha256': str(item.get('sample_sha256', '')),
                 'language': str(item.get('language', 'portuguese')),
                 'reference_text': str(item.get('reference_text', ''))[:4000],
+                # Backward compatible: profiles saved before transcript review
+                # tracking remain unconfirmed until the user reviews them.
+                'reference_text_reviewed': item.get('reference_text_reviewed') is True,
                 'authorized': item.get('authorized') is True,
                 'created_utc': str(item.get('created_utc', '')),
             }
@@ -112,7 +115,8 @@ class VoiceProfileManager:
         return dict(item, sample_path=str(sample))
 
     def create(self, name: str, source: str | Path, language: str = 'portuguese',
-               reference_text: str = '', *, authorized: bool = False) -> dict:
+               reference_text: str = '', *, authorized: bool = False,
+               reference_text_reviewed: bool = False) -> dict:
         name = self._normalize_name(name)
         source_path = Path(source).expanduser().resolve()
         if not source_path.is_file():
@@ -147,6 +151,7 @@ class VoiceProfileManager:
                 'sample_sha256': self._hash_file(target),
                 'language': str(language),
                 'reference_text': reference_text,
+                'reference_text_reviewed': bool(reference_text_reviewed),
                 'authorized': bool(authorized),
                 'created_utc': datetime.now(timezone.utc).isoformat(timespec='seconds'),
             }
@@ -172,7 +177,8 @@ class VoiceProfileManager:
         self._write(profiles)
         return self.get(profile_id)
 
-    def update_reference_text(self, profile_id: str, reference_text: str) -> dict:
+    def update_reference_text(self, profile_id: str, reference_text: str, *,
+                              reviewed: bool = False) -> dict:
         """Update only the transcript metadata of a saved voice profile."""
         profiles = self._read()
         item = profiles.get(str(profile_id))
@@ -182,6 +188,7 @@ class VoiceProfileManager:
         if len(normalized) > 4000:
             raise ValueError('A transcrição da referência deve ter no máximo 4000 caracteres.')
         item['reference_text'] = normalized
+        item['reference_text_reviewed'] = bool(reviewed)
         self._write(profiles)
         return self.get(str(profile_id))
 
