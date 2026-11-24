@@ -48,7 +48,7 @@
 ## Próximas etapas
 
 1. Suíte Qt do painel/timeline: **81 testes passaram**.
-2. Suíte completa: **458 passaram, 5 ignorados, 0 falhas** (63,143 s). Os skips são gates opcionais para integração real de Qwen/Pure C e dicionário pt-BR. Um teste do parser de benchmark imprime o texto de uso esperado ao rejeitar threads inválidas.
+2. Suíte completa no estado atual: **458 passaram, 5 ignorados, 0 falhas** (60,555 s). Os skips são gates opcionais para integração real de Qwen/Pure C e dicionário pt-BR. Um teste do parser de benchmark imprime o texto de uso esperado ao rejeitar threads inválidas.
 3. Testar a persistência de mídias após salvar e reabrir projeto.
 4. Auditar/expandir controles do painel de legendas sem duplicar lógica de renderização.
 5. Verificar progresso e heartbeat nos fluxos Qwen/Parakeet.
