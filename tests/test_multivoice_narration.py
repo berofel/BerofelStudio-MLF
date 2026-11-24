@@ -265,6 +265,22 @@ class MultiVoiceScriptTests(unittest.TestCase):
             self.assertEqual(generated.lines[0].status, 'generated')
             self.assertIn('V2', generated.voices)
 
+    def test_ptbr_original_multivoice_requires_reviewed_profile_before_queue(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);reference=root/'voice.wav';_wav(reference)
+            profile={'id':'p1','sample_path':str(reference),
+                     'reference_text':'rascunho de referência',
+                     'language':'portuguese','authorized':True,
+                     'reference_text_reviewed':False}
+            script=create_script('[001 | V1]\nUma frase nova.',
+                {'V1':{'profile_id':'p1'}},'qwen3-tts-local')
+            called=[]
+            with self.assertRaisesRegex(ValueError,'ainda não foi confirmada'):
+                generate_script_audio(script,{'p1':profile},
+                    str(root/'project.berofel.json'),
+                    generator=lambda request,**kwargs:called.append(request))
+            self.assertEqual(called,[])
+
     def test_cache_key_invalidates_only_text_voice_engine_threads_or_version(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder); sample = root / 'voice.wav'; _wav(sample)

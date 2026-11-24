@@ -1,6 +1,7 @@
 """Painel fixo de narração do BerofelStudio: sempre acessível à direita."""
 from __future__ import annotations
 import os
+import hashlib
 from pathlib import Path
 import subprocess
 
@@ -51,6 +52,7 @@ class NarrationPanel(QScrollArea):
         self._voice_reference_inspections={}
         self._voice_reference_inspection_modes={}
         self._voice_reference_warning_seen=set()
+        self._reviewed_reference_key=''
         self.setWidgetResizable(True)
         self.setVerticalScrollBarPolicy(self.verticalScrollBarPolicy())
         self.setHorizontalScrollBarPolicy(self.horizontalScrollBarPolicy())
@@ -435,6 +437,7 @@ class NarrationPanel(QScrollArea):
         self.reference_text.textChanged.connect(self._schedule_preferences_save)
         self.reference_text.textChanged.connect(self._refresh_clone_guidance)
         self.reference_text.textChanged.connect(self._reference_text_edited)
+        self.reference_text_reviewed.toggled.connect(self._reference_review_toggled)
         self.reference_text_reviewed.toggled.connect(self._refresh_clone_guidance)
         self.sample_path.textChanged.connect(self._reference_audio_changed)
         self.sample_path.textChanged.connect(self._refresh_clone_guidance)
@@ -877,7 +880,7 @@ class NarrationPanel(QScrollArea):
             notes.append('A transcrição da referência está vazia. Em PT-BR, a geração fica bloqueada até o Qwen usar áudio e transcrição juntos. Clique em “Transcrever referência” e revise o texto.')
         else:
             notes.append('Original Qwen3-TTS Base envia o áudio e a transcrição literal da referência juntos (clonagem por contexto), preservando melhor a pronúncia e o estilo da amostra.')
-            if not self.reference_text_reviewed.isChecked():
+            if not self._reference_transcript_is_reviewed():
                 notes.append('Confira o rascunho/transcrição exata da janela vocal e marque a confirmação antes de gerar; um erro no texto pode prejudicar a clonagem.')
         if self.sample_path.text().strip():
             notes.append('A gravação será varrida por inteiro para localizar o trecho usado na clonagem; o modelo recebe somente uma janela curta.')
@@ -1047,7 +1050,7 @@ class NarrationPanel(QScrollArea):
                 return
             reviewed=(self.language.currentData()!='portuguese' or
                       self.clone_engine.currentData()!='qwen3-tts-local' or
-                      self.reference_text_reviewed.isChecked())
+                      self._reference_transcript_is_reviewed())
             if not reviewed:
                 QMessageBox.warning(self,'Revisar transcrição',
                     'Confira a transcrição da janela vocal e marque a confirmação antes de salvar este perfil PT-BR para clonagem detalhada.')
@@ -1070,7 +1073,7 @@ class NarrationPanel(QScrollArea):
         if not profile_id:return
         if (self.language.currentData()=='portuguese' and
                 self.clone_engine.currentData()=='qwen3-tts-local' and
-                not self.reference_text_reviewed.isChecked()):
+                not self._reference_transcript_is_reviewed()):
             QMessageBox.warning(self,'Revisar transcrição',
                 'Confira a transcrição da janela vocal e marque a confirmação antes de salvá-la no perfil.')
             return
@@ -1083,6 +1086,7 @@ class NarrationPanel(QScrollArea):
                 self.reference_text.setText(profile['reference_text'])
             finally:
                 self.reference_text.blockSignals(signals_were_blocked)
+            self.reference_text_reviewed.setChecked(False)
             self.reference_text_reviewed.setChecked(
                 bool(profile.get('reference_text_reviewed',False)))
             self.save_preferences()
@@ -1228,17 +1232,13 @@ class NarrationPanel(QScrollArea):
                                title=self.name.text().strip() or 'Narração',
                                engine=engine,
                                reference_text=self.reference_text.text().strip() if custom else '',
+                               reference_text_reviewed=self._reference_transcript_is_reviewed(),
                                thread_count=(self.purec_threads.currentData()
                                              if engine=='qwen3-tts-purec-mixed' else None))
         try:
             validate_clone_conditioning(req)
         except ValueError as exc:
             QMessageBox.warning(self,'Clonagem PT-BR',str(exc))
-            return
-        if (req.language=='portuguese' and req.engine=='qwen3-tts-local' and
-                not self.reference_text_reviewed.isChecked()):
-            QMessageBox.warning(self,'Revisar transcrição da referência',
-                'Antes de gerar em PT-BR, confira se o texto corresponde exatamente à janela vocal selecionada e marque “Conferi que a transcrição corresponde à janela vocal selecionada”. Um rascunho do Whisper não é usado sem essa confirmação.')
             return
         if self.on_generate:
             self.on_generate(req, add_to_timeline)
@@ -1283,6 +1283,29 @@ class NarrationPanel(QScrollArea):
         """Selecting another recording invalidates transcript review."""
         if self.reference_text_reviewed.isChecked():
             self.reference_text_reviewed.setChecked(False)
+
+    def _reference_review_toggled(self,reviewed:bool):
+        self._reviewed_reference_key=(self._reference_review_key() if reviewed else '')
+
+    def _reference_review_key(self) -> str:
+        source=Path(self.sample_path.text().strip()).expanduser()
+        try:
+            stat=source.stat()
+            transcript_hash=hashlib.sha256(
+                self.reference_text.text().strip().encode('utf-8')).hexdigest()
+            return (f'{source.resolve()}|{stat.st_size}|{stat.st_mtime_ns}|'
+                    f'{transcript_hash}')
+        except OSError:
+            return ''
+
+    def _reference_transcript_is_reviewed(self) -> bool:
+        if not self.reference_text_reviewed.isChecked():
+            return False
+        current=self._reference_review_key()
+        if not current or current!=self._reviewed_reference_key:
+            self.reference_text_reviewed.setChecked(False)
+            return False
+        return True
 
     def set_reference_transcription_busy(self,busy:bool):
         self.transcribe_reference.setDisabled(bool(busy))

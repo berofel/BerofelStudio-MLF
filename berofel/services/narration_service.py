@@ -28,6 +28,7 @@ class NarrationRequest:
     title: str = 'Narração'
     engine: str = 'qwen3-tts-local'
     reference_text: str = ''
+    reference_text_reviewed: bool = False
     thread_count: int | None = None
 
 
@@ -82,6 +83,12 @@ def validate_clone_conditioning(request: NarrationRequest) -> None:
             'A clonagem PT-BR precisa da transcrição exata da janela de referência. '
             'Use “Transcrever referência”, revise o texto e tente novamente. Sem a '
             'transcrição, o Qwen usa apenas o vetor vocal e pode gerar pronúncia genérica.'
+        )
+    if not request.reference_text_reviewed:
+        raise ValueError(
+            'A transcrição PT-BR ainda não foi confirmada. Confira o texto da janela '
+            'vocal e marque “Conferi que a transcrição corresponde à janela vocal '
+            'selecionada” antes de gerar ou salvar o perfil.'
         )
 
 

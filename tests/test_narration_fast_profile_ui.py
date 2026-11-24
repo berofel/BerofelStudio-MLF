@@ -310,13 +310,22 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                 panel.reference_text.setText('Texto corrigido pelo usuário.')
                 self.assertFalse(panel.reference_text_reviewed.isChecked())
                 panel.reference_text_reviewed.setChecked(True)
+                panel._generate(False)
+                self.assertEqual(captured[-1].reference_text_reviewed,True)
+                sample.write_bytes(b'RIFF'+b'changed authorized recording')
+                with patch.object(QMessageBox,'warning') as warning:
+                    panel._generate(False)
+                self.assertEqual(len(captured),2)
+                warning.assert_called_once()
+                self.assertFalse(panel.reference_text_reviewed.isChecked())
                 replacement=Path(folder)/'different_reference.wav'
                 replacement.write_bytes(b'RIFF'+b'b'*300)
+                panel.reference_text_reviewed.setChecked(True)
                 panel.sample_path.setText(str(replacement))
                 self.assertFalse(panel.reference_text_reviewed.isChecked())
                 with patch.object(QMessageBox,'warning') as warning:
                     panel._generate(False)
-                self.assertEqual(len(captured),1)
+                self.assertEqual(len(captured),2)
                 warning.assert_called_once()
             finally:
                 panel.close()

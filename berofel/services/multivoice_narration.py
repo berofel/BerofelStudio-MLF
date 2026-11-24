@@ -597,6 +597,12 @@ def generate_script_audio(script: MultiVoiceScript, profiles: Mapping[str, Mappi
             raise PermissionError(f'O perfil de {voice_id} precisa ter autorização de clonagem registrada.')
         if not Path(str(profile.get('sample_path', ''))).is_file():
             raise FileNotFoundError(f'A gravação do perfil de {voice_id} não foi encontrada.')
+        if (script.engine_id=='qwen3-tts-local' and
+                str(profile.get('language','portuguese'))=='portuguese' and
+                not profile.get('reference_text_reviewed',False)):
+            raise ValueError(
+                f'A transcrição PT-BR do perfil de {voice_id} ainda não foi confirmada. '
+                'Revise e salve o perfil na aba Narração antes de iniciar o roteiro.')
         configured[voice_id] = profile
     voice_fingerprints = {profile_id: profile_fingerprint(profile)
                           for profile_id, profile in {
@@ -725,6 +731,8 @@ def generate_script_audio(script: MultiVoiceScript, profiles: Mapping[str, Mappi
                                 title=f'{script.id[:8]}_{line.number:04d}_{line.id[:8]}_p{chunk_index:03d}',
                                 engine=script.engine_id,
                                 reference_text=str(profile.get('reference_text', '') or ''),
+                                reference_text_reviewed=bool(
+                                    profile.get('reference_text_reviewed',False)),
                                 thread_count=(6 if script.engine_id in ('qwen3-tts-purec-mixed',
                                                                          'qwen3-tts-purec-int8') else None))
                             result = generator(request, control=control, stage=stage)

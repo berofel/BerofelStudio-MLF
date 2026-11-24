@@ -12,6 +12,15 @@ from berofel.services import qwen3_tts_local as qwen
 
 
 class QwenLocalCloneTests(unittest.TestCase):
+    def test_canonical_service_rejects_unreviewed_ptbr_transcript_before_backend(self):
+        request=NarrationRequest(text='frase nova',voice='voice.wav',consent=True,
+            engine='qwen3-tts-local',language='portuguese',
+            reference_text='rascunho do Whisper',reference_text_reviewed=False)
+        with patch('berofel.services.qwen3_tts_local.generate_local_clone') as backend:
+            with self.assertRaisesRegex(ValueError,'ainda não foi confirmada'):
+                generate_narration(request)
+        backend.assert_not_called()
+
     def test_stopping_worker_closes_all_subprocess_pipes(self):
         import io
         from unittest.mock import Mock
@@ -60,7 +69,8 @@ class QwenLocalCloneTests(unittest.TestCase):
                 output.setnchannels(1);output.setsampwidth(2);output.setframerate(24000)
                 output.writeframes(b'\x01\x00'*2400)
             request=NarrationRequest(text='teste',voice=str(sample),consent=True,
-                                     reference_text='fala exata da referência')
+                                     reference_text='fala exata da referência',
+                                     reference_text_reviewed=True)
             expected={'path':'local.wav','duration':1.,'cache_hit':False}
             with patch('berofel.services.qwen3_tts_local.generate_local_clone',
                        return_value=expected) as backend:
@@ -92,7 +102,8 @@ class QwenLocalCloneTests(unittest.TestCase):
             (model/'config.json').write_text('{}',encoding='utf-8')
             request=NarrationRequest(text='Olá, teste local.',voice=str(sample),
                 language='portuguese',consent=True,project_path=str(project),
-                title='Teste Qwen',engine='qwen3-tts-local',reference_text='Minha voz.')
+                title='Teste Qwen',engine='qwen3-tts-local',reference_text='Minha voz.',
+                reference_text_reviewed=True)
             calls=[]
             def runner(job_path,result_path):
                 calls.append(1);job=json.loads(Path(job_path).read_text(encoding='utf-8'))
@@ -116,7 +127,8 @@ class QwenLocalCloneTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             sample=Path(folder)/'voice.wav';sample.write_bytes(b'voice')
             request=NarrationRequest(text='teste',voice=str(sample),consent=True,
-                                     reference_text='fala exata da referência')
+                                     reference_text='fala exata da referência',
+                                     reference_text_reviewed=True)
             with patch.object(qwen,'is_ready',return_value=False):
                 with self.assertRaisesRegex(RuntimeError,'INSTALAR_QWEN3_TTS_LOCAL.bat'):
                     qwen.generate_local_clone(request)

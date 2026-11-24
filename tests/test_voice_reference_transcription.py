@@ -13,10 +13,12 @@ from berofel.services.narration_service import (
 
 
 class CloneConditioningTests(unittest.TestCase):
-    def _request(self, engine='qwen3-tts-local', language='portuguese', text=''):
+    def _request(self, engine='qwen3-tts-local', language='portuguese', text='',
+                 reviewed=False):
         return NarrationRequest(text='frase nova', voice='voice.wav',
                                 engine=engine, language=language,
-                                reference_text=text)
+                                reference_text=text,
+                                reference_text_reviewed=reviewed)
 
     def test_ptbr_original_requires_reference_transcript(self):
         with self.assertRaisesRegex(ValueError, 'transcrição exata'):
@@ -28,7 +30,11 @@ class CloneConditioningTests(unittest.TestCase):
                 'qwen3-tts-purec-int8', text='texto exato'))
 
     def test_ptbr_original_accepts_transcribed_reference(self):
-        validate_clone_conditioning(self._request(text='texto exato'))
+        validate_clone_conditioning(self._request(text='texto exato',reviewed=True))
+
+    def test_ptbr_original_rejects_unreviewed_asr_draft(self):
+        with self.assertRaisesRegex(ValueError,'ainda não foi confirmada'):
+            validate_clone_conditioning(self._request(text='rascunho Whisper'))
 
     def test_non_portuguese_fast_backend_is_unaffected(self):
         validate_clone_conditioning(self._request(

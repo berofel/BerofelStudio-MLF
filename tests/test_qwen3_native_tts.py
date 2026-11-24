@@ -192,9 +192,9 @@ class NativeQwenRealIntegrationTests(unittest.TestCase):
                 with self.subTest(engine=engine):
                     chunks=[]
                     result=generate_narration(NarrationRequest(
-                        text='O Berofel Studio está testando a narração rápida do Qwen em português brasileiro. Código '+uuid.uuid4().hex[:8],
-                        voice=profile['sample_path'],reference_text=profile['reference_text'],
-                        language='portuguese',consent=True,engine=engine,
+                        text='Berofel Studio is testing the local Qwen Base voice backend. Code '+uuid.uuid4().hex[:8],
+                        voice=profile['sample_path'],reference_text='',
+                        language='english',consent=True,engine=engine,
                         project_path=os.environ['BEROFEL_QWEN_TURBO_TEST_PROJECT']),
                         audio_chunk=chunks.append if engine==native.ENGINE_ID else None)
                     path=Path(result['path'])

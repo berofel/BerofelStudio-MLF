@@ -203,9 +203,9 @@ class PureCRealIntegrationTests(unittest.TestCase):
                     chunk_states.append(purec.server_status()['state'])
                     chunks.append(chunk)
                 request = NarrationRequest(
-                    text='O Berofel Studio está testando a narração local com Qwen Base.',
-                    voice=str(source), reference_text=profile['reference_text'],
-                    language='portuguese', consent=True, engine=test_engine,
+                    text='Berofel Studio is testing local Qwen Base voice synthesis.',
+                    voice=str(source), reference_text='', language='english',
+                    consent=True, engine=test_engine,
                     title='Pure C integração',
                     project_path=str(Path(work) / 'project.bfsproj'))
                 result = generate_narration(request, audio_chunk=collect_chunk)
@@ -342,7 +342,8 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                     server_pid = purec._PROCESS.pid
                     self.assertIsNone(purec._PROCESS.poll())
 
-                    panel.text.setPlainText('Esta frase inédita confirma que a voz pré-carregada foi reutilizada.')
+                    panel.language.setCurrentIndex(panel.language.findData('english'))
+                    panel.text.setPlainText('This new sentence confirms that the warmed voice was reused.')
                     panel.name.setText('Teste de primeira geração após preparo')
                     original_start = purec._start_server
                     incremental_loads = []
@@ -422,8 +423,8 @@ class PureCEditorIntegrationTests(unittest.TestCase):
                 panel.clone_engine.setCurrentIndex(engine_index)
                 if test_engine == purec.ENGINE_ID:
                     panel.purec_threads.setCurrentIndex(panel.purec_threads.findData(6))
-                panel.language.setCurrentIndex(panel.language.findData('portuguese'))
-                panel.text.setPlainText('Esta narração está sendo inserida na timeline do editor.')
+                panel.language.setCurrentIndex(panel.language.findData('english'))
+                panel.text.setPlainText('This narration is being inserted into the editor timeline.')
                 title = f'Pure C editor test {test_engine}'
                 panel.name.setText(title)
                 panel._update_custom()
