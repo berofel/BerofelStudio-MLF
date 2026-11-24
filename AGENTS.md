@@ -33,6 +33,14 @@ Editor de vídeo Windows/PySide6 de qualidade e desempenho comprovados, com time
 - Release deve ter checksum, changelog, comando de instalação/teste e evidências de MP4 válido com áudio.
 - Não instalar software global/baixar modelos gigantes/aceitar licença sem confirmação do proprietário. Não enviar vídeos, áudio ou dados privados para a rede sem consentimento explícito.
 
+## Versionamento e sincronização GitHub
+
+- Toda alteração validada deve ser registrada em commits locais pequenos e descritivos; não deixar trabalho concluído sem checkpoint versionado.
+- Antes de publicar, confirmar `git status`, branch, `origin`, `git fetch`/estado remoto, testes da mudança e ausência de credenciais, mídias pessoais, caches, modelos ou binários pesados no índice e no histórico a enviar.
+- Sincronizar com o GitHub quando o usuário tiver autorizado a publicação e a conta conectada tiver permissão efetiva de escrita. Verificar a permissão e a rede separadamente; uma falha não autoriza contornar controles.
+- Nunca usar `push --force`, sobrescrever `main`, reescrever histórico já compartilhado ou anunciar publicação sem confirmar o commit remoto. Se o acesso estiver bloqueado, preservar commits locais, informar a causa comprovada e preparar bundle/patch quando útil.
+- Para releases, seguir a versão declarada em `berofel/__init__.py`, atualizar changelog/documentação, validar instalador/artefatos e então criar tag de versão. Não publicar tag ou pacote sem testes correspondentes.
+
 ## Referência de sucesso
 
 A gravação histórica de 80 min processada em ~7 min e reduzida para ~20 min é **benchmark informado pelo usuário** em condições específicas, não garantia universal. A qualidade do conteúdo preservado é mais importante que taxa de redução.

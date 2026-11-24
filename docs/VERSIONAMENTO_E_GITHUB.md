@@ -1,0 +1,50 @@
+# Versionamento e sincronização com GitHub
+
+Repositório oficial: <https://github.com/berofel/BerofelStudio-MLF>
+
+## Estado desta preparação
+
+- Raiz Git: `BerofelStudio 1`.
+- Branch de trabalho: `feat/automatic-cleanup-modules`.
+- Versão declarada pelo aplicativo: `0.10.0-alpha.1` (`berofel/__init__.py`).
+- O remoto `origin` aponta para o repositório oficial.
+- Na auditoria de 2026-11-23, o remoto tinha somente o commit inicial e um README de 19 bytes; seu histórico era independente do histórico local.
+- O histórico local foi integrado ao histórico inicial remoto sem force push; veja os commits da branch.
+- A conexão GitHub disponível para esta sessão permitia leitura, mas não escrita. `gh` não estava instalado e a rede Git local não conseguiu conectar a `github.com:443`. Portanto, nenhum push ou release foi confirmado nesta sessão.
+
+## Preparar ambiente e verificar acesso
+
+No PowerShell, na raiz do repositório:
+
+```powershell
+git --version
+gh --version
+gh auth status
+git status --short --branch
+git remote -v
+git fetch origin
+git branch -vv
+```
+
+`gh auth status` confirma a sessão CLI, mas não prova permissão de escrita no repositório. Confirme também que a conta conectada tem acesso de escrita (por exemplo, na página **Settings → Collaborators and teams** ou com uma operação de push autorizada). Diagnostique rede e autorização separadamente. Nunca exponha tokens e não desative TLS.
+
+## Publicar uma alteração validada
+
+1. Comece com `git status`; preserve mudanças que não pertencem à tarefa.
+2. Confira o diff e os arquivos staged. Não inclua mídias pessoais, projetos de usuário, credenciais, ambientes virtuais, caches, modelos ou binários pesados.
+3. Execute os testes pertinentes e registre falhas/limitações.
+4. Faça commits locais pequenos e descritivos na branch de trabalho.
+5. Atualize `origin` com `git fetch origin`. Integre mudanças remotas explicitamente e resolva conflitos preservando ambos os trabalhos. Não reescreva histórico compartilhado.
+6. Publique uma branch de funcionalidade com `git push -u origin <branch>`. Não force push e não envie diretamente para `main` sem autorização específica.
+7. Confirme o resultado com `git ls-remote --heads origin <branch>` ou consultando o commit da branch no GitHub. Um commit local não comprova publicação.
+8. Abra um Pull Request para `main` e informe a URL somente depois de confirmar que foi criado.
+
+Se a escrita remota estiver indisponível, mantenha os commits locais, registre a causa exata e compartilhe um bundle/patch por canal autorizado. Não contorne controles de acesso.
+
+## Releases
+
+Use a versão definida em `berofel/__init__.py` como fonte de verdade. Antes de publicar uma release, atualize o changelog e a documentação, rode os testes e valide os artefatos instaláveis. Crie uma tag versionada somente sobre o commit validado, por exemplo `v0.10.0-alpha.2`; publique-a apenas quando houver autorização e acesso. Não descreva um build como portátil/autossuficiente sem testar a instalação limpa.
+
+## Política de arquivos
+
+`.gitignore` exclui artefatos locais, dados de usuário, modelos, ambientes, caches, credenciais e binários. Scripts de instalação, código-fonte e manifestos de dependências permanecem versionáveis. Antes de publicar, revise também o histórico alcançado pela branch: ignorar um arquivo hoje não o remove de commits antigos. Nunca use `git filter-branch` ou force push como limpeza rotineira.
