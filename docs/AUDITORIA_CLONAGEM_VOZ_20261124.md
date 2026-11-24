@@ -52,3 +52,9 @@ Commit local: `567ec62496c4a4f332c090504807019f1a4039a7` (`fix: validate reviewe
 - Testes reais anteriores confirmaram geração de WAV com áudio no backend, porém não usaram o fingerprint do perfil que está atualmente salvo.
 - A interface visível não estava disponível à automação gráfica desta sessão; os testes Qt foram offscreen.
 - Falta confirmar humanamente a transcrição da janela e ouvir uma geração nova feita com esse perfil. Sem isso, não se declara clonagem fiel nem sotaque PT-BR validado.
+
+## Aplicativo em execução
+
+Na inspeção de 24/11/2026, a janela visível estava executando pelo runtime empacotado em `%LOCALAPPDATA%/BerofelStudio/Python312/pythonw.exe`, iniciada às 09:50 (horário local). Os commits de correção desta branch foram criados depois, entre 10:19 e 10:32; portanto essa instância aberta não carregou as alterações atuais. O lançador de desenvolvimento `ABRIR_BEROFELSTUDIO.vbs` define `PYTHONPATH` para a pasta do workspace e chama `%LOCALAPPDATA%/BFS/venv/Scripts/pythonw.exe` com `scripts/abrir_com_log.py`, que encaminha para o código-fonte local.
+
+Para testar a correção no código atual, feche o aplicativo antigo e abra `ABRIR_BEROFELSTUDIO.bat` na raiz deste workspace. Isso testa a fonte local, não a distribuição instalada. A janela anterior não foi encerrada pela auditoria.
