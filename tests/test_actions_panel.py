@@ -1128,6 +1128,71 @@ class ActionsUITests(unittest.TestCase):
         finally:
             win.close()
 
+    def test_caption_presets_are_available_before_selection_and_style_new_caption(self):
+        from berofel.services.caption_styles import CAPTION_PRESETS
+        win=MainWindow()
+        try:
+            win.open_captions()
+            panel=win.captions_panel
+            self.assertEqual(len(CAPTION_PRESETS),24)
+            self.assertTrue(panel.preset.isEnabled())
+            self.assertEqual(len(panel.preset_buttons),24)
+            panel.preset_requested.emit(4)
+            self.assertEqual(win._ui_settings().value('captions/default_preset'),4)
+            panel.text_edit.setPlainText('Estilo previamente escolhido')
+            panel.add_button.click()
+            clip=win.project.clip(win.selected_ids[0])
+            self.assertEqual(clip.font_size,58)
+            self.assertEqual(clip.font_color,'#FFD166')
+            self.assertEqual(clip.stroke_color,'#000000')
+        finally:
+            win._ui_settings().remove('captions/default_preset')
+            win.close()
+
+    def test_caption_preset_applies_to_all_editable_captions_with_undo(self):
+        win=MainWindow()
+        try:
+            for text in ('Primeira','Segunda'):
+                win.project.add_clip(Clip('',0,2,track_id=win.project.tracks[0].id,
+                                           kind='text',text=text))
+            before=[clip.font_size for clip in win.project.clips if clip.kind=='text']
+            win.apply_caption_preset_all(19)
+            captions=[clip for clip in win.project.clips if clip.kind=='text']
+            self.assertEqual(len(captions),2)
+            self.assertTrue(all(clip.background_color=='#000000' for clip in captions))
+            self.assertTrue(all(clip.background_opacity==.92 for clip in captions))
+            win.undo()
+            self.assertEqual([clip.font_size for clip in win.project.clips if clip.kind=='text'],before)
+        finally:
+            win._ui_settings().remove('captions/default_preset')
+            win.close()
+
+    def test_project_aspect_selector_changes_canvas_and_undo_restores_it(self):
+        win=MainWindow()
+        try:
+            original=(win.project.width,win.project.height)
+            index=next(i for i in range(win.aspect_ratio.count())
+                       if win.aspect_ratio.itemData(i)==(1080,1920))
+            win.set_project_aspect(index)
+            self.assertEqual((win.project.width,win.project.height),(1080,1920))
+            self.assertEqual(win.aspect_ratio.currentData(),(1080,1920))
+            win.undo()
+            self.assertEqual((win.project.width,win.project.height),original)
+        finally:
+            win.close()
+
+    def test_transition_library_is_visible_and_uses_existing_renderer_styles(self):
+        win=MainWindow()
+        try:
+            self.assertIn('transitions',win.library.nav_buttons)
+            self.assertEqual(len(win.library.transition_buttons),3)
+            win.open_transitions()
+            self.assertEqual(win.library.stack.currentIndex(),2)
+            self.assertEqual([button.text() for button in win.library.transition_buttons],
+                             ['Dissolvência','Deslizar da direita','Zoom suave'])
+        finally:
+            win.close()
+
     def test_header_removes_redundant_steps_and_keeps_top_actions(self):
         win=MainWindow()
         try:

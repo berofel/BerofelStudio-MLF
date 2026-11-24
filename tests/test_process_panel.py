@@ -49,6 +49,7 @@ class PanelTests(unittest.TestCase):
         root.close()
 
     def test_compact_header_progress_centers_percent_and_keeps_stage_below(self):
+        from PySide6.QtTest import QTest
         from berofel.services.process_control import ProcessControl
         root=QWidget();layout=QVBoxLayout(root)
         panel=ProcessPanel(root,compact=True);layout.addWidget(panel)
@@ -56,6 +57,12 @@ class PanelTests(unittest.TestCase):
         control=ProcessControl();panel.begin('Qwen',control)
         panel.set_stage('Analisando lote 3 de 12')
         panel.set_progress(3,12);self.app.processEvents()
+        elapsed_before=panel.compact_time.text()
+        QTest.qWait(1100)
+        self.app.processEvents()
+        self.assertEqual(panel.bar.value(),25,'Progresso deve continuar estável no teste do cronômetro.')
+        self.assertNotEqual(panel.compact_time.text(),elapsed_before,
+                            'O cronômetro deve atualizar mesmo quando a porcentagem não muda.')
         self.assertEqual(panel.bar.format(),'%p%')
         self.assertEqual(panel.bar.text(),'25%')
         self.assertTrue(panel.percent.isHidden(),
@@ -64,6 +71,19 @@ class PanelTests(unittest.TestCase):
         self.assertIn('font-size:9px',panel.step_label.styleSheet())
         self.assertLessEqual(panel.height(),53)
         panel.finish('cancelado');root.close()
+
+    def test_compact_completion_keeps_final_elapsed_visible(self):
+        from berofel.services.process_control import ProcessControl
+        root=QWidget();layout=QVBoxLayout(root)
+        panel=ProcessPanel(root,compact=True);layout.addWidget(panel)
+        root.show();self.app.processEvents()
+        panel.begin('Tarefa concluída',ProcessControl())
+        panel.finish('concluido')
+        self.app.processEvents()
+        self.assertTrue(panel.isVisible())
+        self.assertTrue(panel.compact_time.isVisible())
+        self.assertEqual(panel.compact_time.text(),panel.time_label.text().replace('Duração: ',''))
+        root.close()
 
     def test_qwen_winerror_206_gets_actionable_ui_copy_and_keeps_detail(self):
         message='Etapa qwen falhou: FileNotFoundError: [WinError 206] O nome do arquivo é muito grande'

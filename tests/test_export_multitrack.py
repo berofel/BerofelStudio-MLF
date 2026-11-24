@@ -11,6 +11,20 @@ from berofel.services.export_multitrack import export_project, render_frame
 
 
 class ExportTests(unittest.TestCase):
+    def test_caption_background_and_weight_render_to_rgba_overlay(self):
+        from PIL import Image
+        from berofel.services.export_multitrack import _make_title_png
+        with tempfile.TemporaryDirectory(prefix='bfs_caption_style_') as folder:
+            target=Path(folder)/'caption.png'
+            clip=Clip('',0,1,kind='text',text='Teste de estilo',font_family='Arial',
+                      font_size=32,font_weight='normal',background_color='#000000',
+                      background_opacity=.8)
+            _make_title_png(clip,target,320,180)
+            with Image.open(target) as image:
+                self.assertEqual(image.mode,'RGBA')
+                alphas=set(image.tobytes()[3::4]) - {0}
+                self.assertIn(204,alphas,'O fundo configurado deve aparecer no overlay renderizado.')
+
     def test_mix_with_overlays(self):
         from PIL import Image
         ffmpeg=ffmpeg_path()

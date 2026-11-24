@@ -52,6 +52,11 @@ class Clip:
     font_color: str = '#FFFFFF'
     stroke_color: str = '#000000'
     stroke_width: int = 3
+    font_weight: str = 'bold'
+    background_color: str = ''
+    background_opacity: float = 0.0
+    text_alignment: str = 'center'
+    shadow_enabled: bool = False
     include_audio: bool = True
     source_length: float = 0.0       # duracao maxima da fonte para recuperar bordas
     stack_order: int = 0            # z dentro da mesma camada; maior na frente

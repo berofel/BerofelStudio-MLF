@@ -9,7 +9,9 @@ import time
 from typing import Callable
 
 LANGUAGES = (
-    ('Português', 'portuguese'), ('English', 'english'),
+    # Qwen3-TTS exposes the language token Portuguese (no dialect-specific
+    # PT-BR token); the selected reference voice supplies the regional accent.
+    ('Português brasileiro (PT-BR)', 'portuguese'), ('English', 'english'),
     ('Español', 'spanish'), ('Français', 'french'),
     ('Italiano', 'italian'), ('Deutsch', 'german'),
 )

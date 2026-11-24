@@ -1,5 +1,15 @@
 # Limpeza automática modular local
 
+## Correções funcionais e acessibilidade de ferramentas — 24/11/2026
+
+- O cronômetro compacto aparece no cabeçalho, atualiza pelo relógio monotônico sem depender do progresso e mantém o tempo final após sucesso, erro ou cancelamento; tarefas sem total exibem progresso indeterminado.
+- O painel de legendas ganhou rolagem e uma biblioteca sempre acessível com 24 estilos locais. O estilo pode ser escolhido antes da primeira legenda e é usado ao criar novos blocos; alterar estilo não executa transcrição. Família, peso, tamanho, texto/contorno, alinhamento, fundo, opacidade e sombra são propriedades persistidas e renderizadas.
+- O seletor junto à prévia altera a resolução do projeto (incluindo formatos vertical, quadrado, 4:5, clássico, ultrawide e personalizado) em uma edição reversível; a timeline continua intacta.
+- A biblioteca lateral agora expõe os três efeitos que o renderer já suporta: dissolvência, slide e zoom. Efeitos adicionais pedidos ainda não estão implementados e não são apresentados como disponíveis.
+- O idioma padrão visível passou a indicar Português brasileiro (PT-BR). O Qwen recebe o idioma suportado `Portuguese`; não há parâmetro oficial de dialeto brasileiro.
+- Pesquisa e limites atuais documentados em `docs/REFERENCIAS_TECNICAS_2026.md`; runtimes locais conferidos: Qwen3-TTS 0.6B Base, qwen-tts 0.1.1, PyTorch 2.15.0+cpu, Transformers 4.57.3 e Pure C configurado com seis threads.
+- Validação: suíte completa 466 testes, 5 ignorados, passou (59,1 s); oito testes de UI/renderização focados repetidos depois das mudanças passaram. Não houve síntese real nem inspeção GUI porque o computador não expôs uma janela do editor ao controlador visual.
+
 ## Revisão global em andamento — 23/11/2026
 
 - O worker ASR em lote grava stderr temporário em arquivo, evitando bloqueio de pipe cheio e preservando o final do diagnóstico; a UI informa que o Parakeet só reporta progresso por trecho concluído.

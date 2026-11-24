@@ -47,6 +47,7 @@ from berofel.services.export_multitrack import export_project, render_frame
 from berofel.services.preview_pipeline import prepare_commands
 from berofel.ui.live_preview import LivePreview
 from berofel.services.tasks import Task
+from berofel.services.caption_styles import CAPTION_PRESETS, preset_properties
 from berofel.ui.timeline import TimelineWidget
 from berofel.ui.process_panel import ProcessPanel, make_processing_error_dialog
 from berofel.ui.narration_panel import NarrationPanel
@@ -799,6 +800,8 @@ class MainWindow(QMainWindow):
         self.library.add_nav_button('actions','Ações','⚙',self.open_actions)
         self.library.add_nav_button('narration','Narração','🎙',self.open_narration)
         self.library.add_nav_button('captions','Legendas','T',self.open_captions)
+        self.library.add_nav_button('transitions','Transições','⇄',self.open_transitions)
+        self.library.transition_requested.connect(self.make_transition)
         self.horizontal.addWidget(self.library)
 
         # Preview central: stream composto (FFmpeg + Qt); MP4 é só fallback.
@@ -806,7 +809,23 @@ class MainWindow(QMainWindow):
         preview_heading=self._section('PRÉVIA')
         preview_heading.setObjectName('previewHeading')
         preview_heading.setWordWrap(False)
-        cl.addWidget(preview_heading)
+        preview_top=QHBoxLayout()
+        preview_top.addWidget(preview_heading,1)
+        preview_top.addWidget(QLabel('Formato'))
+        self.aspect_ratio=QComboBox()
+        self.aspect_ratio.setObjectName('projectAspectRatio')
+        self._aspect_sizes=(
+            ('16:9 · 1920×1080',(1920,1080)),('9:16 · 1080×1920',(1080,1920)),
+            ('16:9 · 1280×720',(1280,720)),('9:16 · 720×1280',(720,1280)),
+            ('1:1 · 1080×1080',(1080,1080)),('4:5 · 1080×1350',(1080,1350)),
+            ('16:9 · 2560×1440',(2560,1440)),('16:9 · 3840×2160',(3840,2160)),
+            ('4:3 · 1440×1080',(1440,1080)),('21:9 · 2560×1080',(2560,1080)),
+        )
+        for label,size in self._aspect_sizes:self.aspect_ratio.addItem(label,size)
+        self.aspect_ratio.addItem('Personalizado…',None)
+        self.aspect_ratio.activated.connect(self.set_project_aspect)
+        preview_top.addWidget(self.aspect_ratio)
+        cl.addLayout(preview_top)
         self.preview_stack=QStackedWidget()
         self.preview_image=PreviewImage()
         self.preview_image.import_requested.connect(self.import_media)
@@ -878,6 +897,7 @@ class MainWindow(QMainWindow):
         self.captions_panel.property_changed.connect(self.change_caption_property)
         self.captions_panel.preview_text_changed.connect(self.preview_caption_text)
         self.captions_panel.preset_requested.connect(self.apply_caption_preset)
+        self.captions_panel.preset_all_requested.connect(self.apply_caption_preset_all)
         self.side_tabs.addTab(self.captions_panel, 'Legendas')
         self._apply_compact_tabs(self.width()<1180)
         self.narration_panel.setMinimumWidth(0)
@@ -1210,6 +1230,26 @@ class MainWindow(QMainWindow):
         return QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
                          'Berofel','BerofelStudio')
 
+    def set_project_aspect(self,index):
+        index=int(index)
+        if not 0<=index<self.aspect_ratio.count():return
+        size=self.aspect_ratio.itemData(index)
+        if size is None:
+            width,ok=QInputDialog.getInt(self,'Formato personalizado','Largura (px):',
+                int(self.project.width),16,8192,1)
+            if not ok:return
+            height,ok=QInputDialog.getInt(self,'Formato personalizado','Altura (px):',
+                int(self.project.height),16,8192,1)
+            if not ok:return
+            size=(width,height)
+        width,height=map(int,size)
+        if (width,height)==(self.project.width,self.project.height):return
+        self.snapshot()
+        self.project.width,self.project.height=width,height
+        self.refresh(self.selected_ids)
+        self.statusBar().showMessage(
+            f'Formato do projeto atualizado para {width}×{height}; mídia e timeline preservadas. Ctrl+Z desfaz.')
+
     def _restore_ui_state(self):
         settings=self._ui_settings()
         geometry=settings.value('ui/window_geometry')
@@ -1313,6 +1353,10 @@ class MainWindow(QMainWindow):
         self.library.show_page('media')
         self.statusBar().showMessage('Painel de legendas aberto: selecione uma legenda ou escreva uma nova.')
 
+    def open_transitions(self):
+        self.library.show_page('transitions')
+        self.statusBar().showMessage('Transições disponíveis: dissolvência, deslizar e zoom; selecione clipes adjacentes para aplicar.')
+
     def select_caption_from_panel(self,clip_id):
         clip=self.project.clip(str(clip_id))
         if not clip or clip.kind!='text':return
@@ -1328,6 +1372,9 @@ class MainWindow(QMainWindow):
         at=max(0.,self.timeline.view.cursor_time)
         self.snapshot()
         clip=create_manual_caption(self.project,str(text),at,at+3.0)
+        preset_index=int(self._ui_settings().value('captions/default_preset', 0) or 0)
+        if 0 < preset_index <= len(CAPTION_PRESETS):
+            self._apply_caption_style_to_clip(clip, preset_index, snapshot=False)
         self.refresh([clip.id])
         self.side_tabs.setCurrentWidget(self.captions_panel)
         self.statusBar().showMessage('Legenda adicionada no playhead; Ctrl+Z para desfazer.')
@@ -1353,19 +1400,42 @@ class MainWindow(QMainWindow):
             self.preview_image.set_preview_text(str(text))
 
     def apply_caption_preset(self,index):
-        if len(self.selected_ids)!=1:return
+        index=int(index)
+        if not 1 <= index <= len(CAPTION_PRESETS):return
+        self._ui_settings().setValue('captions/default_preset', index)
+        if len(self.selected_ids)!=1:
+            self.statusBar().showMessage(
+                f'Estilo padrão definido: {CAPTION_PRESETS[index-1][0]}. Será usado em novas legendas.')
+            return
         clip=self.project.clip(self.selected_ids[0])
         if not clip or clip.kind!='text' or not self.project.track_is_editable(clip.track_id):return
-        styles={1:('Arial',44,'#FFFFFF',3),
-                2:('Arial',38,'#FFFFFF',2),
-                3:('Arial',54,'#FFD166',4),
-                4:('Segoe UI',36,'#F2F5F8',1)}
-        style=styles.get(int(index))
-        if not style:return
         self.snapshot()
-        (clip.font_family,clip.font_size,clip.font_color,clip.stroke_width)=style
+        self._apply_caption_style_to_clip(clip, index, snapshot=False)
         self.refresh([clip.id])
         self.side_tabs.setCurrentWidget(self.captions_panel)
+
+    def apply_caption_preset_all(self,index):
+        index=int(index)
+        if not 1<=index<=len(CAPTION_PRESETS):return
+        captions=[clip for clip in self.project.clips
+                  if clip.kind=='text' and self.project.track_is_editable(clip.track_id)]
+        self._ui_settings().setValue('captions/default_preset',index)
+        if not captions:
+            self.statusBar().showMessage('Não há legendas em faixas editáveis para estilizar.')
+            return
+        self.snapshot()
+        for clip in captions:self._apply_caption_style_to_clip(clip,index)
+        self.refresh([clip.id for clip in captions])
+        self.side_tabs.setCurrentWidget(self.captions_panel)
+        self.statusBar().showMessage(
+            f'Estilo {CAPTION_PRESETS[index-1][0]} aplicado a {len(captions)} legenda(s). Ctrl+Z desfaz.')
+
+    @staticmethod
+    def _apply_caption_style_to_clip(clip, index, snapshot=False):
+        properties=preset_properties(int(index))
+        properties.pop('preset_name', None)
+        for name, value in properties.items():
+            setattr(clip, name, value)
 
     def use_selected_transcript(self):
         """Extrai apenas palavras dos clipes selecionados, conforme tempo atual."""
@@ -2109,6 +2179,13 @@ class MainWindow(QMainWindow):
     def refresh(self,selection=None):
         if hasattr(self,'live'):
             self.stop_playback()
+        if hasattr(self,'aspect_ratio'):
+            current=(int(self.project.width),int(self.project.height))
+            match=next((i for i in range(self.aspect_ratio.count())
+                        if self.aspect_ratio.itemData(i)==current),-1)
+            self.aspect_ratio.blockSignals(True)
+            self.aspect_ratio.setCurrentIndex(match if match>=0 else self.aspect_ratio.count()-1)
+            self.aspect_ratio.blockSignals(False)
         selected=self.selected_ids if selection is None else list(selection)
         self.project_name.setText(self.project.name)
         self.transport.set_time(self.timeline.view.cursor_time,self.project.duration,self.project.fps)
@@ -2635,6 +2712,9 @@ class MainWindow(QMainWindow):
         if field in ('font_color','stroke_color') and not QColor(str(value)).isValid():
             self.statusBar().showMessage('Use uma cor hexadecimal válida, por exemplo #FFFFFF.')
             return
+        if field=='background_color' and str(value) and not QColor(str(value)).isValid():
+            self.statusBar().showMessage('Use uma cor de fundo hexadecimal válida ou deixe o campo vazio.')
+            return
         if field=='speed':
             self.set_speed(c.id,value);return
         if field=='preserve_pitch':
@@ -3105,7 +3185,7 @@ class MainWindow(QMainWindow):
         self.refresh(self.selected_ids)
         self.statusBar().showMessage(f'⚑ Marcador em {marker["time"]:.2f}s. Ctrl+Z para desfazer.')
 
-    def make_transition(self):
+    def make_transition(self, preset=None):
         candidates=[c for c in self.project.clips if c.id in self.selected_ids and c.kind in ('video','image')]
         if not candidates:
             QMessageBox.information(self,'Dissolvência','Selecione um ou dois blocos visuais da mesma camada.');return
@@ -3118,10 +3198,13 @@ class MainWindow(QMainWindow):
             if not successors:
                 QMessageBox.information(self,'Dissolvência','Não há próximo bloco nessa camada.');return
             candidates=[first,successors[0]]
-        kind,ok=QInputDialog.getItem(self,'Transição','Efeito:',
-                 ['Dissolvência','Deslizar da direita','Zoom suave'],0,False)
-        if not ok:return
-        style={'Dissolvência':'dissolve','Deslizar da direita':'slide','Zoom suave':'zoom'}[kind]
+        labels={'dissolve':'Dissolvência','slide':'Deslizar da direita','zoom':'Zoom suave'}
+        if preset in labels:
+            style=str(preset);kind=labels[style]
+        else:
+            kind,ok=QInputDialog.getItem(self,'Transição','Efeito:',list(labels.values()),0,False)
+            if not ok:return
+            style={label:key for key,label in labels.items()}[kind]
         duration,ok=QInputDialog.getDouble(self,'Transição','Duração da transição (segundos):',
                                            .4,.05,10.,2)
         if not ok:return

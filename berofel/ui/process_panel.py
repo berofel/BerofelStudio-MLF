@@ -101,6 +101,12 @@ class ProcessPanel(QFrame):
         self.title.setStyleSheet('font-weight:800;color:#ffad70;')
         self.title.setWordWrap(not self.compact)
         top.addWidget(self.title, 1)
+        self.compact_time = QLabel('00:00')
+        self.compact_time.setObjectName('processElapsedCompact')
+        self.compact_time.setToolTip('Tempo decorrido da tarefa; atualizado mesmo sem mudança de progresso.')
+        self.compact_time.setStyleSheet('font-size:9px;font-weight:700;color:#e6eaf0;')
+        self.compact_time.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        top.addWidget(self.compact_time)
         self.pause_btn = QPushButton('Ⅱ Pausar')
         self.pause_btn.setToolTip('Suspende o processo e seus subprocessos. Continue de onde parou.')
         self.pause_btn.clicked.connect(self.toggle_pause)
@@ -191,6 +197,7 @@ class ProcessPanel(QFrame):
             for widget in (self.title,self.pause_btn,self.cancel_btn,self.bar,
                            self.step_label,self.detail_btn):
                 widget.setVisible(visible)
+            self.compact_time.setVisible(visible)
             for widget in (self.percent,self.time_label,self.resource_label,self.copy_btn):
                 widget.hide()
             self.details.setVisible(False)
@@ -224,9 +231,10 @@ class ProcessPanel(QFrame):
         self.title.setToolTip(name)
         self.step_label.setText('Iniciando tarefa...')
         self.time_label.setText('Decorrido 00:00  ·  Restante —')
-        self.bar.setRange(0, 100)
+        self.compact_time.setText('00:00')
+        self.bar.setRange(0, 0)  # tarefa começou; progresso ainda indeterminado
         self.bar.setValue(0)
-        self.percent.setText('0%')
+        self.percent.setText('—')
         self.pause_btn.setText('Ⅱ' if self.compact else 'Ⅱ Pausar')
         self.pause_btn.setEnabled(True)
         self.cancel_btn.setText('×' if self.compact else '■ Cancelar')
@@ -250,10 +258,14 @@ class ProcessPanel(QFrame):
         if not self._active:
             return
         self._done, self._total = max(0., float(done)), max(0, int(total))
-        percent = min(100, int(self._done * 100 / self._total)) if self._total else 0
-        self.bar.setRange(0, 100)
-        self.bar.setValue(percent)
-        self.percent.setText(f'{percent}%')
+        if self._total:
+            percent = min(100, int(self._done * 100 / self._total))
+            self.bar.setRange(0, 100)
+            self.bar.setValue(percent)
+            self.percent.setText(f'{percent}%')
+        else:
+            self.bar.setRange(0, 0)
+            self.percent.setText('—')
         self.refresh_metrics()
 
     def toggle_pause(self):
@@ -288,6 +300,7 @@ class ProcessPanel(QFrame):
         self.pause_btn.setEnabled(False)
         self.cancel_btn.setEnabled(False)
         elapsed = self._control.elapsed() if self._control else 0.
+        self.bar.setRange(0,100)
         if status == 'concluido':
             self.bar.setRange(0, 100)
             self.bar.setValue(100)
@@ -301,11 +314,11 @@ class ProcessPanel(QFrame):
             self.title.setText(('! ' if self.compact else 'BATATA QUENTE  ·  Erro: ')+self._name)
             self.step_label.setText('Falha na tarefa. Abra Detalhes para conferir.')
         self.time_label.setText('Duração: ' + _clock(elapsed))
+        self.compact_time.setText(_clock(elapsed))
         self._entry(f'FIM: {status.upper()} · {_clock(elapsed)}' + (' · ' + details[:500] if details else ''))
         self.refresh_metrics()
         self._control = None
-        if self.compact:
-            self._hide_timer.start(8000)
+        # O resultado (inclusive o tempo final) permanece visível até outra tarefa.
 
     def _hide_after_finish(self):
         if self.compact and not self._active and not self.details.isVisible():
@@ -316,6 +329,8 @@ class ProcessPanel(QFrame):
             return
         elapsed = self._control.elapsed()
         if self._active:
+            if self.compact:
+                self.compact_time.setText(_clock(elapsed))
             if self._control.paused:
                 eta = 'pausado'
             elif self._total > 0 and 0 < self._done < self._total and elapsed >= 3:

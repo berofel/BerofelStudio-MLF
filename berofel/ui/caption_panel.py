@@ -6,6 +6,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QColorDialog, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget,
+    QScrollArea, QGridLayout, QCheckBox,
 )
 
 from .wheel_controls import WheelGuardSpinBox as QSpinBox
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import QTextEdit
 from berofel.services.transcript_proofing import (apply_suggestion,
     load_pt_br_dictionary, project_approved_words, spelling_suggestions)
 from berofel.services.tasks import Task
+from berofel.services.caption_styles import CAPTION_PRESETS, preset_properties
 
 
 def _proofread_text(text, approved_words=()):
@@ -34,13 +36,22 @@ class CaptionPanel(QWidget):
     property_changed = Signal(str, str, object)
     preview_text_changed = Signal(str, str)
     preset_requested = Signal(int)
+    preset_all_requested = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._project = None
         self._current_id = ''
         self.setObjectName('captionPanel')
-        root = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget()
+        outer.addWidget(self.scroll)
+        self.scroll.setWidget(content)
+        root = QVBoxLayout(content)
         root.setContentsMargins(10, 9, 10, 9)
         root.setSpacing(7)
 
@@ -51,12 +62,61 @@ class CaptionPanel(QWidget):
         hint.setWordWrap(True)
         root.addWidget(hint)
 
+        root.addWidget(self._section_heading('1 · Presets'))
+
+        self.preset = WheelGuardComboBox()
+        self.preset.setObjectName('captionPreset')
+        self.preset.addItem('Escolha um estilo')
+        for name, family, size, color, stroke, width in CAPTION_PRESETS:
+            self.preset.addItem(f'{name}  ·  Aa')
+            row = self.preset.count() - 1
+            self.preset.setItemData(row, QColor(color), Qt.ItemDataRole.ForegroundRole)
+            self.preset.setItemData(row, family, Qt.ItemDataRole.FontRole)
+        self.preset.activated.connect(self._apply_preset)
+        root.addWidget(self.preset)
+
+        self.preset_grid = QWidget()
+        grid = QGridLayout(self.preset_grid)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(4)
+        self.preset_buttons = []
+        for index, (name, family, size, color, stroke, width) in enumerate(CAPTION_PRESETS, 1):
+            button = QPushButton(f'Aa\n{name}')
+            properties=preset_properties(index)
+            background=properties.get('background_color') or '#242830'
+            opacity=float(properties.get('background_opacity',1.0))
+            if opacity<1.0:
+                raw=str(background).lstrip('#')
+                try:r,g,b=bytes.fromhex(raw)
+                except ValueError:r,g,b=(36,40,48)
+                background=f'rgba({r},{g},{b},{int(opacity*255)})'
+            preview_size=max(10,min(14,10+(size-32)//10))
+            button.setObjectName(f'captionPreset_{index}')
+            button.setToolTip(f'Prévia do estilo {name}; renderizador {family}, {size}px, contorno {width}px.')
+            button.setMinimumHeight(42)
+            button.setStyleSheet(
+                f'QPushButton {{ color:{color}; background:{background}; border:1px solid {stroke}; '
+                f'font-family:"{family}"; font-size:{preview_size}px; '
+                f'font-weight:{properties.get("font_weight","bold")}; }}')
+            button.clicked.connect(lambda _checked=False, value=index: self._apply_preset(value))
+            grid.addWidget(button, (index - 1) // 2, (index - 1) % 2)
+            self.preset_buttons.append(button)
+        root.addWidget(self.preset_grid)
+        self.apply_all_preset_button=QPushButton('Aplicar último estilo a todas as legendas')
+        self.apply_all_preset_button.setObjectName('applyCaptionPresetAll')
+        self.apply_all_preset_button.setEnabled(False)
+        self.apply_all_preset_button.clicked.connect(
+            lambda:self.preset_all_requested.emit(self._last_preset_index)
+            if getattr(self,'_last_preset_index',0) else None)
+        root.addWidget(self.apply_all_preset_button)
+
         self.caption_list = QListWidget()
         self.caption_list.setObjectName('captionClipList')
         self.caption_list.setAccessibleName('Legendas do projeto')
         self.caption_list.currentItemChanged.connect(self._on_current_changed)
         root.addWidget(self.caption_list, 1)
 
+        root.addWidget(self._section_heading('2 · Texto'))
         self.text_edit = QTextEdit()
         self.text_edit.setObjectName('captionTextEditor')
         self.text_edit.setPlaceholderText('Selecione uma legenda ou escreva uma nova…')
@@ -100,16 +160,9 @@ class CaptionPanel(QWidget):
         divider.setFrameShape(QFrame.Shape.HLine)
         divider.setFrameShadow(QFrame.Shadow.Sunken)
         root.addWidget(divider)
-        style_heading = QLabel('ESTILO DA LEGENDA')
+        style_heading = self._section_heading('3 · Aparência')
         style_heading.setObjectName('captionStyleHeading')
         root.addWidget(style_heading)
-
-        self.preset = WheelGuardComboBox()
-        self.preset.setObjectName('captionPreset')
-        self.preset.addItems(['Presets de legenda', 'Clássica', 'Compacta',
-                              'Destaque', 'Discreta'])
-        self.preset.activated.connect(self._apply_preset)
-        root.addWidget(self.preset)
 
         self.font_family = WheelGuardComboBox()
         self.font_family.setObjectName('captionFontFamily')
@@ -159,6 +212,33 @@ class CaptionPanel(QWidget):
             lambda value: self._change('stroke_width', value))
         root.addWidget(self._labeled('Contorno', self.stroke_width))
 
+        self.font_weight=WheelGuardComboBox();self.font_weight.setObjectName('captionFontWeight')
+        self.font_weight.addItem('Negrito','bold');self.font_weight.addItem('Normal','normal')
+        self.font_weight.currentIndexChanged.connect(
+            lambda _:self._change('font_weight',self.font_weight.currentData()))
+        root.addWidget(self._labeled('Peso',self.font_weight))
+        self.text_alignment=WheelGuardComboBox();self.text_alignment.setObjectName('captionAlignment')
+        for label,value in (('Centralizado','center'),('Esquerda','left'),('Direita','right')):
+            self.text_alignment.addItem(label,value)
+        self.text_alignment.currentIndexChanged.connect(
+            lambda _:self._change('text_alignment',self.text_alignment.currentData()))
+        root.addWidget(self._labeled('Alinhamento',self.text_alignment))
+        self.background_color=QLineEdit();self.background_color.setObjectName('captionBackgroundColor')
+        self.background_color.setPlaceholderText('vazio = transparente')
+        self.background_color.editingFinished.connect(
+            lambda:self._change('background_color',self.background_color.text().strip()))
+        root.addWidget(self._labeled('Cor de fundo',self.background_color))
+        self.background_opacity=QSpinBox();self.background_opacity.setObjectName('captionBackgroundOpacity')
+        self.background_opacity.setRange(0,100);self.background_opacity.setSuffix(' %')
+        self.background_opacity.valueChanged.connect(
+            lambda value:self._change('background_opacity',value/100.0))
+        root.addWidget(self._labeled('Opacidade do fundo',self.background_opacity))
+        self.shadow_enabled=QCheckBox('Ativar sombra')
+        self.shadow_enabled.setObjectName('captionShadowEnabled')
+        self.shadow_enabled.toggled.connect(lambda value:self._change('shadow_enabled',bool(value)))
+        root.addWidget(self.shadow_enabled)
+
+        root.addWidget(self._section_heading('4 · Posição e animação'))
         self.pos_y = QSpinBox()
         self.pos_y.setObjectName('captionPositionY')
         self.pos_y.setRange(-4000, 4000)
@@ -178,6 +258,12 @@ class CaptionPanel(QWidget):
         self.state_label.setObjectName('captionPanelState')
         root.addWidget(self.state_label)
         self._set_controls_enabled(False)
+
+    @staticmethod
+    def _section_heading(text):
+        title=QLabel(text.upper())
+        title.setStyleSheet('color:#ffad70;font-weight:800;padding-top:5px;')
+        return title
 
     @staticmethod
     def _labeled(label, widget):
@@ -212,13 +298,24 @@ class CaptionPanel(QWidget):
                                   (self.font_color, clip.font_color),
                                   (self.stroke_color,clip.stroke_color),
                                   (self.stroke_width, clip.stroke_width),
+                                  (self.font_weight,clip.font_weight),
+                                  (self.text_alignment,clip.text_alignment),
+                                  (self.background_color,clip.background_color),
+                                  (self.background_opacity,round(clip.background_opacity*100)),
+                                  (self.shadow_enabled,clip.shadow_enabled),
                                   (self.pos_y, clip.pos_y),
                                   (self.pos_x, clip.pos_x)):
                 with QSignalBlocker(widget):
                     if isinstance(widget, QLineEdit):
                         widget.setText(str(value))
                     elif isinstance(widget, QComboBox):
-                        widget.setCurrentText(str(value))
+                        combo_index=widget.findData(value)
+                        if combo_index<0:combo_index=widget.findText(str(value))
+                        if combo_index>=0:widget.setCurrentIndex(combo_index)
+                    elif isinstance(widget,QCheckBox):
+                        widget.setChecked(bool(value))
+                    elif widget is self.background_opacity:
+                        widget.setValue(int(value))
                     else:
                         widget.setValue(int(value))
             self.state_label.setText(
@@ -227,9 +324,16 @@ class CaptionPanel(QWidget):
             self.state_label.setText('Selecione uma legenda ou escreva uma nova.')
 
     def _set_controls_enabled(self, enabled):
-        for widget in (self.apply_button, self.preset, self.font_family, self.font_size,
+        # Presets também definem o estilo padrão para legendas futuras.
+        self.preset.setEnabled(True)
+        self.preset_grid.setEnabled(True)
+        self.apply_all_preset_button.setEnabled(
+            bool(getattr(self,'_last_preset_index',0)))
+        for widget in (self.apply_button, self.font_family, self.font_size,
                        self.font_color, self.color_button, self.stroke_color,
-                       self.stroke_color_button,self.stroke_width,self.pos_y,self.pos_x):
+                       self.stroke_color_button,self.stroke_width,self.font_weight,
+                       self.text_alignment,self.background_color,self.background_opacity,
+                       self.shadow_enabled,self.pos_y,self.pos_x):
             widget.setEnabled(bool(enabled))
 
     def _change(self, field, value):
@@ -332,9 +436,15 @@ class CaptionPanel(QWidget):
 
     def _apply_preset(self, index):
         if index:
+            self._last_preset_index=int(index)
+            self.apply_all_preset_button.setEnabled(True)
             self.preset_requested.emit(int(index))
             with QSignalBlocker(self.preset):
                 self.preset.setCurrentIndex(0)
+
+    def select_preset(self, index):
+        with QSignalBlocker(self.preset):
+            self.preset.setCurrentIndex(int(index) if 0 < int(index) <= len(CAPTION_PRESETS) else 0)
 
     def _choose_color(self):
         color = QColorDialog.getColor(QColor(self.font_color.text() or '#FFFFFF'), self,

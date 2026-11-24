@@ -25,8 +25,15 @@ def _make_title_png(c, filepath, width, height):
     draw = ImageDraw.Draw(im)
     try:
         font_name=(getattr(c,'font_family','Arial') or 'Arial').casefold()
-        font_file={'arial':'arialbd.ttf','calibri':'calibrib.ttf','segoe ui':'segoeuib.ttf',
-                   'verdana':'verdanab.ttf'}.get(font_name,'arialbd.ttf')
+        weight=str(getattr(c,'font_weight','bold')).casefold()
+        family_files={
+            'arial':('arial.ttf','arialbd.ttf'),
+            'calibri':('calibri.ttf','calibrib.ttf'),
+            'segoe ui':('segoeui.ttf','segoeuib.ttf'),
+            'verdana':('verdana.ttf','verdanab.ttf'),
+            'georgia':('georgia.ttf','georgiab.ttf'),
+        }
+        font_file=family_files.get(font_name,family_files['arial'])[0 if weight=='normal' else 1]
         fontpath = (f'C:/Windows/Fonts/{font_file}' if os.name=='nt'
                     else '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')
         font = ImageFont.truetype(fontpath,max(12,int(c.font_size)))
@@ -56,10 +63,27 @@ def _make_title_png(c, filepath, width, height):
         return (*rgb,alpha)
     fill=rgba(getattr(c,'font_color','#FFFFFF'),255)
     stroke=rgba(getattr(c,'stroke_color','#000000'),210)
+    alignment=str(getattr(c,'text_alignment','center'))
+    measured=[draw.textbbox((0,0),line,font=font)[2] for line in wrapped]
+    widest=max(measured,default=0)
+    if getattr(c,'background_color','') and float(getattr(c,'background_opacity',0))>0:
+        bg=rgba(c.background_color,int(255*max(0.,min(1.,float(c.background_opacity)))))
+        pad_x=max(10,int(c.font_size*.28));pad_y=max(6,int(c.font_size*.12))
+        bx0=(width-widest)//2-pad_x;bx1=(width+widest)//2+pad_x
+        by0=base_y-pad_y;by1=base_y+line_height*len(wrapped)-int(c.font_size*.15)+pad_y
+        draw.rounded_rectangle((bx0,by0,bx1,by1),radius=max(3,int(c.font_size*.12)),fill=bg)
+    if getattr(c,'shadow_enabled',False):
+        for j,line in enumerate(wrapped):
+            anchor={'left':'lt','right':'rt'}.get(alignment,'mt')
+            x=width*.07 if alignment=='left' else width*.93 if alignment=='right' else width//2
+            draw.text((x+2,base_y+j*line_height+3),line,font=font,anchor=anchor,
+                      fill=(0,0,0,150),stroke_width=0)
     for j,line in enumerate(wrapped):
         # stroke cria contorno legivel sobre clipes claros
-        draw.text((width//2,base_y+j*line_height),line,font=font,
-                  anchor='mt',fill=fill,stroke_width=max(0,min(12,int(getattr(c,'stroke_width',3)))),
+        anchor={'left':'lt','right':'rt'}.get(alignment,'mt')
+        x=width*.07 if alignment=='left' else width*.93 if alignment=='right' else width//2
+        draw.text((x,base_y+j*line_height),line,font=font,
+                  anchor=anchor,fill=fill,stroke_width=max(0,min(12,int(getattr(c,'stroke_width',3)))),
                   stroke_fill=stroke)
     im.save(filepath)
 

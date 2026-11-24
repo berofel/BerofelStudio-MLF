@@ -28,6 +28,7 @@ class LibraryDock(QFrame):
     import_requested = Signal()
     relink_requested = Signal()
     marker_activated = Signal(float)
+    transition_requested = Signal(str)
 
     VIDEO={'.mp4','.mov','.mkv','.avi','.webm','.m4v','.mpg','.mpeg'}
     AUDIO={'.mp3','.wav','.m4a','.flac','.ogg','.aac','.wma'}
@@ -115,6 +116,24 @@ class LibraryDock(QFrame):
         self.marker_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.marker_scroll.setWidget(self.marker_page)
         self.stack.addWidget(self.marker_scroll)
+
+        self.transition_page=QWidget();transitions=QVBoxLayout(self.transition_page)
+        transitions.setContentsMargins(9,8,9,8);transitions.setSpacing(7)
+        transitions.addWidget(QLabel('TRANSIÇÕES DISPONÍVEIS'))
+        transitions.addWidget(QLabel('Efeitos aplicados entre dois clipes visuais adjacentes.'))
+        self.transition_buttons=[]
+        for label,key,description in (
+                ('Dissolvência','dissolve','Sobreposição gradual de imagem e áudio.'),
+                ('Deslizar da direita','slide','Entrada lateral com crossfade de áudio.'),
+                ('Zoom suave','zoom','Aproximação progressiva com crossfade de áudio.')):
+            button=QPushButton(label);button.setToolTip(description)
+            button.clicked.connect(lambda _checked=False,value=key:self.transition_requested.emit(value))
+            transitions.addWidget(button);self.transition_buttons.append(button)
+        transitions.addStretch(1)
+        self.transition_scroll=QScrollArea();self.transition_scroll.setWidgetResizable(True)
+        self.transition_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.transition_scroll.setWidget(self.transition_page)
+        self.stack.addWidget(self.transition_scroll)
         self.show_page('media')
         self._set_compact_labels(self.width()<245)
 
@@ -133,7 +152,7 @@ class LibraryDock(QFrame):
         self.marker_heading.setText('MARCADORES' if compact else 'MARCADORES DA TIMELINE')
 
     def show_page(self,key):
-        index={'media':0,'markers':1}.get(key)
+        index={'media':0,'markers':1,'transitions':2}.get(key)
         if index is None:return
         self.stack.setCurrentIndex(index)
         for name,button in self.nav_buttons.items():button.setChecked(name==key)
