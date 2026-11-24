@@ -264,6 +264,14 @@ class AutomaticCleanupTests(unittest.TestCase):
         self.assertEqual(candidates,[])
         self.assertIn('continuidade ou complemento da fala',protected)
 
+    def test_context_preserves_a_repeated_attempt_with_possible_ironic_contrast(self):
+        first=words('O editor travou cinco vezes durante a instalação.',1.)
+        second=words('Perfeito: o editor travou cinco vezes de novo durante a instalação.',8.)
+        candidates,protected=_context_candidates(
+            clip(),{'words':first+second},[(4.,7.8)])
+        self.assertEqual(candidates,[])
+        self.assertTrue(any('ironia/contraste' in item for item in protected),protected)
+
     def test_context_aliases_are_comparison_only_and_transcript_untouched(self):
         raw='Hoje iremos instalar o programa no computador.'
         transcript=words(raw,1.)

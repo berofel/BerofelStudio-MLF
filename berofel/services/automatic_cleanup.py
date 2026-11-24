@@ -17,6 +17,7 @@ import unicodedata
 import math
 from typing import Callable
 from .asr_vocabulary import BASE_HOTWORDS
+from .discourse_features import analyze_irony
 
 from .ai_pipeline import AIOptions, run_analysis
 
@@ -520,6 +521,20 @@ def _context_candidates(clip, report: dict, pause_spans: list[tuple[float, float
             older = sentences[index-back]
             candidates_before=len(found)
             old_start, old_end = older[0].start, older[-1].end
+            old_text_for_context=' '.join(word.text for word in older)
+            before_old=(' '.join(word.text for word in sentences[index-back-1])
+                        if index-back>0 else '')
+            after_new=(' '.join(word.text for word in sentences[index+1])
+                       if index+1<len(sentences) else '')
+            old_irony=analyze_irony(old_text_for_context,previous=before_old,
+                                    following=new_text)
+            new_irony=analyze_irony(new_text,previous=old_text_for_context,
+                                    following=after_new)
+            if old_irony['suspected'] or new_irony['suspected']:
+                cues=old_irony['evidence'] if old_irony['suspected'] else new_irony['evidence']
+                protected.append('possíveis sinais de ironia/contraste; tentativa preservada para revisão: '
+                                 + '; '.join(cues[:2]))
+                continue
             if any(right.start < left.end - .03 for left,right in zip(older,older[1:])):
                 protected.append('timestamps de palavras sobrepostos ou fora de ordem'); continue
             gap = new_start - old_end

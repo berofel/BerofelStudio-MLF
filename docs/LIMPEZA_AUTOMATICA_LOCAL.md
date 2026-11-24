@@ -182,6 +182,13 @@ Ainda é necessário validar propostas contra um corpus PT-BR anotado e executar
 o fluxo visual com mídia real. A integração não declara benchmark end-to-end nem
 precisão editorial em áudio humano.
 
+O serviço discursivo compartilhado também fornece sinais explicáveis de
+ironia/contraste e mudanças locais de tópico ao clipador. Esses sinais não
+determinam intenção e não aprovam cortes: na limpeza contextual, mantêm os casos
+suspeitos para revisão; no clipador, enriquecem o ranking e a justificativa.
+Consulte [Motor discursivo local: ironia e mudanças de assunto](MOTOR_DISCURSIVO_LOCAL.md)
+para algoritmo, limites, fontes técnicas e critérios de teste.
+
 ## Retomadas com comandos de regravação — Python V3
 
 O motor contextual existente agora reconhece comandos locais de retomada

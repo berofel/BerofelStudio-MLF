@@ -101,6 +101,62 @@ class ClipperTests(unittest.TestCase):
             self.assertEqual(item['start_ms'],item['words'][0]['start_ms'])
             self.assertEqual(item['end_ms'],item['words'][-1]['end_ms'])
 
+    def test_candidate_exposes_heuristic_irony_context_without_claiming_certainty(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_irony_') as folder:
+            source=Path(folder)/'source.wav';source.write_bytes(b'synthetic placeholder')
+            clip=Clip(str(source),0.,40.,kind='audio')
+            texts=(
+                'O editor travou cinco vezes durante a instalação.',
+                'Perfeito: o editor travou cinco vezes de novo durante a instalação.',
+                'A timeline mostra as faixas de áudio e vídeo com clareza.',
+                'A biblioteca organiza os arquivos importados do projeto.',
+            )
+            words=[]; at=0.
+            for text in texts:
+                for token in text.split():
+                    words.append({'id':f'w{len(words)}','source':str(source.resolve()),
+                        'source_start':at,'source_end':at+.16,'text':token,'probability':.98})
+                    at+=.24
+                at+=.55
+            with patch('berofel.services.clipper.audio_features',return_value=(None,False)):
+                result=analyze_clips([clip],words,ClipperOptions(4.,12.,8,6.),
+                    cache_dir=Path(folder)/'cache')
+        candidates=result['candidates']
+        self.assertTrue(candidates)
+        marked=[candidate for candidate in candidates if candidate['irony_suspected']]
+        self.assertTrue(marked)
+        self.assertTrue(any('Possíveis sinais de ironia' in reason
+                            for candidate in marked for reason in candidate['reasons']))
+        self.assertIn('irony_candidates',result['stats'])
+
+    def test_candidate_metadata_includes_text_tiling_topic_boundaries(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_topics_') as folder:
+            source=Path(folder)/'source.wav';source.write_bytes(b'synthetic placeholder')
+            clip=Clip(str(source),0.,48.,kind='audio')
+            texts=(
+                'O editor importa vídeos e organiza a biblioteca de mídia.',
+                'A timeline mostra os cortes e as faixas de áudio.',
+                'As legendas acompanham cada palavra da transcrição.',
+                'Mudando de assunto, ontem choveu muito no bairro.',
+                'A rua alagou e os ônibus atrasaram durante a tarde.',
+                'Os moradores pediram uma solução para a drenagem.',
+            )
+            words=[]; at=0.
+            for text in texts:
+                for token in text.split():
+                    words.append({'id':f'w{len(words)}','source':str(source.resolve()),
+                        'source_start':at,'source_end':at+.18,'text':token,'probability':.99})
+                    at+=.25
+                at+=.45
+            with patch('berofel.services.clipper.audio_features',return_value=(None,False)):
+                result=analyze_clips([clip],words,ClipperOptions(6.,18.,8,6.),
+                    cache_dir=Path(folder)/'cache')
+        self.assertTrue(result['candidates'])
+        self.assertTrue(any(candidate['topic_shift_before'] >= .52 or
+                            candidate['topic_shift_after'] >= .52 or
+                            candidate['topic_shift_internal'] >= .52
+                            for candidate in result['candidates']))
+
     def test_text_only_mode_keeps_candidates_and_labels_audio_unavailable(self):
         with tempfile.TemporaryDirectory(prefix='bfs_clipper_text_') as folder:
             source=Path(folder)/'source.mov';source.write_bytes(b'synthetic placeholder')

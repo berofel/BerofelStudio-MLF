@@ -22,9 +22,10 @@ from .ai_cache import digest, source_identity
 from .clip_audio_signals import (FrameFeatures, align_events_to_conversation,
     detect_energy_events, extract_frames_from_chunks, score_clip,
     select_diverse_clips)
+from .discourse_features import analyze_irony, discourse_role, text_tiling_boundaries
 from .ffmpeg import ffmpeg_path, media_info
 
-CLIPPER_VERSION = 2
+CLIPPER_VERSION = 3
 FEATURE_RATE = 16_000
 FEATURE_FRAME_MS = 20
 CACHE_SCHEMA = 1
@@ -248,16 +249,7 @@ def _normalise_words(clip, words: Sequence[Mapping]) -> list[dict]:
 
 
 def _role(text: str) -> str:
-    value = text.strip().lower()
-    if '?' in value or re.match(r'^(o que|quem|quando|onde|como|por que|qual|quanto)\b', value):
-        return 'question'
-    if re.search(r'\b(na verdade|descobri|o segredo|o resultado|a conclusão|aconteceu)\b', value):
-        return 'reveal'
-    if re.search(r'\b(porque|por isso|a resposta|isso significa|quer dizer)\b', value):
-        return 'answer'
-    if re.search(r'\b(em resumo|para concluir|por fim|no final)\b', value):
-        return 'conclusion'
-    return 'unspecified'
+    return discourse_role(text)
 
 
 def _utterances(words: Sequence[Mapping]) -> list[dict]:
@@ -423,7 +415,10 @@ def _candidate_spans(words: Sequence[Mapping], options: ClipperOptions) -> list[
         elif elapsed>=stride:
             starts.append(i);next_allowed=i
     ends=[float(word['end_ms']) for word in words]
-    dialogue_index=_dialogue_context_index(words)
+    turns,by_first,by_last,_word_positions=_dialogue_context_index(words)
+    word_to_turn={id(word):turn_index for turn_index,turn in enumerate(turns)
+                  for word in turn['words']}
+    topic_shift_scores=text_tiling_boundaries(turns)
     candidates=[];seen=set()
     for start_index in starts:
         start=float(words[start_index]['start_ms'])
@@ -440,7 +435,8 @@ def _candidate_spans(words: Sequence[Mapping], options: ClipperOptions) -> list[
         if end_index<start_index or end_index>=len(words):
             continue
         start_index,end_index,dialogue_start,dialogue_end=_dialogue_context_bounds(
-            words,start_index,end_index,maximum,turn_index=dialogue_index)
+            words,start_index,end_index,maximum,
+            turn_index=(turns,by_first,by_last,_word_positions))
         start=float(words[start_index]['start_ms'])
         duration=ends[end_index]-start
         if duration<minimum or duration>maximum:
@@ -467,11 +463,54 @@ def _candidate_spans(words: Sequence[Mapping], options: ClipperOptions) -> list[
         gap_after=(float(words[end_index+1]['start_ms'])-end)/1000. if end_index+1<len(words) else 1.
         context,hook,boundary,reasons=_text_scores(text,subset,utterance_start,
             terminal,gap_before,gap_after)
+        # Candidate windows may start/end inside an utterance; map every word
+        # to its turn instead of treating non-boundary words as missing context.
+        start_turn=word_to_turn.get(id(words[start_index]))
+        end_turn=word_to_turn.get(id(words[end_index]))
+        entry_shift=(topic_shift_scores.get(start_turn,0.) if start_turn is not None else 0.)
+        exit_shift=(topic_shift_scores.get(end_turn+1,0.) if end_turn is not None else 0.)
+        if entry_shift>=.52:
+            context=min(.96,context+.06)
+            boundary=min(.98,boundary+.04)
+            reasons.append(f'Início próximo a uma possível mudança de assunto ({entry_shift:.0%})')
+        if exit_shift>=.52:
+            boundary=min(.98,boundary+.04)
+            reasons.append(f'Fim próximo a uma possível mudança de assunto ({exit_shift:.0%})')
+        internal_scores=[score for boundary_index,score in topic_shift_scores.items()
+                            if start_turn is not None and end_turn is not None and
+                            start_turn < boundary_index <= end_turn]
+        internal_shifts=sum(score>=.50 for score in internal_scores)
+        if internal_shifts:
+            context=max(.05,context-min(.10,.04*internal_shifts))
+            if internal_shifts>=2:
+                reasons.append('Janela atravessa várias mudanças de tópico; revisar coerência')
+
+        previous_text=''
+        following_text=''
+        if start_turn is not None and start_turn>0:
+            previous_turn=turns[start_turn-1]
+            if start/1000.-float(previous_turn['end_ms'])/1000.<=4.0:
+                previous_text=previous_turn['text']
+        if end_turn is not None and end_turn+1<len(turns):
+            following_turn=turns[end_turn+1]
+            if float(following_turn['start_ms'])/1000.-end/1000.<=4.0:
+                following_text=following_turn['text']
+        irony=analyze_irony(text,previous=previous_text,following=following_text)
+        if irony['suspected']:
+            reasons.append('Possíveis sinais de ironia/contraste: '
+                           + '; '.join(irony['evidence'][:3]))
+        figurative_score=(float(irony['score']) if irony['suspected'] else 0.)
         if dialogue_start or dialogue_end:
             reasons.append('Pergunta e resposta próximas mantidas no mesmo clipe')
         candidates.append({'start_ms':int(start),'end_ms':int(end),'text':text,
             'words':subset,'context_score':context,'hook_score':hook,
-            'boundary_score':boundary,'text_reasons':reasons})
+            'boundary_score':boundary,'figurative_score':figurative_score,
+            'irony_suspected':bool(irony['suspected']),
+            'irony_score':float(irony['score']),
+            'irony_evidence':list(irony['evidence']),
+            'topic_shift_before':entry_shift,'topic_shift_after':exit_shift,
+            'topic_shift_internal':max(internal_scores,default=0.),
+            'text_reasons':reasons})
     return candidates
 
 
@@ -606,6 +645,12 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                 'text':candidate['text'],'score':ranked['score'],
                 'score_note':ranked['note'],'reasons':candidate['text_reasons']+ranked['reasons'],
                 'warnings':warnings,'events':candidate_events,
+                'irony_suspected':bool(candidate.get('irony_suspected',False)),
+                'irony_score':float(candidate.get('irony_score',0.)),
+                'irony_evidence':list(candidate.get('irony_evidence',[])),
+                'topic_shift_before':float(candidate.get('topic_shift_before',0.)),
+                'topic_shift_after':float(candidate.get('topic_shift_after',0.)),
+                'topic_shift_internal':float(candidate.get('topic_shift_internal',0.)),
                 'word_spans':[{'start_ms':int(word['start_ms']),
                     'end_ms':int(word['end_ms']),'text':str(word['text'])}
                     for word in words
@@ -641,4 +686,10 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
         'events':[event for item in results for event in item['events']],
         'stats':{'cache_hits':hits,'cache_misses':misses,'decoded_seconds':round(decoded_seconds,3),
             'feature_frames':frames_seen,'candidate_count':candidate_count,
+            'irony_candidates':sum(bool(c.get('irony_suspected')) for item in results for c in item['candidates']),
+            'topic_boundary_candidates':sum(
+                float(c.get('topic_shift_before',0.))>=.52 or
+                float(c.get('topic_shift_after',0.))>=.52 or
+                float(c.get('topic_shift_internal',0.))>=.52
+                for item in results for c in item['candidates']),
             'elapsed_seconds':round(time.monotonic()-started,3),'rss_mb':round(rss_mb,2) if rss_mb else None}}
