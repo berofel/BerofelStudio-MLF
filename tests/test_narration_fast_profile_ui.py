@@ -216,6 +216,15 @@ class FastNarrationProfileUiTests(unittest.TestCase):
         finally:
             panel.close()
 
+    def test_fast_clone_result_discloses_embedding_only_conditioning(self):
+        panel=NarrationPanel()
+        try:
+            panel.set_result('fast-clone.wav',4.0,False,'qwen3-tts-purec-int8',
+                title='Fast clone',conditioning_mode='speaker-embedding-only')
+            self.assertIn('não utiliza a transcrição',panel.status.text())
+        finally:
+            panel.close()
+
     def test_clone_guidance_explains_purec_reference_limit_and_portuguese_dialect(self):
         with tempfile.TemporaryDirectory(prefix='bfs_clone_guidance_ui_') as folder:
             sample=Path(folder)/'reference.wav';sample.write_bytes(b'RIFF'+b'a'*200)

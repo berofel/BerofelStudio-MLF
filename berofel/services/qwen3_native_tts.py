@@ -477,6 +477,7 @@ def generate_native_clone(request: NarrationRequest,progress=None,runner=None,
     if progress:progress(3,3)
     return {'path':str(target),'duration':float(result['duration']),
         'cache_hit':cache_hit,'prompt_cache_hit':embedding_hit,
+        'conditioning_mode':'speaker-embedding-only',
         'profile_prepare_seconds':float(result.get('profile_embedding_prepare_seconds',embedding_seconds)),
         'model_load_seconds':float(result.get('model_load_seconds',0.0)),
         'generation_seconds':float(result.get('generation_seconds',0.0)),

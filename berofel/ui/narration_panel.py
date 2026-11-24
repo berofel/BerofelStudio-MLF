@@ -1171,6 +1171,8 @@ class NarrationPanel(QScrollArea):
             end=start+float(reference_window.get('duration',0))
             method='áudio + transcrição' if conditioning_mode=='audio+transcript' else 'vetor de voz'
             reference_note=f'\nReferência usada: {start:.1f}–{end:.1f}s · {method}.'
+        elif conditioning_mode=='speaker-embedding-only':
+            reference_note='\nEste backend usa apenas o vetor da voz e não utiliza a transcrição da referência.'
         self.status.setText(f'WAV pronto · {mode} ({duration:.1f}s). ' +
                             ('Reaproveitado do cache.' if cache_hit else 'Salvo no cache.') +
                             reference_note+'\n' + str(Path(path)))

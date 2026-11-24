@@ -1485,9 +1485,14 @@ class MainWindow(QMainWindow):
         def ready(result):
             path=result['path']
             duration=result['duration']
+            conditioning_mode=result.get('conditioning_mode')
+            if conditioning_mode is None and request.engine in (
+                    'qwen3-tts-purec-mixed','qwen3-tts-purec-int8',
+                    'qwen3-tts-native-q4','qwen3-tts-native-q4-balanced'):
+                conditioning_mode='speaker-embedding-only'
             self.narration_panel.set_result(path,duration,result['cache_hit'],
                 result.get('engine',''),result.get('threads'),result.get('title',''),
-                result.get('reference_window'),result.get('conditioning_mode'))
+                result.get('reference_window'),conditioning_mode)
             self._register_narration_media(path)
             if add_to_timeline:
                 self.add_last_narration_to_timeline(path,duration,result['title'],position)
