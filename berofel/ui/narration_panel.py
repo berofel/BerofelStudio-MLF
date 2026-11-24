@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from PySide6.QtCore import QUrl, QTimer, QSettings, Qt
+from PySide6.QtCore import QUrl, QTimer, QSettings, Qt, QThread, Signal
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QTextEdit,
                                QPushButton, QCheckBox, QFileDialog, QLineEdit, QHBoxLayout,
@@ -18,6 +18,23 @@ from berofel.services.voice_dsp import VOICE_EQ_PRESETS, clip_voice_eq
 from berofel.services.voice_presets import VoicePresetManager
 from berofel.services.voice_profiles import VoiceProfileManager
 
+_VOICE_REFERENCE_THREADS=set()
+
+
+class _VoiceReferenceInspection(QThread):
+    completed = Signal(str, object, object)
+
+    def __init__(self, source: str):
+        super().__init__()
+        self.source = source
+
+    def run(self):
+        try:
+            from berofel.services.audio_reference import inspect_voice_reference
+            self.completed.emit(self.source, inspect_voice_reference(self.source), None)
+        except Exception as exc:
+            self.completed.emit(self.source, None, str(exc))
+
 
 class NarrationPanel(QScrollArea):
     def __init__(self, parent=None):
@@ -29,6 +46,8 @@ class NarrationPanel(QScrollArea):
         self.last_audio = ''
         self.audio_history=[]
         self._voice_reference_quality_cache={}
+        self._voice_reference_inspections={}
+        self._voice_reference_inspection_modes={}
         self.setWidgetResizable(True)
         self.setVerticalScrollBarPolicy(self.verticalScrollBarPolicy())
         self.setHorizontalScrollBarPolicy(self.horizontalScrollBarPolicy())
@@ -162,7 +181,8 @@ class NarrationPanel(QScrollArea):
         layout.addWidget(self.purec_thread_label)
         layout.addWidget(self.purec_threads)
         self.reference_text = QLineEdit()
-        self.reference_text.setPlaceholderText('Transcrição exata da referência — necessária para a clonagem detalhada no Original')
+        self.reference_text.setPlaceholderText('Transcrição exata do trecho escolhido — confira o horário em Verificar gravação')
+        self.reference_text.setToolTip('A gravação completa é varrida e o Qwen usa uma janela curta. No Original, o texto precisa corresponder exatamente ao áudio dessa janela, não à transcrição do arquivo inteiro.')
         layout.addWidget(self.reference_text)
         self.install_qwen = QPushButton('⬇ Preparar Qwen3 local (download explícito)')
         self.install_qwen.clicked.connect(self._install_qwen)
@@ -824,23 +844,8 @@ class NarrationPanel(QScrollArea):
             notes.append('A transcrição da referência está vazia: o Original também cairá no modo x-vector-only. Preencha o texto exato para o Qwen usar áudio e transcrição juntos.')
         else:
             notes.append('Original Qwen3-TTS Base envia o áudio e a transcrição literal da referência juntos (clonagem por contexto), preservando melhor a pronúncia e o estilo da amostra.')
-        path=self.sample_path.text().strip()
-        if path and Path(path).is_file():
-            try:
-                stat=Path(path).stat()
-                key=(str(Path(path).resolve()),stat.st_size,stat.st_mtime_ns)
-                report=self._voice_reference_quality_cache.get(key)
-                if report is None:
-                    from berofel.services.audio_reference import inspect_voice_reference
-                    report=inspect_voice_reference(path)
-                    self._voice_reference_quality_cache={key:report}
-                if (report.get('warnings') or
-                        float(report.get('silence_fraction',0))>=.30):
-                    notes.append('A referência pode reduzir a semelhança: '+
-                        f'{report.get("audible_signal_seconds",0):.1f} s com sinal acima do piso de silêncio, '
-                        f'{report.get("silence_fraction",0):.0%} quase silencioso. Grave fala contínua, limpa e no sotaque desejado; 10–20 s são uma boa referência prática.')
-            except (OSError,ValueError,RuntimeError):
-                pass
+        if self.sample_path.text().strip():
+            notes.append('A gravação será varrida por inteiro para localizar o trecho usado na clonagem; o modelo recebe somente uma janela curta.')
         text=base+('\n\n'+'\n'.join(notes) if notes else '')
         self.license_note.setText(text)
 
@@ -856,35 +861,58 @@ class NarrationPanel(QScrollArea):
             self._warn_sample_quality_if_needed(path)
 
     def _warn_sample_quality_if_needed(self,source):
-        try:
-            from berofel.services.audio_reference import (inspect_voice_reference,
-                voice_reference_warnings)
-            report=inspect_voice_reference(source)
-        except Exception as exc:
-            QMessageBox.warning(self,'Verificação da gravação',str(exc))
-            return
-        silence_fraction=float(report.get('silence_fraction',0.0))
-        warnings=voice_reference_warnings(report)
-        if warnings:
-            details='\n'.join('• '+str(warning) for warning in warnings)
-            QMessageBox.warning(self,'Amostra pode prejudicar a clonagem',
-                f'{report.get("audible_signal_seconds",0):.1f} s com sinal acima do piso de silêncio; '
-                f'trecho quase silencioso: {silence_fraction:.0%}.\n'
-                f'Essas condições podem reduzir a clareza ou a semelhança vocal. Para uma clonagem mais estável, grave 10–20 s de fala contínua, limpa e no sotaque desejado.\n\n'
-                f'{details}\n\nA gravação original será preservada; você pode escolher outra amostra.')
+        self._start_voice_reference_inspection(source,'warning')
 
-    def _validate_voice_sample(self):
-        source=self.sample_path.text().strip()
-        if not source:
-            QMessageBox.information(self,'Verificar gravação','Escolha primeiro uma gravação de referência.')
+    def _start_voice_reference_inspection(self,source,mode):
+        resolved=str(Path(source).expanduser().resolve())
+        existing=self._voice_reference_inspections.get(resolved)
+        if existing and existing.isRunning():
+            if mode=='report':self._voice_reference_inspection_modes[resolved]=mode
+            return
+        self._voice_reference_inspection_modes[resolved]=mode
+        thread=_VoiceReferenceInspection(resolved)
+        self._voice_reference_inspections[resolved]=thread
+        _VOICE_REFERENCE_THREADS.add(thread)
+        thread.finished.connect(lambda task=thread:_VOICE_REFERENCE_THREADS.discard(task))
+        thread.completed.connect(self._voice_reference_inspection_finished)
+        thread.start()
+
+    def _voice_reference_inspection_finished(self,source,report,error):
+        resolved=str(Path(source).expanduser().resolve())
+        self._voice_reference_inspections.pop(resolved,None)
+        mode=self._voice_reference_inspection_modes.pop(resolved,'')
+        if error:
+            if mode:QMessageBox.warning(self,'Verificação da gravação',str(error))
             return
         try:
-            from berofel.services.audio_reference import inspect_voice_reference
-            report=inspect_voice_reference(source)
-        except Exception as exc:
-            QMessageBox.warning(self,'Gravação de referência',str(exc))
-            return
-        lines=[f'Duração analisada: {report["duration"]:.2f} s',
+            stat=Path(source).stat()
+            self._voice_reference_quality_cache={(resolved,stat.st_size,stat.st_mtime_ns):report}
+        except OSError:
+            pass
+        if str(Path(self.sample_path.text()).expanduser().resolve())!=resolved:return
+        if mode=='report':self._show_voice_reference_report(report)
+        elif mode=='warning':self._show_voice_reference_warning(report)
+
+    def _show_voice_reference_warning(self,report):
+        from berofel.services.audio_reference import voice_reference_warnings
+        warnings=voice_reference_warnings(report)
+        if not warnings:return
+        details='\n'.join('• '+str(warning) for warning in warnings)
+        start=float(report.get('selected_start',0))
+        end=start+float(report.get('duration',0))
+        QMessageBox.warning(self,'Amostra pode prejudicar a clonagem',
+            f'Arquivo: {report.get("source_duration",report.get("duration",0)):.1f} s; '
+            f'trecho escolhido: {start:.1f}–{end:.1f} s. '
+            f'{report.get("audible_signal_seconds",0):.1f} s com sinal acima do piso de silêncio; '
+            f'trecho quase silencioso: {report.get("silence_fraction",0):.0%}.\n'
+            f'Essas condições podem reduzir a clareza ou a semelhança vocal. Para uma clonagem mais estável, grave 10–20 s de fala contínua, limpa e no sotaque desejado.\n\n'
+            f'{details}\n\nA gravação original será preservada; você pode escolher outra amostra.')
+
+    def _show_voice_reference_report(self,report):
+        lines=[f'Duração do arquivo: {report.get("source_duration",report["duration"]):.2f} s',
+               f'Trecho usado para condicionar a voz: {report["duration"]:.2f} s',
+               f'Início do trecho escolhido: {report.get("selected_start",0):.2f} s',
+               'A gravação inteira foi varrida para localizar atividade acústica; o Qwen usa somente este trecho curto como referência.',
                f'Sinal acima do piso de silêncio: {report.get("audible_signal_seconds",0):.2f} s',
                f'Taxa: {report["sample_rate"]} Hz mono',
                f'Nível RMS: {report["rms_dbfs"]:.1f} dBFS',
@@ -896,6 +924,13 @@ class NarrationPanel(QScrollArea):
         else:
             lines.extend(['','Amostra tecnicamente adequada para preparar o perfil.'])
         QMessageBox.information(self,'Verificação local da gravação','\n'.join(lines))
+
+    def _validate_voice_sample(self):
+        source=self.sample_path.text().strip()
+        if not source:
+            QMessageBox.information(self,'Verificar gravação','Escolha primeiro uma gravação de referência.')
+            return
+        self._start_voice_reference_inspection(source,'report')
 
     @staticmethod
     def _voice_profile_id(value):

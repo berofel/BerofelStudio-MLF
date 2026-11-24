@@ -19,6 +19,14 @@ O idioma PT-BR seleciona o token de idioma `Portuguese`; Qwen3-TTS Base não for
 
 O worker Qwen fica ativo durante a sessão do editor: o modelo é carregado uma vez, os pedidos de síntese são enviados ao mesmo processo e o condicionamento de voz fica em cache. O prompt de voz também pode ser guardado em arquivo NPZ versionado sem pickle; se a versão do modelo/encoder ou o conteúdo de referência mudar, ele é reconstruído. O processo encerra junto com o editor e libera a memória então.
 
+### Referências longas e silêncio no início
+
+O Qwen3-TTS Base não treina nem aprende os pesos com a gravação do usuário. Ele cria um condicionamento a partir de um trecho de referência; o código oficial aceita referências curtas e a rota do Berofel limita esse trecho a no máximo 30 segundos. Portanto, um arquivo de uma hora não é enviado inteiro ao modelo como uma hora de condicionamento.
+
+Para evitar que silêncio no começo seja usado como identidade vocal, a aplicação varre o áudio completo antes de preparar o prompt. Quando disponível, reutiliza o Silero/VAD instalado e analisa em blocos de 30 segundos; sem esse runtime, usa o filtro local `silencedetect` do FFmpeg como aproximação acústica. A seleção procura uma janela de até 30 segundos com fala/atividade e pode escolher um trecho menor se houver pouca fala. O Qwen recebe o mesmo intervalo identificado pela verificação. O arquivo original não é editado. A interface de verificação informa duração da fonte, início e duração da janela escolhida.
+
+O texto `ref_text` do modo Original deve corresponder literalmente ao trecho escolhido, não à transcrição de uma hora inteira. Confira o horário exibido e forneça o texto falado nessa janela. Se não houver texto que corresponda à janela, deixe o campo vazio para usar x-vector-only; não passe a transcrição de outro trecho como se estivesse alinhada. A varredura identifica fala por Silero quando disponível; o fallback `silencedetect` só distingue silêncio acústico de atividade e pode confundir música/ruído com fala.
+
 Não é necessário fazer login no Hugging Face para inferência. A geração não tenta baixar modelos pela rede. As bibliotecas e modelos instalados permanecem no ambiente isolado do app. O wrapper Python `sox==1.5.0` testa o executável `sox` no import e imprime um aviso quando ele não está no `PATH`; o executável não está instalado neste PC. O Qwen 12Hz Base ainda gerou WAV válido em testes reais sem ele (o código que chama `sox.Transformer()` está no tokenizer 25Hz, não no caminho Base 12Hz testado). FlashAttention também não está instalado e o Qwen usou o caminho PyTorch manual. Não fazemos instalação global silenciosa dessas ferramentas.
 
 ## Diagnóstico das falhas anteriores

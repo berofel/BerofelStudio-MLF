@@ -178,7 +178,9 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
     _quantization_flag(engine)
     exe, model, paths = _layout()
     source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    key = digest({'schema': 1, 'voice_sha256': source_hash,
+    from .audio_reference import REFERENCE_PREPARATION_VERSION
+    key = digest({'schema': 2, 'reference_preparation': REFERENCE_PREPARATION_VERSION,
+                  'voice_sha256': source_hash,
                   'model': _model_key(exe, model), 'profile': 'xvector-1024-f32'})
     cache = _profile_cache_root()
     destination = cache / (key + '.bin')

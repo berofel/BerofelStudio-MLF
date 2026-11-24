@@ -152,13 +152,12 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             original=source.read_bytes();panel=NarrationPanel()
             try:
                 with (patch.object(QFileDialog,'getOpenFileName',return_value=(str(source),'Audio')),
-                      patch('berofel.services.audio_reference.inspect_voice_reference',
-                            return_value=report),
+                      patch.object(panel,'_start_voice_reference_inspection') as inspect,
                       patch.object(QMessageBox,'warning') as warning):
                     panel._choose_sample()
                 self.assertEqual(panel.sample_path.text(),str(source))
-                self.assertEqual(warning.call_count,1)
-                self.assertIn('55%',warning.call_args.args[2])
+                inspect.assert_called_once_with(str(source),'warning')
+                self.assertEqual(warning.call_count,0)
                 self.assertEqual(source.read_bytes(),original)
             finally:
                 panel.close()
@@ -172,13 +171,37 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             panel=NarrationPanel()
             try:
                 with (patch.object(QFileDialog,'getOpenFileName',return_value=(str(source),'Audio')),
-                      patch('berofel.services.audio_reference.inspect_voice_reference',
-                            return_value=report),
+                      patch.object(panel,'_start_voice_reference_inspection') as inspect,
                       patch.object(QMessageBox,'warning') as warning):
                     panel._choose_sample()
-                self.assertEqual(warning.call_count,1)
-                self.assertIn('35%',warning.call_args.args[2])
-                self.assertIn('fala mais contínua',warning.call_args.args[2])
+                inspect.assert_called_once_with(str(source),'warning')
+                self.assertEqual(warning.call_count,0)
+            finally:
+                panel.close()
+
+    def test_voice_reference_scan_runs_off_ui_thread_and_reports_selected_window(self):
+        import time
+        from PySide6.QtWidgets import QMessageBox
+        report={'warnings':[],'source_duration':3600.0,'duration':15.0,
+                'selected_start':1840.0,'active_fraction':.95,
+                'audible_signal_seconds':14.2,'sample_rate':24000,
+                'rms_dbfs':-21.0,'peak_dbfs':-3.0,
+                'silence_fraction':.05,'clipped_fraction':0.0}
+        with tempfile.TemporaryDirectory(prefix='bfs_reference_scan_thread_') as folder:
+            source=Path(folder)/'long.wav';source.write_bytes(b'local test source')
+            panel=NarrationPanel();panel.sample_path.setText(str(source))
+            try:
+                with patch('berofel.services.audio_reference.inspect_voice_reference',
+                           return_value=report), \
+                     patch.object(QMessageBox,'information') as info:
+                    panel._start_voice_reference_inspection(str(source),'report')
+                    deadline=time.monotonic()+3
+                    while time.monotonic()<deadline and panel._voice_reference_inspections:
+                        self.app.processEvents();time.sleep(.01)
+                    self.app.processEvents()
+                self.assertEqual(info.call_count,1)
+                self.assertIn('3600.00 s',info.call_args.args[2])
+                self.assertIn('1840.00 s',info.call_args.args[2])
             finally:
                 panel.close()
 
@@ -204,7 +227,7 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                     self.assertIn('não envia a transcrição',purec_note)
                     self.assertIn('não oferece um seletor separado de sotaque',purec_note)
                     self.assertIn('Original Qwen3-TTS Base',purec_note)
-                    self.assertIn('9.6 s com sinal acima do piso de silêncio',purec_note)
+                    self.assertIn('varrida por inteiro',purec_note)
                     panel.reference_text.setText('uma transcrição nova')
                     self.assertIn('não envia a transcrição',panel.license_note.text())
                     self.assertEqual(panel.license_note.text().count(

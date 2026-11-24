@@ -15,7 +15,7 @@ from scipy.io import wavfile
 from .audio_reference import prepare_audio_prompt
 from .qwen3_audio_compat import install_librosa_compat
 
-PROMPT_SCHEMA=1
+PROMPT_SCHEMA=2  # invalidates prompts made from the old first-30-seconds crop
 _MAX_PROMPTS=64
 
 
@@ -132,7 +132,9 @@ def _voice_prompt(model,request: dict,memory_cache: dict):
         return prompt,True,time.perf_counter()-started
     output=Path(request['output'])
     reference_path=output.with_name('qwen_reference_local.wav')
-    reference,prepared=prepare_audio_prompt(request['reference'],reference_path)
+    reference,prepared=prepare_audio_prompt(request['reference'],reference_path,
+        start_seconds=request.get('reference_window_start'),
+        duration_seconds=request.get('reference_window_duration'))
     reference_text=str(request.get('reference_text','')).strip()
     try:
         prompt=model.create_voice_clone_prompt(ref_audio=reference,

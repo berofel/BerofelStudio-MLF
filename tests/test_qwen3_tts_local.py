@@ -145,11 +145,13 @@ class QwenLocalCloneTests(unittest.TestCase):
                     requests.append(('prompt',kwargs));return ['prepared prompt']
             package=types.SimpleNamespace(Qwen3TTSModel=FakeModel,
                                           VoiceClonePromptItem=object)
-            fake_prepare=lambda _src,_dst:(str(sample),None)
+            prepare_calls=[]
+            fake_prepare=lambda _src,_dst,**kwargs:(prepare_calls.append(kwargs) or (str(sample),None))
             job=root/'job.json'
             job.write_text(json.dumps({'consent':True,'model_path':str(model),
                 'output':str(output),'reference':str(sample),'text':'fala',
-                'language':'Portuguese','reference_text':'texto referência'}),encoding='utf-8')
+                'language':'Portuguese','reference_text':'texto referência',
+                'reference_window_start':42.0,'reference_window_duration':18.0}),encoding='utf-8')
             with patch.dict(sys.modules,{'torch':FakeTorch,'qwen_tts':package}), \
                  patch.object(worker,'prepare_audio_prompt',side_effect=fake_prepare):
                 worker.run(str(job),str(result))
@@ -161,6 +163,7 @@ class QwenLocalCloneTests(unittest.TestCase):
             self.assertEqual(clone['max_new_tokens'],96)
             self.assertTrue(output.is_file())
             self.assertEqual(sample.read_bytes(),b'original')
+            self.assertEqual(prepare_calls,[{'start_seconds':42.0,'duration_seconds':18.0}])
 
     def test_warm_worker_loads_model_once_and_reuses_voice_prompt(self):
         import io
@@ -358,7 +361,9 @@ class QwenLocalCloneTests(unittest.TestCase):
             source.write_bytes(b'authorized source bytes')
             original=source.read_bytes()
             with patch.object(audio_reference,'prepare_audio_prompt',
-                return_value=(str(normalized),None)):
+                return_value=(str(normalized),None)), \
+                 patch.object(audio_reference,'_reference_window',return_value=(0.0,3.0,1.0)), \
+                 patch('berofel.services.ffmpeg.media_info',return_value=(3.0,False,True)):
                 report=audio_reference.inspect_voice_reference(source)
             self.assertAlmostEqual(report['duration'],3.0,places=2)
             self.assertAlmostEqual(report['audible_signal_seconds'],3.0,delta=.05)
@@ -377,7 +382,9 @@ class QwenLocalCloneTests(unittest.TestCase):
             wavfile.write(str(normalized),rate,signal)
             source.write_bytes(b'authorized source bytes')
             with patch.object(audio_reference,'prepare_audio_prompt',
-                return_value=(str(normalized),None)):
+                return_value=(str(normalized),None)), \
+                 patch.object(audio_reference,'_reference_window',return_value=(0.0,4.0,.45)), \
+                 patch('berofel.services.ffmpeg.media_info',return_value=(4.0,False,True)):
                 report=audio_reference.inspect_voice_reference(source)
             self.assertGreater(report['silence_fraction'],.50)
             self.assertTrue(any('Mais de 50%' in warning for warning in report['warnings']))
@@ -394,6 +401,60 @@ class QwenLocalCloneTests(unittest.TestCase):
                                            'silence_fraction':.65})
         self.assertEqual(len(warnings),1)
 
+    def test_reference_window_selection_avoids_leading_silence_and_searches_full_file(self):
+        from berofel.services.audio_reference import _best_reference_window
+        # 1 h source: first 40 s silent; later speech regions are eligible.
+        source='long-reference.wav'
+        silence_log='''
+[silencedetect] silence_start: 0
+[silencedetect] silence_end: 40.0 | silence_duration: 40.0
+[silencedetect] silence_start: 70.0
+[silencedetect] silence_end: 3540.0 | silence_duration: 3470.0
+'''
+        with patch('berofel.services.ffmpeg.ffmpeg_path',return_value='ffmpeg'), \
+             patch('berofel.services.ffmpeg.media_info',return_value=(3600.0,False,True)), \
+             patch('berofel.services.audio_reference.subprocess.run',return_value=type(
+                 'Result',(),{'returncode':0,'stderr':silence_log})()) as run:
+            start,length,active= _best_reference_window(source,123,456)
+        self.assertEqual(length,30.0)
+        self.assertGreaterEqual(start,40.0)
+        self.assertAlmostEqual(start,40.0)
+        self.assertEqual(active,1.0)
+        self.assertTrue(any('silencedetect' in arg for arg in run.call_args.args[0]))
+
+    def test_real_ffmpeg_scan_selects_later_voice_activity_without_changing_source(self):
+        import numpy as np
+        from scipy.io import wavfile
+        from berofel.services.audio_reference import inspect_voice_reference,prepare_audio_prompt
+        from berofel.services.ffmpeg import ffmpeg_path
+        with tempfile.TemporaryDirectory(prefix='bfs_full_reference_scan_') as folder:
+            root=Path(folder);source=root/'long.wav'
+            rate=24000;lead=np.zeros(rate*35,dtype=np.int16)
+            t=np.arange(rate*8)/rate
+            voice=(np.sin(2*np.pi*180*t)*11000).astype(np.int16)
+            original=np.concatenate((lead,voice,lead))
+            wavfile.write(source,rate,original)
+            before=source.read_bytes()
+            report=inspect_voice_reference(source)
+            self.assertGreater(report['source_duration'],70.0)
+            self.assertGreaterEqual(report['selected_start'],30.0)
+            self.assertLess(report['selected_start'],45.0)
+            self.assertLessEqual(report['duration'],15.0)
+            self.assertGreater(report['active_fraction'],.5)
+            crop=root/'same-window.wav'
+            prepare_audio_prompt(str(source),crop,ffmpeg=ffmpeg_path(),
+                start_seconds=report['selected_start'],duration_seconds=report['duration'])
+            crop_rate,crop_pcm=wavfile.read(crop)
+            self.assertAlmostEqual(len(crop_pcm)/crop_rate,report['duration'],delta=.1)
+            self.assertEqual(source.read_bytes(),before)
+
+    def test_full_file_reference_report_explains_qwen_uses_short_selected_window(self):
+        from berofel.services.audio_reference import voice_reference_warnings
+        report={'warnings':[], 'source_duration':3600.0,'duration':30.0,
+                'selected_start':1800.0,'active_fraction':.98,'silence_fraction':.02}
+        self.assertEqual(voice_reference_warnings(report),[])
+        self.assertGreater(report['source_duration'],report['duration'])
+
     def test_prepare_voice_prompt_supports_official_xvector_only_mode(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);sample=root/'reference.wav';sample.write_bytes(b'RIFF'+b'x'*200)
@@ -401,6 +462,7 @@ class QwenLocalCloneTests(unittest.TestCase):
             with patch.dict(os.environ,{'BEROFEL_QWEN3_TTS_MODEL':str(model),
                     'BEROFEL_QWEN3_PROMPT_CACHE':str(root/'prompts')}), \
                  patch.object(qwen,'is_ready',return_value=True), \
+                 patch('berofel.services.audio_reference._reference_window',return_value=(0.0,30.0,1.0)), \
                  patch.object(qwen,'_runtime_request',return_value={
                      'ok':True,'prompt_cache_hit':False,'worker_pid':123,
                      'model_load_count':1,'model_load_seconds':1.0,
