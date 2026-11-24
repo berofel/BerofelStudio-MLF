@@ -63,20 +63,22 @@ def validate_request(text: str, voice: str, language: str,
 
 
 def validate_clone_conditioning(request: NarrationRequest) -> None:
-    """Prevent PT-BR requests from silently falling back to x-vector-only.
+    """Validate the conditioning required by the explicitly selected backend.
 
     Qwen3 exposes only the generic ``Portuguese`` language token. Regional
     accent is therefore anchored by the reference speech and its transcript.
-    The optimized Pure C/native adapters accept only an x-vector and cannot
-    provide the full audio+transcript conditioning required for this path.
+    Pure C is an explicit speed path: it accepts only an x-vector. Original
+    uses the full audio+transcript conditioning. Native Q4 remains blocked for
+    PT-BR until its language/accent behavior is separately validated.
     """
     if request.language != 'portuguese':
         return
+    if request.engine in ('qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8'):
+        return
     if request.engine != 'qwen3-tts-local':
         raise ValueError(
-            'Para narração em português brasileiro, selecione “Original Qwen3-TTS Base”. '
-            'Os perfis rápidos usam somente o vetor vocal e não preservam o sotaque '
-            'regional com a mesma segurança.'
+            'Este backend ainda não foi validado para clonagem PT-BR. Selecione '
+            'Original Qwen3-TTS Base ou um perfil Pure C explicitamente identificado.'
         )
     if not str(request.reference_text or '').strip():
         raise ValueError(

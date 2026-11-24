@@ -758,23 +758,16 @@ class NarrationPanel(QScrollArea):
         self._preferences_timer.start()
 
     def _ensure_ptbr_clone_backend(self,*_args):
-        """Keep Brazilian Portuguese cloning on the full audio+transcript path.
-
-        Pure C and the native Q4 adapters only accept an x-vector. They remain
-        selectable for languages where that limitation is acceptable, but
-        must not silently become the PT-BR cloning route.
-        """
+        """Keep PT-BR Pure C selectable; never silently switch the user's engine."""
         if self.language.currentData()!='portuguese':
             return
-        if self.clone_engine.currentData()=='qwen3-tts-local':
+        engine=self.clone_engine.currentData()
+        if engine in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8','qwen3-tts-local'):
             return
         index=self.clone_engine.findData('qwen3-tts-local')
-        if index<0:
-            return
-        self.clone_engine.setCurrentIndex(index)
-        self.status.setText(
-            'PT-BR usa o Qwen3 Base Original com áudio e transcrição da referência '
-            'para preservar melhor voz e pronúncia.')
+        if index>=0:
+            self.clone_engine.setCurrentIndex(index)
+            self.status.setText('Este perfil ainda não foi validado para PT-BR; usando Original Qwen3 Base.')
 
     def _prewarm_selected_fast_profile(self,*_args):
         """Warm the Turbo model only after the user selects a saved voice/mode."""
@@ -906,9 +899,10 @@ class NarrationPanel(QScrollArea):
         notes=[]
         if self.language.currentData()=='portuguese':
             notes.append('Português brasileiro: o Qwen3 Base recebe o idioma “Portuguese”, sem token separado de sotaque. A clonagem usa a voz e a pronúncia da gravação; uma referência em PT-BR é necessária e o resultado ainda deve ser conferido.')
-        if engine in ('qwen3-tts-purec-int8','qwen3-tts-purec-mixed',
-                      'qwen3-tts-native-q4','qwen3-tts-native-q4-balanced'):
-            notes.append('Este backend rápido usa somente o x-vector e ignora a transcrição. Em PT-BR, a geração fica bloqueada nesse modo para evitar voz/sotaque genéricos. Escolha “Original Qwen3-TTS Base”, transcreva e confira a referência.')
+        if engine in ('qwen3-tts-purec-int8','qwen3-tts-purec-mixed'):
+            notes.append('Modo rápido Pure C: usa o x-vector extraído da gravação, ignora a transcrição e pode reduzir a fidelidade do sotaque/identidade. O texto ainda aparece aqui para referência, mas não é enviado como condicionamento. Confira a amostra antes de usar.')
+        elif engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced'):
+            notes.append('Este backend ainda não foi validado para PT-BR. Use Original para condicionamento completo ou selecione Pure C conscientemente para o modo rápido por x-vector.')
         elif not self.reference_text.text().strip():
             notes.append('A transcrição da referência está vazia. Em PT-BR, a geração fica bloqueada até o Qwen usar áudio e transcrição juntos. Clique em “Transcrever referência” e revise o texto.')
         else:
@@ -1265,8 +1259,12 @@ class NarrationPanel(QScrollArea):
                                quantize=self.quantize.isChecked(),
                                title=self.name.text().strip() or 'Narração',
                                engine=engine,
-                               reference_text=self.reference_text.text().strip() if custom else '',
-                               reference_text_reviewed=self._reference_transcript_is_reviewed(),
+                               reference_text=(self.reference_text.text().strip()
+                                   if custom and engine not in (
+                                       'qwen3-tts-purec-mixed','qwen3-tts-purec-int8') else ''),
+                               reference_text_reviewed=(
+                                   self._reference_transcript_is_reviewed()
+                                   if engine=='qwen3-tts-local' else False),
                                thread_count=(self.purec_threads.currentData()
                                              if engine=='qwen3-tts-purec-mixed' else None))
         try:

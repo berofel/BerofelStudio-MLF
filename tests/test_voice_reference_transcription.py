@@ -24,10 +24,15 @@ class CloneConditioningTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'transcrição exata'):
             validate_clone_conditioning(self._request())
 
-    def test_ptbr_fast_embedding_backend_is_rejected_even_with_transcript(self):
-        with self.assertRaisesRegex(ValueError, 'vetor vocal'):
-            validate_clone_conditioning(self._request(
-                'qwen3-tts-purec-int8', text='texto exato'))
+    def test_ptbr_purec_is_allowed_as_explicit_xvector_path(self):
+        validate_clone_conditioning(self._request(
+            'qwen3-tts-purec-int8', text=''))
+        validate_clone_conditioning(self._request(
+            'qwen3-tts-purec-mixed', text=''))
+
+    def test_ptbr_native_q4_remains_blocked_until_validated(self):
+        with self.assertRaisesRegex(ValueError, 'não foi validado'):
+            validate_clone_conditioning(self._request('qwen3-tts-native-q4'))
 
     def test_ptbr_original_accepts_transcribed_reference(self):
         validate_clone_conditioning(self._request(text='texto exato',reviewed=True))

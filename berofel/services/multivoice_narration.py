@@ -730,9 +730,13 @@ def generate_script_audio(script: MultiVoiceScript, profiles: Mapping[str, Mappi
                                 consent=True, project_path=project_path,
                                 title=f'{script.id[:8]}_{line.number:04d}_{line.id[:8]}_p{chunk_index:03d}',
                                 engine=script.engine_id,
-                                reference_text=str(profile.get('reference_text', '') or ''),
-                                reference_text_reviewed=bool(
-                                    profile.get('reference_text_reviewed',False)),
+                                reference_text=(str(profile.get('reference_text', '') or '')
+                                    if script.engine_id not in ('qwen3-tts-purec-mixed',
+                                                                'qwen3-tts-purec-int8') else ''),
+                                reference_text_reviewed=(bool(profile.get(
+                                    'reference_text_reviewed',False))
+                                    if script.engine_id not in ('qwen3-tts-purec-mixed',
+                                                                'qwen3-tts-purec-int8') else False),
                                 thread_count=(6 if script.engine_id in ('qwen3-tts-purec-mixed',
                                                                          'qwen3-tts-purec-int8') else None))
                             result = generator(request, control=control, stage=stage)

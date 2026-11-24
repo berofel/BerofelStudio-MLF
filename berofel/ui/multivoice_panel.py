@@ -267,10 +267,11 @@ class MultiVoicePanel(QWidget):
             for profile_id in profile_ids)
 
     def _ensure_ptbr_engine(self, *_):
-        """PT-BR cloning requires Base ICL with both reference audio and text."""
+        """Do not silently replace an explicitly selected Pure C speed profile."""
         if self._forcing_ptbr_backend or not self._ptbr_profile_selected():
             return
-        if self.engine.currentData() == 'qwen3-tts-local':
+        engine = self.engine.currentData()
+        if engine in ('qwen3-tts-local', 'qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8'):
             return
         index = self.engine.findData('qwen3-tts-local')
         if index < 0:
@@ -280,8 +281,7 @@ class MultiVoicePanel(QWidget):
             self._ptbr_backend_notice = True
             self.engine.setCurrentIndex(index)
             self.status.setText(
-                'Perfis PT-BR usam o Qwen3 Base Original com áudio e transcrição. '
-                'Pure C e Q4 não recebem a transcrição de referência neste fluxo.')
+                'Este perfil ainda não foi validado para PT-BR; selecionado Original Qwen3 Base.')
         finally:
             self._forcing_ptbr_backend = False
 
@@ -315,10 +315,17 @@ class MultiVoicePanel(QWidget):
             key=lambda voice: int(voice[1:]))
             for voice_ids in voices_by_profile.values() if len(voice_ids) > 1), [])
         notes = []
+        engine_id = str(self.engine.currentData() or '')
         if self._ptbr_backend_notice and self._ptbr_profile_selected():
             notes.append(
                 'PT-BR: Original Qwen3 Base selecionado para condicionar a clonagem '
                 'com a gravação e a transcrição de cada perfil.')
+        if self._ptbr_profile_selected() and engine_id in (
+                'qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8'):
+            notes.append(
+                'PT-BR no Pure C: modo rápido x-vector-only. O backend ignora a '
+                'transcrição da referência e pode reduzir a fidelidade do sotaque; '
+                'cada personagem continua usando o seu próprio perfil preparado.')
         if repeated_voice_ids:
             notes.append('Os personagens ' + ', '.join(repeated_voice_ids) +
                 ' usam o mesmo perfil vocal e terão a mesma identidade de voz. ' +
@@ -337,7 +344,6 @@ class MultiVoicePanel(QWidget):
                     ' usam perfis diferentes, mas a mesma gravação de referência; ' +
                     'a identidade vocal tende a ser a mesma. Escolha gravações distintas ' +
                     'para personagens com vozes diferentes.')
-        engine_id = str(self.engine.currentData() or '')
         if engine_id in ('qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8') and len(selected_profiles) > 1:
             notes.append(
                 'Atenção: o Pure C fixa uma voz clonada por servidor. Ao trocar entre perfis '

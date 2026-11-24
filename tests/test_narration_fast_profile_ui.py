@@ -59,7 +59,7 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             finally:
                 restored.close()
 
-    def test_ptbr_defaults_and_migrates_to_full_audio_transcript_backend(self):
+    def test_ptbr_defaults_original_but_keeps_purec_as_explicit_speed_choice(self):
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True), \
              patch('berofel.services.qwen3_purec_tts.is_ready',return_value=True):
             panel=NarrationPanel()
@@ -72,7 +72,8 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                 panel.clone_engine.setCurrentIndex(
                     panel.clone_engine.findData('qwen3-tts-purec-int8'))
                 panel.language.setCurrentIndex(panel.language.findData('portuguese'))
-                self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
+                self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-purec-int8')
+                self.assertIn('x-vector',panel.license_note.text())
             finally:
                 panel.close()
 
@@ -170,7 +171,7 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                 finally:
                     panel.close()
 
-    def test_ptbr_custom_clone_requires_reference_transcript(self):
+    def test_ptbr_original_requires_transcript_but_purec_is_explicit_xvector(self):
         from PySide6.QtWidgets import QMessageBox
         with tempfile.TemporaryDirectory(prefix='bfs_xvector_voice_ui_') as folder:
             sample=Path(folder)/'reference.wav'
@@ -197,10 +198,13 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                 panel.authorized.setChecked(True)
                 with patch.object(QMessageBox,'warning') as warning:
                     panel._generate(False)
-                self.assertEqual(captured,[])
-                warning.assert_called_once()
-                self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
-                self.assertIn('conferi',warning.call_args.args[2].lower())
+                self.assertEqual(len(captured),1)
+                request,insert=captured.pop()
+                self.assertEqual(request.engine,'qwen3-tts-purec-int8')
+                self.assertEqual(request.reference_text,'')
+                self.assertFalse(request.reference_text_reviewed)
+                self.assertFalse(insert)
+                warning.assert_not_called()
                 panel.clone_engine.setCurrentIndex(
                     panel.clone_engine.findData('qwen3-tts-local'))
                 self.assertFalse(panel.reference_text_reviewed.isHidden())
@@ -373,10 +377,12 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                     panel.reference_text.setText('uma transcrição nova')
                     self.assertIn('ignora a transcrição',panel.license_note.text())
                     panel.language.setCurrentIndex(panel.language.findData('portuguese'))
-                    self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
+                    self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-purec-int8')
+                    self.assertIn('x-vector',panel.license_note.text())
+                    panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
                     original_note=panel.license_note.text()
                     self.assertIn('envia o áudio e a transcrição literal',original_note)
-                    self.assertNotIn('x-vector e ignora',original_note)
+                    self.assertNotIn('ignora a transcrição',original_note)
                     self.assertIn('sem token separado de sotaque',original_note)
             finally:
                 panel.close()

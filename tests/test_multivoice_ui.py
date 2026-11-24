@@ -60,7 +60,7 @@ class MultiVoicePanelTests(unittest.TestCase):
             'qwen3-tts-purec-int8', 'qwen3-tts-purec-mixed',
             'qwen3-tts-native-q4', 'qwen3-tts-native-q4-balanced', 'qwen3-tts-local'})
 
-    def test_ptbr_profile_routes_multivoice_to_full_qwen_clone_backend(self):
+    def test_ptbr_profile_can_explicitly_keep_purec_speed_backend(self):
         purec = self.panel.engine.findData('qwen3-tts-purec-int8')
         if purec < 0:
             self.panel.engine.addItem('Pure C INT8 test', 'qwen3-tts-purec-int8')
@@ -69,9 +69,9 @@ class MultiVoicePanelTests(unittest.TestCase):
         self.panel.script_text.setPlainText('[001 | V1]\nTeste PT-BR.')
         self.panel.assignments['V1'].setCurrentIndex(
             self.panel.assignments['V1'].findData(self.profile['id']))
-        self.assertEqual(self.panel.engine.currentData(), 'qwen3-tts-local')
-        self.assertIn('Qwen3 Base Original', self.panel.status.text())
-        self.assertIn('PT-BR:', self.panel.engine_note.text())
+        self.assertEqual(self.panel.engine.currentData(), 'qwen3-tts-purec-int8')
+        self.assertIn('x-vector-only', self.panel.engine_note.text())
+        self.assertIn('ignora a transcrição', self.panel.engine_note.text())
 
     def test_non_portuguese_profile_keeps_fast_multivoice_backend(self):
         sample = Path(self.temp.name) / 'english.wav'
