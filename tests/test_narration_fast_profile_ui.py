@@ -118,6 +118,35 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                 finally:
                     panel.close()
 
+    def test_selecting_saved_voice_warns_once_for_cached_low_quality_reference(self):
+        from PySide6.QtWidgets import QMessageBox
+        with tempfile.TemporaryDirectory(prefix='bfs_saved_voice_quality_ui_') as folder:
+            root=Path(folder);store=root/'voices';sample=root/'reference.wav'
+            sample.write_bytes(b'RIFF'+b'authorized sample bytes'*20)
+            with patch.dict(os.environ,{'BEROFEL_VOICE_PROFILE_DIR':str(store)}):
+                profile=VoiceProfileManager().create('Voz com pausas',sample,
+                    'portuguese','texto da referência',authorized=True)
+                panel=NarrationPanel()
+                try:
+                    index=panel.voice.findData(f'voice-profile:{profile["id"]}')
+                    self.assertGreaterEqual(index,0)
+                    panel.voice.setCurrentIndex(index)
+                    private=Path(profile['sample_path']);stat=private.stat()
+                    key=(str(private.resolve()),stat.st_size,stat.st_mtime_ns)
+                    panel._voice_reference_quality_cache[key]={
+                        'warnings':['Mais de 50% do trecho está quase silencioso.'],
+                        'source_duration':6.0,'duration':6.0,'selected_start':0.0,
+                        'audible_signal_seconds':2.7,'silence_fraction':.55}
+                    with (patch.object(QMessageBox,'warning') as warning,
+                          patch.object(panel,'_start_voice_reference_inspection') as inspect):
+                        panel.voice.activated.emit(index)
+                        panel.voice.activated.emit(index)
+                    warning.assert_called_once()
+                    self.assertIn('quase silencioso',warning.call_args.args[2])
+                    inspect.assert_not_called()
+                finally:
+                    panel.close()
+
     def test_custom_clone_can_generate_without_reference_transcript(self):
         """Qwen Base supports x-vector-only cloning when ref_text is omitted."""
         with tempfile.TemporaryDirectory(prefix='bfs_xvector_voice_ui_') as folder:

@@ -48,6 +48,7 @@ class NarrationPanel(QScrollArea):
         self._voice_reference_quality_cache={}
         self._voice_reference_inspections={}
         self._voice_reference_inspection_modes={}
+        self._voice_reference_warning_seen=set()
         self.setWidgetResizable(True)
         self.setVerticalScrollBarPolicy(self.verticalScrollBarPolicy())
         self.setHorizontalScrollBarPolicy(self.horizontalScrollBarPolicy())
@@ -408,6 +409,7 @@ class NarrationPanel(QScrollArea):
         self.text.textChanged.connect(self._schedule_preferences_save)
         self.language.currentIndexChanged.connect(self._schedule_preferences_save)
         self.voice.currentIndexChanged.connect(self._schedule_preferences_save)
+        self.voice.activated.connect(self._warn_selected_saved_voice_quality)
         self.sample_path.textChanged.connect(self._schedule_preferences_save)
         self.clone_engine.currentIndexChanged.connect(self._schedule_preferences_save)
         self.purec_threads.currentIndexChanged.connect(self._schedule_preferences_save)
@@ -861,7 +863,38 @@ class NarrationPanel(QScrollArea):
             self._warn_sample_quality_if_needed(path)
 
     def _warn_sample_quality_if_needed(self,source):
-        self._start_voice_reference_inspection(source,'warning')
+        resolved=str(Path(source).expanduser().resolve())
+        try:
+            stat=Path(resolved).stat()
+            key=(resolved,stat.st_size,stat.st_mtime_ns)
+        except OSError:
+            self._start_voice_reference_inspection(resolved,'warning')
+            return
+        report=self._voice_reference_quality_cache.get(key)
+        if report is not None:
+            self._show_voice_reference_warning_once(key,report)
+            return
+        self._start_voice_reference_inspection(resolved,'warning')
+
+    def _warn_selected_saved_voice_quality(self,_index=None):
+        """Warn when the user selects a saved profile whose reference is weak."""
+        profile_id=self._voice_profile_id(self.voice.currentData())
+        if not profile_id:return
+        try:
+            profile=self.voice_profiles.get(profile_id)
+        except (OSError,ValueError,KeyError):
+            return
+        sample=Path(profile['sample_path'])
+        try:
+            if not sample.is_file() or sample.stat().st_size<=44:return
+        except OSError:
+            return
+        self._warn_sample_quality_if_needed(sample)
+
+    def _show_voice_reference_warning_once(self,key,report):
+        if key in self._voice_reference_warning_seen:return
+        self._voice_reference_warning_seen.add(key)
+        self._show_voice_reference_warning(report)
 
     def _start_voice_reference_inspection(self,source,mode):
         resolved=str(Path(source).expanduser().resolve())
@@ -884,14 +917,17 @@ class NarrationPanel(QScrollArea):
         if error:
             if mode:QMessageBox.warning(self,'Verificação da gravação',str(error))
             return
+        key=None
         try:
             stat=Path(source).stat()
-            self._voice_reference_quality_cache={(resolved,stat.st_size,stat.st_mtime_ns):report}
+            key=(resolved,stat.st_size,stat.st_mtime_ns)
+            self._voice_reference_quality_cache[key]=report
         except OSError:
             pass
         if str(Path(self.sample_path.text()).expanduser().resolve())!=resolved:return
         if mode=='report':self._show_voice_reference_report(report)
-        elif mode=='warning':self._show_voice_reference_warning(report)
+        elif mode=='warning' and key is not None:
+            self._show_voice_reference_warning_once(key,report)
 
     def _show_voice_reference_warning(self,report):
         from berofel.services.audio_reference import voice_reference_warnings
