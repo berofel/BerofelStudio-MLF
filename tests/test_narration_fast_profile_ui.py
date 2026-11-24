@@ -48,6 +48,7 @@ class FastNarrationProfileUiTests(unittest.TestCase):
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
              patch('berofel.services.qwen3_purec_tts.is_ready',return_value=True):
             panel=NarrationPanel()
+            panel.language.setCurrentIndex(panel.language.findData('english'))
             panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-purec-mixed'))
             panel.purec_threads.setCurrentIndex(panel.purec_threads.findData(8))
             panel.save_preferences();panel.close()
@@ -57,6 +58,23 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                 self.assertEqual(restored.purec_threads.currentData(),8)
             finally:
                 restored.close()
+
+    def test_ptbr_defaults_and_migrates_to_full_audio_transcript_backend(self):
+        with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True), \
+             patch('berofel.services.qwen3_purec_tts.is_ready',return_value=True):
+            panel=NarrationPanel()
+            try:
+                panel.language.setCurrentIndex(panel.language.findData('portuguese'))
+                self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
+                self.assertIn('Recomendado para clonagem',panel.clone_engine.currentText())
+                self.assertIn('sem token separado de sotaque',panel.license_note.text())
+                panel.language.setCurrentIndex(panel.language.findData('english'))
+                panel.clone_engine.setCurrentIndex(
+                    panel.clone_engine.findData('qwen3-tts-purec-int8'))
+                panel.language.setCurrentIndex(panel.language.findData('portuguese'))
+                self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
+            finally:
+                panel.close()
 
     def test_pre_authorized_profile_generates_without_reconfirming(self):
         with tempfile.TemporaryDirectory(prefix='bfs_fast_voice_ui_') as folder:
@@ -181,7 +199,8 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                     panel._generate(False)
                 self.assertEqual(captured,[])
                 warning.assert_called_once()
-                self.assertIn('vetor vocal',warning.call_args.args[2])
+                self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
+                self.assertIn('conferi',warning.call_args.args[2].lower())
                 panel.clone_engine.setCurrentIndex(
                     panel.clone_engine.findData('qwen3-tts-local'))
                 self.assertFalse(panel.reference_text_reviewed.isHidden())
@@ -343,27 +362,22 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                            return_value=report):
                     panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
                     panel.sample_path.setText(str(sample))
-                    panel.language.setCurrentIndex(panel.language.findData('portuguese'))
+                    panel.language.setCurrentIndex(panel.language.findData('english'))
                     panel.reference_text.setText('transcrição literal da amostra')
                     panel.clone_engine.setCurrentIndex(
                         panel.clone_engine.findData('qwen3-tts-purec-int8'))
                     panel._update_custom()
                     purec_note=panel.license_note.text()
                     self.assertIn('ignora a transcrição',purec_note)
-                    self.assertIn('não oferece um seletor separado de sotaque',purec_note)
-                    self.assertIn('Original Qwen3-TTS Base',purec_note)
                     self.assertIn('varrida por inteiro',purec_note)
                     panel.reference_text.setText('uma transcrição nova')
                     self.assertIn('ignora a transcrição',panel.license_note.text())
-                    self.assertEqual(panel.license_note.text().count(
-                        'PT-BR usa o idioma Português'),1)
-
-                    panel.clone_engine.setCurrentIndex(
-                        panel.clone_engine.findData('qwen3-tts-local'))
+                    panel.language.setCurrentIndex(panel.language.findData('portuguese'))
+                    self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
                     original_note=panel.license_note.text()
                     self.assertIn('envia o áudio e a transcrição literal',original_note)
-                    self.assertNotIn('ignora a transcrição',original_note)
-                    self.assertEqual(original_note.count('PT-BR usa o idioma Português'),1)
+                    self.assertNotIn('x-vector e ignora',original_note)
+                    self.assertIn('sem token separado de sotaque',original_note)
             finally:
                 panel.close()
 

@@ -110,7 +110,9 @@ class QwenLocalCloneTests(unittest.TestCase):
                 with wave.open(job['output'],'wb') as output:
                     output.setnchannels(1);output.setsampwidth(2);output.setframerate(24000)
                     output.writeframes(b'\x01\x00'*2400)
-                Path(result_path).write_text(json.dumps({'duration':.1}),encoding='utf-8')
+                Path(result_path).write_text(json.dumps({'duration':.1,
+                    'conditioning_mode':'audio+transcript','conditioning_verified':True,
+                    'icl_mode':True,'x_vector_only_mode':False}),encoding='utf-8')
             with patch.dict(os.environ,{'BEROFEL_AI_CACHE':str(root/'cache')}), \
                  patch.object(qwen,'is_ready',return_value=True), \
                  patch.object(qwen,'model_path',return_value=model):
@@ -149,6 +151,12 @@ class QwenLocalCloneTests(unittest.TestCase):
                 def set_num_threads(count):requests.append(('threads',count))
                 @staticmethod
                 def set_num_interop_threads(count):requests.append(('interop_threads',count))
+            class PromptItem:
+                ref_code=np.asarray([1,2,3],dtype=np.int64)
+                ref_spk_embedding=np.asarray([.2,.4,.3],dtype=np.float32)
+                x_vector_only_mode=False
+                icl_mode=True
+                ref_text='texto referência'
             class FakeModel:
                 @classmethod
                 def from_pretrained(cls,*args,**kwargs):
@@ -156,7 +164,7 @@ class QwenLocalCloneTests(unittest.TestCase):
                 def generate_voice_clone(self,**kwargs):
                     requests.append(('clone',kwargs));return [np.zeros(2400,dtype=np.float32)],24000
                 def create_voice_clone_prompt(self,**kwargs):
-                    requests.append(('prompt',kwargs));return ['prepared prompt']
+                    requests.append(('prompt',kwargs));return [PromptItem()]
             package=types.SimpleNamespace(Qwen3TTSModel=FakeModel,
                                           VoiceClonePromptItem=object)
             prepare_calls=[]
@@ -173,7 +181,7 @@ class QwenLocalCloneTests(unittest.TestCase):
             self.assertEqual(load[2]['device_map'],'cpu')
             self.assertTrue(load[2]['local_files_only'])
             clone=next(item for item in requests if item[0]=='clone')[1]
-            self.assertEqual(clone['voice_clone_prompt'],['prepared prompt'])
+            self.assertIsInstance(clone['voice_clone_prompt'][0],PromptItem)
             self.assertEqual(clone['max_new_tokens'],96)
             prompt_args=next(item for item in requests if item[0]=='prompt')[1]
             self.assertEqual(prompt_args['ref_audio'],str(sample))
@@ -181,15 +189,20 @@ class QwenLocalCloneTests(unittest.TestCase):
             self.assertFalse(prompt_args['x_vector_only_mode'])
             self.assertTrue(output.is_file())
             self.assertEqual(sample.read_bytes(),b'original')
-            self.assertEqual(prepare_calls,[{'start_seconds':42.0,'duration_seconds':18.0}])
+            self.assertEqual(prepare_calls,[{'start_seconds':42.0,'duration_seconds':18.0,
+                                             'trim_outer_silence':True}])
             result_data=json.loads(result.read_text(encoding='utf-8'))
             self.assertEqual(result_data['reference_window'],{'start':42.0,'duration':18.0})
             self.assertEqual(result_data['conditioning_mode'],'audio+transcript')
+            self.assertTrue(result_data['conditioning_verified'])
+            self.assertTrue(result_data['icl_mode'])
+            self.assertFalse(result_data['x_vector_only_mode'])
             self.assertEqual(result_data['reference_text_word_count'],2)
 
     def test_warm_worker_loads_model_once_and_reuses_voice_prompt(self):
         import io
         import sys
+        import types
         import numpy as np
         from berofel.services import qwen3_tts_worker as worker
         with tempfile.TemporaryDirectory() as folder:
@@ -197,7 +210,10 @@ class QwenLocalCloneTests(unittest.TestCase):
             requests=[]
             class FakeModel:
                 def create_voice_clone_prompt(self,**kwargs):
-                    requests.append(('prompt',kwargs));return ['prepared']
+                    requests.append(('prompt',kwargs))
+                    return [types.SimpleNamespace(ref_code=np.asarray([1,2]),
+                        ref_spk_embedding=np.asarray([.1,.2]),
+                        x_vector_only_mode=False,icl_mode=True,ref_text='texto exato')]
                 def generate_voice_clone(self,**kwargs):
                     requests.append(('generate',kwargs))
                     return [np.ones(2400,dtype=np.float32)*.1],24000
@@ -227,6 +243,24 @@ class QwenLocalCloneTests(unittest.TestCase):
             self.assertTrue(responses[3]['shutdown'])
             self.assertTrue((root/'out0.wav').is_file())
             self.assertTrue((root/'out1.wav').is_file())
+
+    def test_text_conditioned_clone_fails_closed_without_reference_codes(self):
+        import numpy as np
+        from types import SimpleNamespace
+        from berofel.services import qwen3_tts_worker as worker
+        item=SimpleNamespace(ref_code=None,ref_spk_embedding=np.asarray([.1,.2]),
+            x_vector_only_mode=True,icl_mode=False,ref_text=None)
+        with self.assertRaisesRegex(RuntimeError,'áudio, transcrição e vetor vocal'):
+            worker._verify_clone_conditioning([item],'transcrição conferida')
+
+    def test_text_conditioned_clone_fails_closed_when_reference_text_changed(self):
+        import numpy as np
+        from types import SimpleNamespace
+        from berofel.services import qwen3_tts_worker as worker
+        item=SimpleNamespace(ref_code=np.asarray([1,2]),ref_spk_embedding=np.asarray([.1,.2]),
+            x_vector_only_mode=False,icl_mode=True,ref_text='texto diferente')
+        with self.assertRaisesRegex(RuntimeError,'áudio, transcrição e vetor vocal'):
+            worker._verify_clone_conditioning([item],'transcrição conferida')
 
     def test_worker_model_loader_reports_real_startup_phases(self):
         import sys
@@ -468,6 +502,36 @@ class QwenLocalCloneTests(unittest.TestCase):
                 start_seconds=report['selected_start'],duration_seconds=report['duration'])
             crop_rate,crop_pcm=wavfile.read(crop)
             self.assertAlmostEqual(len(crop_pcm)/crop_rate,report['duration'],delta=.1)
+            self.assertEqual(source.read_bytes(),before)
+
+    def test_qwen_prompt_edge_trim_preserves_internal_speech_after_pause(self):
+        import numpy as np
+        from scipy.io import wavfile
+        from berofel.services.audio_reference import prepare_audio_prompt
+        from berofel.services.ffmpeg import ffmpeg_path
+        with tempfile.TemporaryDirectory(prefix='bfs_voice_prompt_edges_') as folder:
+            root=Path(folder);source=root/'reference.wav';cropped=root/'prompt.wav'
+            rate=24000
+            def tone(seconds,frequency=180):
+                t=np.arange(round(rate*seconds))/rate
+                return (np.sin(2*np.pi*frequency*t)*9000).astype(np.int16)
+            silence=lambda seconds:np.zeros(round(rate*seconds),dtype=np.int16)
+            # Quiet lead-in and tail surround two utterances with a real pause.
+            original=np.concatenate((silence(1.0),tone(.6),silence(1.1),
+                                     tone(.7,205),silence(1.0)))
+            wavfile.write(source,rate,original);before=source.read_bytes()
+            prepare_audio_prompt(str(source),cropped,ffmpeg=ffmpeg_path(),
+                start_seconds=0.0,duration_seconds=len(original)/rate,
+                trim_outer_silence=True)
+            crop_rate,crop=wavfile.read(cropped)
+            crop=np.asarray(crop,dtype=np.float64)/32768.0
+            self.assertEqual(crop_rate,rate)
+            self.assertGreater(len(crop)/rate,2.45)
+            self.assertLess(len(crop)/rate,2.8)
+            self.assertGreater(np.sqrt(np.mean(crop[:int(.4*rate)]**2)),.08)
+            # The internal pause is retained, and the second utterance survives.
+            self.assertLess(np.sqrt(np.mean(crop[int(.8*rate):int(1.2*rate)]**2)),.02)
+            self.assertGreater(np.sqrt(np.mean(crop[-int(.4*rate):]**2)),.08)
             self.assertEqual(source.read_bytes(),before)
 
     def test_full_file_reference_report_explains_qwen_uses_short_selected_window(self):

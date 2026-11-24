@@ -361,11 +361,11 @@ class ActionsUITests(unittest.TestCase):
             self.assertEqual(analyze.call_args.args[1],words)
             dialog.close();win.close()
 
-    def test_custom_voice_panel_defaults_to_recommended_int8_and_keeps_other_profiles(self):
+    def test_custom_voice_panel_defaults_to_full_clone_backend_and_keeps_other_profiles(self):
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True):
             panel=NarrationPanel()
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
-        self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-purec-int8')
+        self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
         self.assertGreaterEqual(panel.clone_engine.findData('qwen3-tts-local'),0)
         self.assertGreaterEqual(panel.clone_engine.findData('qwen3-tts-native-q4'),0)
         self.assertGreaterEqual(panel.clone_engine.findData('qwen3-tts-native-q4-balanced'),0)
@@ -382,9 +382,9 @@ class ActionsUITests(unittest.TestCase):
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True):
             panel=NarrationPanel()
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+        panel.language.setCurrentIndex(panel.language.findData('english'))
         panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
         panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-native-q4'))
-        panel.language.setCurrentIndex(panel.language.findData('english'))
         sample=tempfile.NamedTemporaryFile(suffix='.wav',delete=False)
         sample.close()
         panel.sample_path.setText(sample.name)
@@ -424,6 +424,7 @@ class ActionsUITests(unittest.TestCase):
                 panel.voice.addItem('Perfil local · Minha voz','voice-profile:profile-1')
                 voice_index=panel.voice.findData('voice-profile:profile-1')
                 panel.voice.setCurrentIndex(voice_index)
+                panel.language.setCurrentIndex(panel.language.findData('english'))
                 turbo_index=panel.clone_engine.findData('qwen3-tts-purec-mixed')
                 self.assertGreaterEqual(turbo_index,0)
                 panel.clone_engine.setCurrentIndex(turbo_index)
@@ -450,9 +451,9 @@ class ActionsUITests(unittest.TestCase):
         settings_snapshot=_snapshot_narration_settings(panel._settings)
         original_threads=panel.purec_threads.currentIndex()
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+        panel.language.setCurrentIndex(panel.language.findData('english'))
         panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
         panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-purec-mixed'))
-        panel.language.setCurrentIndex(panel.language.findData('english'))
         panel.purec_threads.setCurrentIndex(panel.purec_threads.findData(8))
         with tempfile.NamedTemporaryFile(suffix='.wav',delete=False) as sample:
             panel.sample_path.setText(sample.name)
@@ -474,8 +475,8 @@ class ActionsUITests(unittest.TestCase):
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True):
             panel=NarrationPanel()
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
-        panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-native-q4-balanced'))
         panel.language.setCurrentIndex(panel.language.findData('english'))
+        panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-native-q4-balanced'))
         sample=tempfile.NamedTemporaryFile(suffix='.wav',delete=False);sample.close()
         panel.sample_path.setText(sample.name);panel.authorized.setChecked(True)
         panel.text.setPlainText('Perfil equilibrado local do Qwen.')
@@ -672,6 +673,7 @@ class ActionsUITests(unittest.TestCase):
         win=MainWindow()
         try:
             panel=win.narration_panel
+            panel.language.setCurrentIndex(panel.language.findData('english'))
             index=panel.clone_engine.findData('qwen3-tts-native-q4')
             if index<0:
                 panel.clone_engine.addItem('Native Q4 test','qwen3-tts-native-q4')

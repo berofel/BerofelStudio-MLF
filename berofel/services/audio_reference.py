@@ -13,7 +13,7 @@ import numpy as np
 from scipy.io import wavfile
 
 _PROMPT_MAX_SECONDS = 30.0
-REFERENCE_PREPARATION_VERSION = 3
+REFERENCE_PREPARATION_VERSION = 5
 _SILENCE_THRESHOLD_DB = -38
 _SILENCE_MIN_SECONDS = .35
 _REFERENCE_SCAN_LOCK=threading.RLock()
@@ -170,8 +170,15 @@ def voice_reference_warnings(report: dict) -> list[str]:
 
 def prepare_audio_prompt(voice: str,output_path: str | Path,
                         ffmpeg: str | None=None, *, start_seconds: float | None=None,
-                        duration_seconds: float | None=None) -> tuple[str,Path | None]:
-    """Convert an audio file to a short mono PCM16/24 kHz WAV for local TTS."""
+                        duration_seconds: float | None=None,
+                        trim_outer_silence: bool=False) -> tuple[str,Path | None]:
+    """Convert an audio file to mono PCM16/24 kHz for local voice conditioning.
+
+    ``trim_outer_silence`` is reserved for the Qwen prompt copy. It removes
+    quiet lead-in/tail from that temporary copy while preserving the user's
+    source and all internal pauses. Inspection keeps the untrimmed signal so
+    its silence measurements remain truthful.
+    """
     source=Path(voice)
     if not source.is_file():
         raise FileNotFoundError('A gravação de referência não foi encontrada.')
@@ -191,7 +198,18 @@ def prepare_audio_prompt(voice: str,output_path: str | Path,
                    _PROMPT_MAX_SECONDS,source_duration-start)
         if length<=0:raise ValueError('A janela de referência selecionada está fora do arquivo.')
     command=[ffmpeg,'-hide_banner','-loglevel','error','-nostdin','-y',
-        '-ss',f'{start:.3f}','-i',str(source),'-map','0:a:0','-vn','-t',f'{length:.3f}','-ac','1','-ar','24000',
+        '-ss',f'{start:.3f}','-i',str(source),'-map','0:a:0','-vn']
+    if trim_outer_silence:
+        # Keep word boundaries safe: only remove leading/trailing low-level
+        # silence; retain every internal pause and the entire spoken content.
+        trim_leading=('silenceremove=start_periods=1:start_duration=0:'
+                      'start_threshold=-48dB:start_silence=0.12')
+        # silenceremove's stop_periods=1 terminates at the FIRST internal gap.
+        # Reverse, trim that now-leading tail, then reverse back so both spoken
+        # sentences and their original pause remain in the conditioning audio.
+        command += ['-af',
+            trim_leading+',areverse,'+trim_leading+',areverse']
+    command += ['-t',f'{length:.3f}','-ac','1','-ar','24000',
         '-c:a','pcm_s16le',str(target)]
     try:
         result=subprocess.run(command,capture_output=True,text=True,

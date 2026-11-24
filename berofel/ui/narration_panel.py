@@ -158,7 +158,7 @@ class NarrationPanel(QScrollArea):
                 self.clone_engine.addItem('Turbo — Pure C Mixer · 6 threads',
                                            'qwen3-tts-purec-mixed')
                 self.clone_engine.insertSeparator(self.clone_engine.count())
-            self.clone_engine.addItem('Outros perfis · Original Qwen3-TTS Base', 'qwen3-tts-local')
+            self.clone_engine.addItem('Recomendado para clonagem · Original Qwen3-TTS Base', 'qwen3-tts-local')
         except (OSError,ValueError,ImportError):
             self.clone_engine.addItem('Original · Qwen3-TTS Base', 'qwen3-tts-local')
         try:
@@ -421,6 +421,7 @@ class NarrationPanel(QScrollArea):
         self.eq_preset.currentTextChanged.connect(self._apply_eq_preset)
         self._settings=QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
                                  'Berofel','BerofelStudio')
+        self._active_profile_language_id=''
         self._restore_preferences()
         self._preferences_timer=QTimer(self)
         self._preferences_timer.setSingleShot(True)
@@ -442,12 +443,18 @@ class NarrationPanel(QScrollArea):
         self.sample_path.textChanged.connect(self._reference_audio_changed)
         self.sample_path.textChanged.connect(self._refresh_clone_guidance)
         self.language.currentIndexChanged.connect(self._refresh_clone_guidance)
+        self.language.currentIndexChanged.connect(self._ensure_ptbr_clone_backend)
+        self.clone_engine.currentIndexChanged.connect(self._ensure_ptbr_clone_backend)
         from berofel.services.qwen3_tts_local import is_ready as qwen_local_ready
         if qwen_local_ready():
             self.qwen_status.setText('Qwen3-TTS local pronto. As referências e gerações ficam no PC.')
         self.quantize.toggled.connect(self._schedule_preferences_save)
         self.name.textChanged.connect(self._schedule_preferences_save)
         self._update_custom()
+        # The historical default was Pure C INT8, which omits ref_text. Keep
+        # existing fast profiles available, but use the full Base ICL path for
+        # the default PT-BR workflow and migrate incompatible saved defaults.
+        self._ensure_ptbr_clone_backend()
         self.set_clip(None)
         self._make_controls_responsive()
 
@@ -730,9 +737,9 @@ class NarrationPanel(QScrollArea):
         if language_index>=0:self.language.setCurrentIndex(language_index)
         if not self._voice_profile_id(voice):
             self.sample_path.setText(str(settings.value('narration/sample_path','')))
-        engine=str(settings.value('narration/clone_engine','qwen3-tts-purec-int8'))
+        engine=str(settings.value('narration/clone_engine','qwen3-tts-local'))
         index=self.clone_engine.findData(engine)
-        if index<0:index=self.clone_engine.findData('qwen3-tts-purec-int8')
+        if index<0:index=self.clone_engine.findData('qwen3-tts-local')
         if index>=0:self.clone_engine.setCurrentIndex(index)
         try:thread_count=int(settings.value('narration/purec_threads',6))
         except (TypeError,ValueError):thread_count=6
@@ -749,6 +756,25 @@ class NarrationPanel(QScrollArea):
 
     def _schedule_preferences_save(self,*_args):
         self._preferences_timer.start()
+
+    def _ensure_ptbr_clone_backend(self,*_args):
+        """Keep Brazilian Portuguese cloning on the full audio+transcript path.
+
+        Pure C and the native Q4 adapters only accept an x-vector. They remain
+        selectable for languages where that limitation is acceptable, but
+        must not silently become the PT-BR cloning route.
+        """
+        if self.language.currentData()!='portuguese':
+            return
+        if self.clone_engine.currentData()=='qwen3-tts-local':
+            return
+        index=self.clone_engine.findData('qwen3-tts-local')
+        if index<0:
+            return
+        self.clone_engine.setCurrentIndex(index)
+        self.status.setText(
+            'PT-BR usa o Qwen3 Base Original com áudio e transcrição da referência '
+            'para preservar melhor voz e pronúncia.')
 
     def _prewarm_selected_fast_profile(self,*_args):
         """Warm the Turbo model only after the user selects a saved voice/mode."""
@@ -806,8 +832,14 @@ class NarrationPanel(QScrollArea):
                 self.reference_text.setText(profile.get('reference_text',''))
                 self.reference_text_reviewed.setChecked(
                     bool(profile.get('reference_text_reviewed', False)))
-                language_index=self.language.findData(profile.get('language','portuguese'))
-                if language_index>=0:self.language.setCurrentIndex(language_index)
+                # A profile's saved language is a selection default, not an
+                # override. Applying it every time the engine changes made a
+                # user's explicit language choice revert unexpectedly.
+                if profile_id!=self._active_profile_language_id:
+                    language_index=self.language.findData(
+                        profile.get('language','portuguese'))
+                    if language_index>=0:self.language.setCurrentIndex(language_index)
+                    self._active_profile_language_id=profile_id
                 self.authorized.setChecked(bool(profile.get('authorized',False)))
                 self.authorized.setEnabled(not bool(profile.get('authorized',False)))
                 if Path(profile['sample_path']).suffix.lower()=='.safetensors':
@@ -818,6 +850,7 @@ class NarrationPanel(QScrollArea):
                 self.authorized.setChecked(False)
                 self.authorized.setEnabled(True)
         else:
+            self._active_profile_language_id=''
             self.reference_text_reviewed.setChecked(False)
             self.authorized.setChecked(False)
             self.authorized.setEnabled(True)
@@ -872,7 +905,7 @@ class NarrationPanel(QScrollArea):
         base=getattr(self,'_clone_engine_note',self.license_note.text())
         notes=[]
         if self.language.currentData()=='portuguese':
-            notes.append('PT-BR usa o idioma Português aceito pelo modelo. O Qwen3 Base não oferece um seletor separado de sotaque brasileiro/português; o sotaque vem principalmente da gravação de referência.')
+            notes.append('Português brasileiro: o Qwen3 Base recebe o idioma “Portuguese”, sem token separado de sotaque. A clonagem usa a voz e a pronúncia da gravação; uma referência em PT-BR é necessária e o resultado ainda deve ser conferido.')
         if engine in ('qwen3-tts-purec-int8','qwen3-tts-purec-mixed',
                       'qwen3-tts-native-q4','qwen3-tts-native-q4-balanced'):
             notes.append('Este backend rápido usa somente o x-vector e ignora a transcrição. Em PT-BR, a geração fica bloqueada nesse modo para evitar voz/sotaque genéricos. Escolha “Original Qwen3-TTS Base”, transcreva e confira a referência.')
@@ -1197,6 +1230,7 @@ class NarrationPanel(QScrollArea):
         self.text.setPlainText(text)
 
     def _generate(self, add_to_timeline: bool):
+        self._ensure_ptbr_clone_backend()
         selected_voice=self.voice.currentData()
         profile_id=self._voice_profile_id(selected_voice)
         custom = selected_voice == '__custom__' or bool(profile_id)

@@ -42,16 +42,28 @@ Referências oficiais:
 - A revisão do texto de referência agora é vinculada ao texto e ao arquivo selecionados. Editar qualquer um invalida a confirmação.
 - O serviço canônico e a fila multivozes validam a revisão antes de chamar o backend ou iniciar a fila.
 - A ordem dos sinais Qt foi corrigida para a atualização do painel não apagar imediatamente a confirmação recém-marcada.
+- O padrão persistido do painel era Pure C INT8, que só carrega x-vector, incompatível com o condicionamento detalhado PT-BR. O padrão agora é Qwen3 Base Original; ao selecionar Português, a interface encaminha para esse backend e mantém os modos rápidos disponíveis para idiomas onde são aceitos.
+- O worker agora valida que o prompt contém vetor de locutor, códigos do áudio, ICL ativo e o mesmo texto revisado. Se faltar qualquer parte, cancela em vez de produzir com uma voz substituta.
+- A conversão da referência remove somente silêncio nas bordas da cópia temporária. O corte é aplicado ao áudio invertido para o fim do arquivo; a pausa entre frases permanece. A origem nunca é alterada e os caches antigos foram invalidados por versão.
+- Foi reproduzido um defeito no primeiro filtro experimental de borda: `stop_periods=1` encerrava na primeira pausa interna e entregava apenas 1,23 s de uma referência de 6 s, descartando a segunda fala embora seu texto continuasse no `ref_text`. O filtro foi substituído por remoção simétrica das bordas com margem de 120 ms. Um teste com FFmpeg real agora verifica as duas falas e a pausa preservadas.
+
+## Revalidação real após a correção
+
+- O perfil salvo foi atualizado com a transcrição fornecida pelo usuário e permaneceu autorizado. O arquivo original não foi editado.
+- Geração offline real com Qwen3 Base 0.6B, `audio+transcript`, ICL verificado: carregamento 6,53 s; preparação 0,43 s; síntese 45,98 s; áudio final 8,96 s, mono/24 kHz, sinal não silencioso.
+- A janela original de 6 s foi condicionada a partir de uma cópia de 5,30 s após retirar somente as bordas silenciosas; as duas regiões de fala continuaram presentes.
+- Faster-Whisper Base local detectou idioma `pt` e reconheceu integralmente a frase de teste. Isso verifica idioma/conteúdo, mas não distingue sotaque brasileiro de português europeu.
+- O encoder de locutor do próprio Qwen calculou similaridade cosseno 0,9829 entre referência e geração corrigida. Gerações diagnósticas anteriores ficaram entre 0,9814 e 0,9832. Não há limiar calibrado neste projeto; esses valores não provam gênero percebido nem fidelidade auditiva e não devem ser usados como aprovação automática.
+- Qwen3 Base aceita somente o idioma genérico `Portuguese`, sem um token PT-BR/PT-PT. Para obter pronúncia brasileira, o caminho atual usa ICL com gravação e transcrição brasileiras; o modelo não oferece garantia absoluta de sotaque. A UI informa essa limitação e não faz fallback para voz predefinida.
 
 Commit local: `567ec62496c4a4f332c090504807019f1a4039a7` (`fix: validate reviewed PT-BR voice clone references`).
 
 ## Validação automatizada e pendências
 
-- Suíte completa: 497 executados, 492 aprovados, 5 ignorados.
-- `compileall` e `git diff --check`: aprovados.
-- Testes reais anteriores confirmaram geração de WAV com áudio no backend, porém não usaram o fingerprint do perfil que está atualmente salvo.
+- Testes direcionados após a correção: 29 do worker/referência, 14 de UI de narração e 7 de condicionamento/transcrição aprovados, incluindo FFmpeg real para duas frases separadas por pausa.
+- A suíte completa e `compileall`/`git diff --check` ainda precisam ser executados após estes últimos ajustes.
 - A interface visível não estava disponível à automação gráfica desta sessão; os testes Qt foram offscreen.
-- Falta confirmar humanamente a transcrição da janela e ouvir uma geração nova feita com esse perfil. Sem isso, não se declara clonagem fiel nem sotaque PT-BR validado.
+- O áudio atual foi gerado com o perfil e a transcrição revisados, e o backend confirmou o condicionamento completo. Falta avaliação auditiva humana para julgar semelhança percebida, identidade masculina e sotaque. Sem audição, não se declara fidelidade vocal ou sotaque PT-BR validados.
 
 ## Aplicativo em execução
 

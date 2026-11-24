@@ -79,7 +79,7 @@ def _prompt_cache_file(reference: Path,reference_text: str,model: Path,
                        reference_window: tuple[float,float] | None=None) -> Path:
     model_id=digest(_model_fingerprint(model))
     text_hash=hashlib.sha256(reference_text.strip().encode('utf-8')).hexdigest()
-    key_data={'schema':3,'model':model_id,
+    key_data={'schema':5,'model':model_id,
         'reference_sha256':_voice_fingerprint(reference)['sha256'],
         'reference_text_sha256':text_hash,
         'reference_window':reference_window,
@@ -360,11 +360,26 @@ def generate_local_clone(request: NarrationRequest, progress=None, runner=None,
             result=json.loads(result_file.read_text(encoding='utf-8'))
             duration=float(result['duration'])
             if not .01<duration<24*3600:raise RuntimeError('Duração de voz Qwen inválida.')
+            if request.language=='portuguese' and request.reference_text.strip():
+                if (result.get('conditioning_verified') is not True or
+                        result.get('conditioning_mode')!='audio+transcript' or
+                        result.get('icl_mode') is not True or
+                        result.get('x_vector_only_mode') is not False):
+                    wav.unlink(missing_ok=True)
+                    raise RuntimeError(
+                        'O Qwen não confirmou clonagem PT-BR com áudio e transcrição '
+                        'da referência. A geração foi descartada; nenhuma voz padrão '
+                        'será usada como substituta.')
             prompt_cache_hit=bool(result.get('prompt_cache_hit'))
             write_json(metadata,{'key':key,'duration':duration,
                 'engine':'qwen3-tts-local','prompt_cache_hit':prompt_cache_hit,
                 'reference_window':result.get('reference_window'),
                 'conditioning_mode':result.get('conditioning_mode'),
+                'conditioning_verified':result.get('conditioning_verified',False),
+                'icl_mode':result.get('icl_mode',False),
+                'x_vector_only_mode':result.get('x_vector_only_mode',True),
+                'reference_audio_code_count':result.get('reference_audio_code_count',0),
+                'speaker_embedding_dimensions':result.get('speaker_embedding_dimensions',[]),
                 'reference_sha256_prefix':result.get('reference_sha256_prefix'),
                 'reference_text_word_count':result.get('reference_text_word_count'),
                 'worker_pid':result.get('worker_pid'),
@@ -377,6 +392,13 @@ def generate_local_clone(request: NarrationRequest, progress=None, runner=None,
             job.unlink(missing_ok=True);result_file.unlink(missing_ok=True)
     else:
         duration=float(data['duration'])
+        if request.language=='portuguese' and request.reference_text.strip() and (
+                data.get('conditioning_verified') is not True or
+                data.get('conditioning_mode')!='audio+transcript'):
+            wav.unlink(missing_ok=True);metadata.unlink(missing_ok=True)
+            raise RuntimeError(
+                'O cache encontrado não comprova clonagem PT-BR com a referência. '
+                'Ele foi invalidado para impedir reprodução de uma voz substituta.')
         prompt_cache_hit=bool(data.get('prompt_cache_hit'))
         result=data
         os.utime(metadata,None)
@@ -398,6 +420,7 @@ def generate_local_clone(request: NarrationRequest, progress=None, runner=None,
         'prompt_cache_hit':prompt_cache_hit,
         'reference_window':data.get('reference_window') if cache_hit else result.get('reference_window'),
         'conditioning_mode':data.get('conditioning_mode') if cache_hit else result.get('conditioning_mode'),
+        'conditioning_verified':data.get('conditioning_verified',False) if cache_hit else result.get('conditioning_verified',False),
         'reference_sha256_prefix':data.get('reference_sha256_prefix') if cache_hit else result.get('reference_sha256_prefix'),
         'reference_text_word_count':data.get('reference_text_word_count') if cache_hit else result.get('reference_text_word_count'),
         'worker_pid':(data.get('worker_pid') if cache_hit else result.get('worker_pid')),

@@ -15,7 +15,7 @@ from scipy.io import wavfile
 from .audio_reference import prepare_audio_prompt
 from .qwen3_audio_compat import install_librosa_compat
 
-PROMPT_SCHEMA=3  # caches include the selected full-recording reference window
+PROMPT_SCHEMA=5  # caches include safe edge-only trimming with internal pauses
 _MAX_PROMPTS=64
 
 
@@ -141,7 +141,8 @@ def _voice_prompt(model,request: dict,memory_cache: dict):
     reference_path=output.with_name('qwen_reference_local.wav')
     reference,prepared=prepare_audio_prompt(request['reference'],reference_path,
         start_seconds=request.get('reference_window_start'),
-        duration_seconds=request.get('reference_window_duration'))
+        duration_seconds=request.get('reference_window_duration'),
+        trim_outer_silence=True)
     try:
         prompt=model.create_voice_clone_prompt(ref_audio=reference,
             ref_text=reference_text or None,
@@ -154,6 +155,48 @@ def _voice_prompt(model,request: dict,memory_cache: dict):
     while len(memory_cache)>_MAX_PROMPTS:
         memory_cache.pop(next(iter(memory_cache)))
     return prompt,False,time.perf_counter()-started
+
+
+def _verify_clone_conditioning(prompt,reference_text: str) -> dict:
+    """Fail closed unless the selected reference really reached Qwen Base."""
+    if not isinstance(prompt,(list,tuple)) or len(prompt)!=1:
+        raise RuntimeError('Qwen3 não preparou exatamente um perfil vocal para esta referência.')
+    item=prompt[0]
+    embedding=getattr(item,'ref_spk_embedding',None)
+    if embedding is None:
+        raise RuntimeError('Qwen3 não extraiu o vetor vocal da referência; a clonagem foi cancelada.')
+    try:
+        if hasattr(embedding,'detach'):
+            embedding=embedding.detach().cpu().numpy()
+        embedding=np.asarray(embedding)
+    except Exception as exc:
+        raise RuntimeError('Não foi possível validar o vetor vocal extraído da referência.') from exc
+    if not embedding.size or not np.isfinite(embedding).all() or not np.any(embedding):
+        raise RuntimeError('O vetor vocal da referência está vazio ou inválido; não será usada voz substituta.')
+    expected_text=str(reference_text or '').strip()
+    if expected_text:
+        codes=getattr(item,'ref_code',None)
+        try:
+            if codes is not None and hasattr(codes,'detach'):
+                codes=codes.detach().cpu().numpy()
+            code_count=0 if codes is None else int(np.asarray(codes).size)
+        except Exception as exc:
+            raise RuntimeError('Não foi possível validar os códigos de áudio da referência.') from exc
+        actual_text=str(getattr(item,'ref_text','') or '').strip()
+        if (bool(getattr(item,'x_vector_only_mode',True)) or
+                not bool(getattr(item,'icl_mode',False)) or code_count==0 or
+                actual_text!=expected_text):
+            raise RuntimeError(
+                'O prompt do Qwen não contém áudio, transcrição e vetor vocal '
+                'correspondentes. A clonagem foi cancelada sem fallback de voz.')
+        return {'mode':'audio+transcript','icl_mode':True,'x_vector_only_mode':False,
+                'reference_audio_code_count':code_count,
+                'speaker_embedding_dimensions':list(embedding.shape)}
+    if not bool(getattr(item,'x_vector_only_mode',False)):
+        raise RuntimeError('O perfil sem transcrição não foi preparado no modo x-vector esperado.')
+    return {'mode':'speaker-embedding-only','icl_mode':False,'x_vector_only_mode':True,
+            'reference_audio_code_count':0,
+            'speaker_embedding_dimensions':list(embedding.shape)}
 
 
 def _synthesize(model,request: dict,memory_cache: dict) -> dict:
@@ -169,6 +212,7 @@ def _synthesize(model,request: dict,memory_cache: dict) -> dict:
     text=str(request['text']).strip()
     if not text:raise ValueError('Digite um texto para narrar.')
     prompt,prompt_cache_hit,profile_prepare_seconds=_voice_prompt(model,request,memory_cache)
+    conditioning=_verify_clone_conditioning(prompt,str(request.get('reference_text','')))
     max_tokens=min(2048,max(96,int(len(text)*1.5+48)))
     generation_started=time.perf_counter()
     wavs,rate=model.generate_voice_clone(text=text,language=request['language'],
@@ -193,8 +237,12 @@ def _synthesize(model,request: dict,memory_cache: dict) -> dict:
             'profile_prepare_seconds':profile_prepare_seconds,
             'generation_seconds':generation_seconds,'max_new_tokens':max_tokens,
             'reference_window':reference_window,
-            'conditioning_mode':'audio+transcript' if str(request.get('reference_text','')).strip()
-                               else 'speaker-embedding-only',
+            'conditioning_mode':conditioning['mode'],
+            'conditioning_verified':True,
+            'icl_mode':conditioning['icl_mode'],
+            'x_vector_only_mode':conditioning['x_vector_only_mode'],
+            'reference_audio_code_count':conditioning['reference_audio_code_count'],
+            'speaker_embedding_dimensions':conditioning['speaker_embedding_dimensions'],
             'reference_sha256_prefix':_reference_identity(request)[:12],
             'reference_text_word_count':len(str(request.get('reference_text','')).split())}
 
