@@ -15,7 +15,7 @@ from scipy.io import wavfile
 from .audio_reference import prepare_audio_prompt
 from .qwen3_audio_compat import install_librosa_compat
 
-PROMPT_SCHEMA=2  # invalidates prompts made from the old first-30-seconds crop
+PROMPT_SCHEMA=3  # caches include the selected full-recording reference window
 _MAX_PROMPTS=64
 
 
@@ -58,6 +58,8 @@ def _prompt_key(request: dict) -> str:
         'schema':PROMPT_SCHEMA,
         'model':str(request.get('model_fingerprint','')),
         'reference_sha256':_reference_identity(request),
+        'reference_window_start':request.get('reference_window_start'),
+        'reference_window_duration':request.get('reference_window_duration'),
         'reference_text_sha256':hashlib.sha256(
             str(request.get('reference_text','')).strip().encode('utf-8')).hexdigest(),
         'x_vector_only_mode':not bool(str(request.get('reference_text','')).strip()),
@@ -123,6 +125,11 @@ def _save_cached_prompt(items,request: dict,key: str):
 
 def _voice_prompt(model,request: dict,memory_cache: dict):
     started=time.perf_counter()
+    reference_text=str(request.get('reference_text','')).strip()
+    if reference_text:
+        from .audio_reference import validate_reference_transcript
+        validate_reference_transcript(reference_text,
+            float(request.get('reference_window_duration',30.0)))
     key=_prompt_key(request)
     prompt=memory_cache.get(key)
     if prompt is not None:return prompt,True,time.perf_counter()-started
@@ -135,7 +142,6 @@ def _voice_prompt(model,request: dict,memory_cache: dict):
     reference,prepared=prepare_audio_prompt(request['reference'],reference_path,
         start_seconds=request.get('reference_window_start'),
         duration_seconds=request.get('reference_window_duration'))
-    reference_text=str(request.get('reference_text','')).strip()
     try:
         prompt=model.create_voice_clone_prompt(ref_audio=reference,
             ref_text=reference_text or None,
@@ -178,10 +184,19 @@ def _synthesize(model,request: dict,memory_cache: dict) -> dict:
     pending=output.with_suffix('.part.wav')
     wavfile.write(str(pending),int(rate),(pcm*32767).astype(np.int16))
     os.replace(pending,output)
+    window_start=request.get('reference_window_start')
+    window_duration=request.get('reference_window_duration')
+    reference_window=({'start':float(window_start),'duration':float(window_duration)}
+        if window_start is not None and window_duration is not None else None)
     return {'duration':len(pcm)/int(rate),'sample_rate':int(rate),
             'bytes':output.stat().st_size,'prompt_cache_hit':prompt_cache_hit,
             'profile_prepare_seconds':profile_prepare_seconds,
-            'generation_seconds':generation_seconds,'max_new_tokens':max_tokens}
+            'generation_seconds':generation_seconds,'max_new_tokens':max_tokens,
+            'reference_window':reference_window,
+            'conditioning_mode':'audio+transcript' if str(request.get('reference_text','')).strip()
+                               else 'speaker-embedding-only',
+            'reference_sha256_prefix':_reference_identity(request)[:12],
+            'reference_text_word_count':len(str(request.get('reference_text','')).split())}
 
 
 def run(request_path: str,result_path: str):

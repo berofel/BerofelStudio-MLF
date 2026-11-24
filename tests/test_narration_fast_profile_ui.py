@@ -205,6 +205,17 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             finally:
                 panel.close()
 
+    def test_original_qwen_result_shows_used_reference_window_and_mode(self):
+        panel=NarrationPanel()
+        try:
+            panel.set_result('clone.wav',4.0,False,'qwen3-tts-local',title='Clone',
+                reference_window={'start':37.5,'duration':12.0},
+                conditioning_mode='audio+transcript')
+            self.assertIn('Referência usada: 37.5–49.5s',panel.status.text())
+            self.assertIn('áudio + transcrição',panel.status.text())
+        finally:
+            panel.close()
+
     def test_clone_guidance_explains_purec_reference_limit_and_portuguese_dialect(self):
         with tempfile.TemporaryDirectory(prefix='bfs_clone_guidance_ui_') as folder:
             sample=Path(folder)/'reference.wav';sample.write_bytes(b'RIFF'+b'a'*200)

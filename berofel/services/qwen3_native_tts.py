@@ -258,8 +258,8 @@ def _native_embedding_cache_path(reference: Path,model: Path,exe: Path | None = 
             source_hash.update(chunk)
     identity=digest({'voice_sha256':source_hash.hexdigest(),
         'native_model':_fingerprint(exe,model,tokenizer),
-        'reference_preparation':2,
-        'format':'qwen3-tts.cpp-xvector-v2'})
+        'reference_preparation':3,
+        'format':'qwen3-tts.cpp-xvector-v3'})
     return runtime_root()/'cache'/'speaker_embeddings'/f'{identity}.bin'
 
 

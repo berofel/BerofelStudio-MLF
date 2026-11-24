@@ -1486,7 +1486,8 @@ class MainWindow(QMainWindow):
             path=result['path']
             duration=result['duration']
             self.narration_panel.set_result(path,duration,result['cache_hit'],
-                result.get('engine',''),result.get('threads'),result.get('title',''))
+                result.get('engine',''),result.get('threads'),result.get('title',''),
+                result.get('reference_window'),result.get('conditioning_mode'))
             self._register_narration_media(path)
             if add_to_timeline:
                 self.add_last_narration_to_timeline(path,duration,result['title'],position)

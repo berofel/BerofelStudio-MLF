@@ -161,9 +161,17 @@ class QwenLocalCloneTests(unittest.TestCase):
             clone=next(item for item in requests if item[0]=='clone')[1]
             self.assertEqual(clone['voice_clone_prompt'],['prepared prompt'])
             self.assertEqual(clone['max_new_tokens'],96)
+            prompt_args=next(item for item in requests if item[0]=='prompt')[1]
+            self.assertEqual(prompt_args['ref_audio'],str(sample))
+            self.assertEqual(prompt_args['ref_text'],'texto referência')
+            self.assertFalse(prompt_args['x_vector_only_mode'])
             self.assertTrue(output.is_file())
             self.assertEqual(sample.read_bytes(),b'original')
             self.assertEqual(prepare_calls,[{'start_seconds':42.0,'duration_seconds':18.0}])
+            result_data=json.loads(result.read_text(encoding='utf-8'))
+            self.assertEqual(result_data['reference_window'],{'start':42.0,'duration':18.0})
+            self.assertEqual(result_data['conditioning_mode'],'audio+transcript')
+            self.assertEqual(result_data['reference_text_word_count'],2)
 
     def test_warm_worker_loads_model_once_and_reuses_voice_prompt(self):
         import io
@@ -479,8 +487,16 @@ class QwenLocalCloneTests(unittest.TestCase):
                 old=qwen._prompt_cache_file(sample,'texto salvo incorreto',model)
                 corrected=qwen._prompt_cache_file(sample,'transcrição corrigida',model)
                 repeated=qwen._prompt_cache_file(sample,'texto salvo incorreto',model)
+                other_window=qwen._prompt_cache_file(sample,'texto salvo incorreto',model,(18.0,12.0))
             self.assertNotEqual(old,corrected)
             self.assertEqual(old,repeated)
+            self.assertNotEqual(old,other_window)
+
+    def test_reference_transcript_guard_rejects_full_audio_text_for_short_crop(self):
+        from berofel.services.audio_reference import validate_reference_transcript
+        with self.assertRaisesRegex(ValueError,'janela escolhida'):
+            validate_reference_transcript('fala '*100,10.0)
+        validate_reference_transcript('fala de referência curta',10.0)
 
 
 if __name__=='__main__':unittest.main()

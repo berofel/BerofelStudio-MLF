@@ -1150,7 +1150,8 @@ class NarrationPanel(QScrollArea):
             self.status.setText('Qwen3-TTS em processo local isolado; o modelo é reutilizado durante esta sessão.')
 
     def set_result(self, path: str, duration: float, cache_hit: bool, engine: str='',
-                   threads: int | None = None, title: str=''):
+                   threads: int | None = None, title: str='',
+                   reference_window: dict | None=None, conditioning_mode: str=''):
         self.last_audio = path
         self.last_duration = float(duration)
         self.last_title = str(title or Path(path).stem)
@@ -1164,9 +1165,15 @@ class NarrationPanel(QScrollArea):
         self.listen_previous.setEnabled(len(self.audio_history)>1)
         self.listen.setEnabled(True)
         self.add_last.setEnabled(True)
+        reference_note=''
+        if engine=='qwen3-tts-local' and reference_window:
+            start=float(reference_window.get('start',0))
+            end=start+float(reference_window.get('duration',0))
+            method='áudio + transcrição' if conditioning_mode=='audio+transcript' else 'vetor de voz'
+            reference_note=f'\nReferência usada: {start:.1f}–{end:.1f}s · {method}.'
         self.status.setText(f'WAV pronto · {mode} ({duration:.1f}s). ' +
                             ('Reaproveitado do cache.' if cache_hit else 'Salvo no cache.') +
-                            '\n' + str(Path(path)))
+                            reference_note+'\n' + str(Path(path)))
 
     def _add_last_to_timeline(self):
         if self.last_audio and Path(self.last_audio).is_file() and self.on_add_last_to_timeline:

@@ -13,7 +13,7 @@ import numpy as np
 from scipy.io import wavfile
 
 _PROMPT_MAX_SECONDS = 30.0
-REFERENCE_PREPARATION_VERSION = 2
+REFERENCE_PREPARATION_VERSION = 3
 _SILENCE_THRESHOLD_DB = -38
 _SILENCE_MIN_SECONDS = .35
 _REFERENCE_SCAN_LOCK=threading.RLock()
@@ -104,6 +104,18 @@ def _reference_window(source: Path) -> tuple[float, float, float]:
     stat = source.stat()
     with _REFERENCE_SCAN_LOCK:
         return _best_reference_window(str(source.resolve()), stat.st_size, stat.st_mtime_ns)
+
+
+def validate_reference_transcript(text: str, duration_seconds: float) -> None:
+    """Reject obvious full-recording transcripts paired with a short crop."""
+    words=re.findall(r"[\wÀ-ÿ]+",str(text or ''),flags=re.UNICODE)
+    if not words:return
+    maximum=max(24,int(float(duration_seconds)*8+12))
+    if len(words)>maximum:
+        raise ValueError(
+            f'A transcrição tem {len(words)} palavras, mas a janela escolhida tem '
+            f'{float(duration_seconds):.1f} s. Para evitar condicionar a voz com texto '
+            'de outro trecho, informe a transcrição exata dessa janela ou deixe o campo vazio para usar x-vector-only.')
 
 
 def _silero_speech_regions(source: Path, binary: str, duration: float):

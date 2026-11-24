@@ -74,12 +74,14 @@ def _model_fingerprint(folder: Path) -> dict:
             'qwen_tts':QWEN_TTS_VERSION}
 
 
-def _prompt_cache_file(reference: Path,reference_text: str,model: Path) -> Path:
+def _prompt_cache_file(reference: Path,reference_text: str,model: Path,
+                       reference_window: tuple[float,float] | None=None) -> Path:
     model_id=digest(_model_fingerprint(model))
     text_hash=hashlib.sha256(reference_text.strip().encode('utf-8')).hexdigest()
-    key_data={'schema':2,'model':model_id,
+    key_data={'schema':3,'model':model_id,
         'reference_sha256':_voice_fingerprint(reference)['sha256'],
         'reference_text_sha256':text_hash,
+        'reference_window':reference_window,
         'x_vector_only_mode':not bool(reference_text.strip())}
     key=hashlib.sha256(json.dumps(key_data,sort_keys=True,separators=(',',':'))
                        .encode('utf-8')).hexdigest()
@@ -239,9 +241,13 @@ def prepare_local_voice_prompt(reference: str,reference_text: str,*,
     if not path.is_file():raise FileNotFoundError('A gravação de referência não foi encontrada.')
     text=str(reference_text or '').strip()
     if not is_ready():raise RuntimeError('O modelo Qwen3-TTS Base não está instalado. Use INSTALAR_QWEN3_TTS_LOCAL.bat.')
-    model=model_path();prompt_file=_prompt_cache_file(path,text,model)
+    model=model_path()
     from .audio_reference import _reference_window
     window_start,window_duration,_activity=_reference_window(path)
+    if text:
+        from .audio_reference import validate_reference_transcript
+        validate_reference_transcript(text,window_duration)
+    prompt_file=_prompt_cache_file(path,text,model,(window_start,window_duration))
     data={'operation':'prepare','consent':True,'reference':str(path.resolve()),
         'reference_text':text,'language':'Portuguese','model_path':str(model),
         'reference_window_start':window_start,'reference_window_duration':window_duration,
@@ -301,8 +307,13 @@ def generate_local_clone(request: NarrationRequest, progress=None, runner=None,
     if stage:stage('Qwen3-TTS local • preparando a amostra')
     if progress:progress(0,3)
     model=model_path()
-    from .audio_reference import REFERENCE_PREPARATION_VERSION
+    from .audio_reference import REFERENCE_PREPARATION_VERSION,_reference_window
+    window_start,window_duration,_activity=_reference_window(reference)
+    if request.reference_text.strip():
+        from .audio_reference import validate_reference_transcript
+        validate_reference_transcript(request.reference_text,window_duration)
     key=digest({'engine':'qwen3-tts-local','reference_preparation':REFERENCE_PREPARATION_VERSION,
+        'reference_window':(window_start,window_duration),
         'voice':_voice_fingerprint(reference),
         'model':_model_fingerprint(model),'text':request.text.strip(),
         'language':LANGUAGES[request.language],
@@ -324,9 +335,8 @@ def generate_local_clone(request: NarrationRequest, progress=None, runner=None,
         elif stage:
             stage('Qwen3-TTS Base • usando modelo carregado e perfil local')
         job=directory/'request.json';result_file=directory/'worker_result.json'
-        prompt_file=_prompt_cache_file(reference,request.reference_text,model)
-        from .audio_reference import _reference_window
-        window_start,window_duration,_activity=_reference_window(reference)
+        prompt_file=_prompt_cache_file(reference,request.reference_text,model,
+                                       (window_start,window_duration))
         prompt_file.parent.mkdir(parents=True,exist_ok=True)
         job.unlink(missing_ok=True);result_file.unlink(missing_ok=True)
         write_json(job,{'text':request.text.strip(),'reference':str(reference),
@@ -351,6 +361,10 @@ def generate_local_clone(request: NarrationRequest, progress=None, runner=None,
             prompt_cache_hit=bool(result.get('prompt_cache_hit'))
             write_json(metadata,{'key':key,'duration':duration,
                 'engine':'qwen3-tts-local','prompt_cache_hit':prompt_cache_hit,
+                'reference_window':result.get('reference_window'),
+                'conditioning_mode':result.get('conditioning_mode'),
+                'reference_sha256_prefix':result.get('reference_sha256_prefix'),
+                'reference_text_word_count':result.get('reference_text_word_count'),
                 'worker_pid':result.get('worker_pid'),
                 'model_load_count':result.get('model_load_count'),
                 'model_load_seconds':result.get('model_load_seconds',0.0),
@@ -380,6 +394,10 @@ def generate_local_clone(request: NarrationRequest, progress=None, runner=None,
     if progress:progress(3,3)
     return {'path':str(output),'duration':duration,'cache_hit':cache_hit,
         'prompt_cache_hit':prompt_cache_hit,
+        'reference_window':data.get('reference_window') if cache_hit else result.get('reference_window'),
+        'conditioning_mode':data.get('conditioning_mode') if cache_hit else result.get('conditioning_mode'),
+        'reference_sha256_prefix':data.get('reference_sha256_prefix') if cache_hit else result.get('reference_sha256_prefix'),
+        'reference_text_word_count':data.get('reference_text_word_count') if cache_hit else result.get('reference_text_word_count'),
         'worker_pid':(data.get('worker_pid') if cache_hit else result.get('worker_pid')),
         'model_load_count':(data.get('model_load_count') if cache_hit else result.get('model_load_count')),
         'model_load_seconds':float(data.get('model_load_seconds',0.0) if cache_hit else result.get('model_load_seconds',0.0)),
