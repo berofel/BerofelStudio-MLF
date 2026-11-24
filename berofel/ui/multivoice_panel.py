@@ -31,6 +31,9 @@ class MultiVoicePanel(QWidget):
         self.active_script = None
         self.voice_profiles = VoiceProfileManager()
         self._profile_sha256: dict[str, str] = {}
+        self._profiles_by_id: dict[str, dict] = {}
+        self._forcing_ptbr_backend = False
+        self._ptbr_backend_notice = False
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
@@ -70,7 +73,7 @@ class MultiVoicePanel(QWidget):
             if available:
                 self.engine.addItem(label, engine_id)
         saved_engine = self._settings().value('narration/multivoice_engine',
-                                               'qwen3-tts-purec-int8' if purec_ready else 'qwen3-tts-local')
+                                               'qwen3-tts-local')
         idx = self.engine.findData(saved_engine)
         self.engine.setCurrentIndex(idx if idx >= 0 else (0 if purec_ready else self.engine.count()-1))
         self.engine.currentIndexChanged.connect(self._save_engine)
@@ -81,6 +84,7 @@ class MultiVoicePanel(QWidget):
         self.engine_note.setStyleSheet('color:#e8b86a;font-size:11px;')
         root.addWidget(self.engine_note)
         self.engine.currentIndexChanged.connect(self._update_engine_note)
+        self.engine.currentIndexChanged.connect(self._ensure_ptbr_engine)
 
         self.pause = QSpinBox()
         self.pause.setRange(0, 60_000)
@@ -117,6 +121,7 @@ class MultiVoicePanel(QWidget):
         self.script_text.setMinimumHeight(170)
         root.addWidget(self.script_text, 2)
         self.script_text.textChanged.connect(self._update_engine_note)
+        self.script_text.textChanged.connect(self._ensure_ptbr_engine)
         self.lines = QTableWidget(0, 4)
         self.lines.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.lines.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -205,6 +210,7 @@ class MultiVoicePanel(QWidget):
             str(profile['id']): str(profile.get('sample_sha256', ''))
             for profile in profiles if profile.get('authorized') and
             profile.get('sample_sha256')}
+        self._profiles_by_id = {str(profile['id']): profile for profile in profiles}
         names = {f'V{i}' for i in range(1, 11)}
         for voice_id in sorted(names, key=lambda key: int(key[1:])):
             row = QWidget()
@@ -223,6 +229,7 @@ class MultiVoicePanel(QWidget):
             layout.addWidget(combo, 1)
             self.assignments[voice_id] = combo
             combo.currentIndexChanged.connect(self._update_engine_note)
+            combo.currentIndexChanged.connect(self._ensure_ptbr_engine)
             self.voice_layout.addWidget(row)
         self.profile_error = error
         if error and hasattr(self, 'status'):
@@ -230,7 +237,53 @@ class MultiVoicePanel(QWidget):
         elif hasattr(self, 'status') and not any(combo.count() > 1 for combo in self.assignments.values()):
             self.status.setText('Crie e autorize pelo menos um perfil em Uma voz antes de montar o roteiro.')
         if hasattr(self, 'engine_note'):
+            self._ensure_ptbr_engine()
             self._update_engine_note()
+
+    def _ptbr_profile_selected(self) -> bool:
+        # refresh_profiles() runs while the widget tree is still being built;
+        # the script editor is created immediately after the profile selectors.
+        if not hasattr(self, 'script_text'):
+            return False
+        if self.active_script:
+            voice_ids = {line.voice_id for line in self.active_script.lines}
+            profile_ids = {str(self.active_script.voices[voice_id].get('profile_id', ''))
+                           for voice_id in voice_ids
+                           if voice_id in self.active_script.voices}
+        else:
+            try:
+                voice_ids = {line.voice_id for line in
+                             parse_berofel_script(self.script_text.toPlainText())}
+            except ScriptValidationError:
+                voice_ids = set()
+            profile_ids = ({str(self.assignments[voice_id].currentData() or '')
+                            for voice_id in voice_ids if voice_id in self.assignments}
+                           if voice_ids else
+                           {str(combo.currentData() or '')
+                            for combo in self.assignments.values()})
+        return any(
+            profile_id and str(self._profiles_by_id.get(profile_id, {}).get(
+                'language', 'portuguese')).casefold() == 'portuguese'
+            for profile_id in profile_ids)
+
+    def _ensure_ptbr_engine(self, *_):
+        """PT-BR cloning requires Base ICL with both reference audio and text."""
+        if self._forcing_ptbr_backend or not self._ptbr_profile_selected():
+            return
+        if self.engine.currentData() == 'qwen3-tts-local':
+            return
+        index = self.engine.findData('qwen3-tts-local')
+        if index < 0:
+            return
+        self._forcing_ptbr_backend = True
+        try:
+            self._ptbr_backend_notice = True
+            self.engine.setCurrentIndex(index)
+            self.status.setText(
+                'Perfis PT-BR usam o Qwen3 Base Original com áudio e transcrição. '
+                'Pure C e Q4 não recebem a transcrição de referência neste fluxo.')
+        finally:
+            self._forcing_ptbr_backend = False
 
     def _update_engine_note(self, *_):
         if not hasattr(self, 'engine_note'):
@@ -262,6 +315,10 @@ class MultiVoicePanel(QWidget):
             key=lambda voice: int(voice[1:]))
             for voice_ids in voices_by_profile.values() if len(voice_ids) > 1), [])
         notes = []
+        if self._ptbr_backend_notice and self._ptbr_profile_selected():
+            notes.append(
+                'PT-BR: Original Qwen3 Base selecionado para condicionar a clonagem '
+                'com a gravação e a transcrição de cada perfil.')
         if repeated_voice_ids:
             notes.append('Os personagens ' + ', '.join(repeated_voice_ids) +
                 ' usam o mesmo perfil vocal e terão a mesma identidade de voz. ' +
@@ -406,6 +463,7 @@ class MultiVoicePanel(QWidget):
         line.error = ''
         if self.on_script_changed:
             self.on_script_changed(self.active_script)
+        self._ensure_ptbr_engine()
         self._update_engine_note()
 
     def _capture_edited_texts(self):
@@ -529,6 +587,7 @@ class MultiVoicePanel(QWidget):
         self.resume_button.setEnabled(can_resume)
         self.export_script_button.setEnabled(self._script_audio_complete())
         self._selection_state()
+        self._ensure_ptbr_engine()
         self._update_engine_note()
         for button in (self.add_line_button, self.remove_line_button,
                        self.move_up_button, self.move_down_button):

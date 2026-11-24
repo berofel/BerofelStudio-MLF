@@ -6,6 +6,7 @@ from pathlib import Path
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
 from berofel.services.voice_profiles import VoiceProfileManager
@@ -24,6 +25,13 @@ class MultiVoicePanelTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+        cls.settings_dir = tempfile.TemporaryDirectory()
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope,
+                          cls.settings_dir.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.settings_dir.cleanup()
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -52,6 +60,35 @@ class MultiVoicePanelTests(unittest.TestCase):
             'qwen3-tts-purec-int8', 'qwen3-tts-purec-mixed',
             'qwen3-tts-native-q4', 'qwen3-tts-native-q4-balanced', 'qwen3-tts-local'})
 
+    def test_ptbr_profile_routes_multivoice_to_full_qwen_clone_backend(self):
+        purec = self.panel.engine.findData('qwen3-tts-purec-int8')
+        if purec < 0:
+            self.panel.engine.addItem('Pure C INT8 test', 'qwen3-tts-purec-int8')
+            purec = self.panel.engine.findData('qwen3-tts-purec-int8')
+        self.panel.engine.setCurrentIndex(purec)
+        self.panel.script_text.setPlainText('[001 | V1]\nTeste PT-BR.')
+        self.panel.assignments['V1'].setCurrentIndex(
+            self.panel.assignments['V1'].findData(self.profile['id']))
+        self.assertEqual(self.panel.engine.currentData(), 'qwen3-tts-local')
+        self.assertIn('Qwen3 Base Original', self.panel.status.text())
+        self.assertIn('PT-BR:', self.panel.engine_note.text())
+
+    def test_non_portuguese_profile_keeps_fast_multivoice_backend(self):
+        sample = Path(self.temp.name) / 'english.wav'
+        _wav(sample)
+        profile = self.manager.create('English voice', sample, 'english',
+                                      authorized=True)
+        self.panel.refresh_profiles()
+        purec = self.panel.engine.findData('qwen3-tts-purec-int8')
+        if purec < 0:
+            self.panel.engine.addItem('Pure C INT8 test', 'qwen3-tts-purec-int8')
+            purec = self.panel.engine.findData('qwen3-tts-purec-int8')
+        self.panel.engine.setCurrentIndex(purec)
+        self.panel.script_text.setPlainText('[001 | V1]\nFast backend test.')
+        self.panel.assignments['V1'].setCurrentIndex(
+            self.panel.assignments['V1'].findData(profile['id']))
+        self.assertEqual(self.panel.engine.currentData(), 'qwen3-tts-purec-int8')
+
     def test_ui_exposes_all_ten_voice_slots_and_builds_v10_script(self):
         self.assertEqual(set(self.panel.assignments), {f'V{i}' for i in range(1, 11)})
         combo = self.panel.assignments['V10']
@@ -79,7 +116,7 @@ class MultiVoicePanelTests(unittest.TestCase):
     def test_voice_can_be_changed_per_line_without_discarding_old_audio(self):
         second_sample = Path(self.temp.name) / 'authorized-2.wav'
         _wav(second_sample)
-        second = self.manager.create('Teste UI 2', second_sample, 'portuguese',
+        second = self.manager.create('Teste UI 2', second_sample, 'english',
                                      'outra referência', authorized=True)
         self.panel.refresh_profiles()
         from berofel.services.multivoice_narration import create_script
@@ -99,12 +136,15 @@ class MultiVoicePanelTests(unittest.TestCase):
         self.assertEqual(changed, [script.id])
 
     def test_line_can_switch_to_a_configured_voice_unused_in_imported_text(self):
+        first_sample = Path(self.temp.name) / 'english-1.wav'
         second_sample = Path(self.temp.name) / 'authorized-2.wav'
-        _wav(second_sample)
-        second = self.manager.create('Teste UI 2', second_sample, 'portuguese',
+        _wav(first_sample); _wav(second_sample)
+        first = self.manager.create('English voice 1', first_sample, 'english',
+                                    authorized=True)
+        second = self.manager.create('Teste UI 2', second_sample, 'english',
                                      'outra referência', authorized=True)
         self.panel.refresh_profiles()
-        for voice_id, profile in (('V1', self.profile), ('V2', second)):
+        for voice_id, profile in (('V1', first), ('V2', second)):
             self.panel.assignments[voice_id].setCurrentIndex(
                 self.panel.assignments[voice_id].findData(profile['id']))
         if self.panel.engine.findData('qwen3-tts-purec-int8') < 0:
@@ -124,13 +164,16 @@ class MultiVoicePanelTests(unittest.TestCase):
         self.assertIn('recarrega o modelo', self.panel.engine_note.text())
 
     def test_purec_warns_when_script_uses_distinct_profiles(self):
+        first_sample = Path(self.temp.name) / 'english-1.wav'
         second_sample = Path(self.temp.name) / 'authorized-2.wav'
-        _wav(second_sample)
-        second = self.manager.create('Teste UI 2', second_sample, 'portuguese',
+        _wav(first_sample); _wav(second_sample)
+        first = self.manager.create('English voice 1', first_sample, 'english',
+                                    authorized=True)
+        second = self.manager.create('Teste UI 2', second_sample, 'english',
                                      'outra referência', authorized=True)
         self.panel.refresh_profiles()
         self.panel.assignments['V1'].setCurrentIndex(
-            self.panel.assignments['V1'].findData(self.profile['id']))
+            self.panel.assignments['V1'].findData(first['id']))
         self.panel.assignments['V2'].setCurrentIndex(
             self.panel.assignments['V2'].findData(second['id']))
         if self.panel.engine.findData('qwen3-tts-purec-int8') < 0:
@@ -144,7 +187,7 @@ class MultiVoicePanelTests(unittest.TestCase):
             '[001 | V1]\nPrimeira voz.\n[002 | V2]\nSegunda voz.')
         self.assertIn('recarrega o modelo', self.panel.engine_note.text())
         self.panel.assignments['V2'].setCurrentIndex(
-            self.panel.assignments['V2'].findData(self.profile['id']))
+            self.panel.assignments['V2'].findData(first['id']))
         self.assertIn('mantém o servidor aquecido', self.panel.engine_note.text())
         self.panel.assignments['V2'].setCurrentIndex(
             self.panel.assignments['V2'].findData(second['id']))
