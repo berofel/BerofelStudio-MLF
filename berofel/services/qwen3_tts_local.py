@@ -101,12 +101,30 @@ def stop_local_worker():
                     process.stdin.write(json.dumps({'operation':'shutdown'})+'\n')
                     process.stdin.flush()
                 except (OSError,ValueError,AttributeError):pass
-                try:process.wait(timeout=5)
-                except subprocess.TimeoutExpired:process.terminate()
-            process.wait(timeout=5)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:process.terminate()
+                except OSError:pass
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
         except (OSError,subprocess.TimeoutExpired):
             try:process.kill()
             except OSError:pass
+            try:process.wait(timeout=5)
+            except (OSError,subprocess.TimeoutExpired):pass
+        finally:
+            # Popen keeps three pipe wrappers alive even after the child exits.
+            # Close them explicitly so repeated editor sessions do not leak
+            # Windows handles or emit ResourceWarning during shutdown.
+            for name in ('stdin','stdout','stderr'):
+                stream=getattr(process,name,None)
+                if stream is not None:
+                    try:stream.close()
+                    except (OSError,ValueError):pass
 
 
 atexit.register(stop_local_worker)

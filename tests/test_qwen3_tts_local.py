@@ -12,6 +12,22 @@ from berofel.services import qwen3_tts_local as qwen
 
 
 class QwenLocalCloneTests(unittest.TestCase):
+    def test_stopping_worker_closes_all_subprocess_pipes(self):
+        import io
+        from unittest.mock import Mock
+        process=Mock()
+        process.poll.return_value=0
+        process.stdin=io.StringIO()
+        process.stdout=io.StringIO()
+        process.stderr=io.StringIO()
+        with patch.object(qwen,'_WORKER_PROCESS',process), \
+             patch.object(qwen,'_WORKER_MODEL_KEY','cached-model'), \
+             patch.object(qwen,'_WORKER_LOAD_SECONDS',2.0):
+            qwen.stop_local_worker()
+        self.assertTrue(process.stdin.closed)
+        self.assertTrue(process.stdout.closed)
+        self.assertTrue(process.stderr.closed)
+
     def test_worker_reader_reports_startup_progress_and_continues_to_ready(self):
         import io
         class FakeProcess:
