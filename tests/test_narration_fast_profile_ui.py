@@ -170,6 +170,7 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                 panel.reference_text.setText('transcrição revisada da gravação')
                 panel.clone_engine.setCurrentIndex(
                     panel.clone_engine.findData('qwen3-tts-purec-int8'))
+                panel.authorized.setChecked(True)
                 with patch.object(QMessageBox,'warning') as warning:
                     panel._generate(False)
                 self.assertEqual(captured,[])
@@ -177,6 +178,7 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                 self.assertIn('vetor vocal',warning.call_args.args[2])
                 panel.clone_engine.setCurrentIndex(
                     panel.clone_engine.findData('qwen3-tts-local'))
+                panel.authorized.setChecked(True)
                 panel._generate(False)
                 self.assertEqual(len(captured),1)
                 request,insert=captured[0]

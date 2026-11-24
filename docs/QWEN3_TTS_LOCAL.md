@@ -43,6 +43,16 @@ Não é necessário fazer login no Hugging Face para inferência. A geração n�
 
 O histórico resumido e as instruções para repetir os testes estão em [`VALIDACAO_QWEN3_TTS_20261118.md`](VALIDACAO_QWEN3_TTS_20261118.md) e [`VALIDACAO_QWEN3_TTS_20261119.md`](VALIDACAO_QWEN3_TTS_20261119.md). A validação do backend nativo, benchmarks e limitações estão em [`QWEN3_TURBO_EXPERIMENT_20261119.md`](QWEN3_TURBO_EXPERIMENT_20261119.md). Os testes de geração real usam uma referência autorizada já configurada localmente e não registram caminho, transcrição ou áudio.
 
+### Verificação real de PT-BR com áudio + transcrição — 24/11/2026
+
+Com autorização do usuário, o Faster-Whisper Base local percorreu a referência e transcreveu a janela escolhida (19,526 s, atividade acústica estimada em 0,748). O rascunho continha 47 palavras e confiança média de palavra 0,638; por isso continua marcado para revisão humana. A transcrição permaneceu local e não foi incluída no log.
+
+Uma frase nova foi gerada com Qwen3-TTS 0.6B Base em CPU usando `conditioning_mode=audio+transcript`. A execução real levou 66,84 s no total: carga 6,73 s, preparação vocal 1,07 s e geração 57,91 s. O WAV tem 10,0 s, mono, PCM 16-bit/24 kHz, 480.044 bytes e sinal não silencioso; RTF apenas da inferência: 5,79 (RTF ponta a ponta: 6,68). O prompt não estava em cache. O arquivo de comparação permanece em `logs/authorized_target_voice/deliverables/ptbr-reference-test_arquivos/narracoes/` e não é versionado.
+
+Como diagnóstico adicional, o speaker encoder do próprio Qwen produziu cossenos referência↔saída de 0,96639 para essa amostra `audio+transcript`, 0,96614 para a amostra Original x-vector anterior e 0,97964 para a amostra Pure C INT8 anterior. Essa métrica não é calibrada para aprovar clonagem, sotaque ou gênero percebido e não substitui escuta humana. A confiança da transcrição também não foi revisada pelo usuário; portanto esta execução prova que o caminho técnico audio+transcript gera WAV, mas **não comprova que a voz final corresponde auditivamente ao homem da referência ou que o sotaque está correto**. A saída continua pendente de audição/aceite.
+
+Na mesma revisão, a suíte foi executada no venv de produção com `QT_QPA_PLATFORM=offscreen`: 492 testes passaram e 5 foram ignorados (quatro integrações reais opt-in de backends e VERO ausente). Os testes Qt exercitam a interface em modo offscreen, não uma janela visível do editor. A geração acima passou pelo serviço canônico e pelo worker real do Qwen, mas ainda não foi acionada pela janela visível do BerofelStudio.
+
 ## Limitações conhecidas
 
 - O modelo 1.7B não foi baixado nem medido no Ryzen 7 5700G/16 GB.

@@ -384,6 +384,7 @@ class ActionsUITests(unittest.TestCase):
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
         panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
         panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-native-q4'))
+        panel.language.setCurrentIndex(panel.language.findData('english'))
         sample=tempfile.NamedTemporaryFile(suffix='.wav',delete=False)
         sample.close()
         panel.sample_path.setText(sample.name)
@@ -451,6 +452,7 @@ class ActionsUITests(unittest.TestCase):
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
         panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
         panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-purec-mixed'))
+        panel.language.setCurrentIndex(panel.language.findData('english'))
         panel.purec_threads.setCurrentIndex(panel.purec_threads.findData(8))
         with tempfile.NamedTemporaryFile(suffix='.wav',delete=False) as sample:
             panel.sample_path.setText(sample.name)
@@ -473,6 +475,7 @@ class ActionsUITests(unittest.TestCase):
             panel=NarrationPanel()
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
         panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-native-q4-balanced'))
+        panel.language.setCurrentIndex(panel.language.findData('english'))
         sample=tempfile.NamedTemporaryFile(suffix='.wav',delete=False);sample.close()
         panel.sample_path.setText(sample.name);panel.authorized.setChecked(True)
         panel.text.setPlainText('Perfil equilibrado local do Qwen.')
@@ -548,6 +551,7 @@ class ActionsUITests(unittest.TestCase):
             self.assertNotEqual(private,source)
             self.assertEqual(private.read_bytes(),original)
             panel.text.setPlainText('Teste de perfil local.')
+            panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
             captured=[];panel.on_generate=lambda request,insert:captured.append(request)
             panel._generate(False)
             self.assertEqual(captured[0].voice,str(private))
@@ -564,7 +568,7 @@ class ActionsUITests(unittest.TestCase):
             self.assertEqual(panel.voice.currentData(),'__custom__')
             panel.close()
 
-    def test_qwen_voice_clone_request_routes_locally_with_optional_reference_transcript(self):
+    def test_qwen_voice_clone_request_routes_locally_with_reference_transcript(self):
         import tempfile
         panel=NarrationPanel()
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
