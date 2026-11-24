@@ -42,6 +42,14 @@
 
 **Validação direcionada:** teste Qt focalizado confirmou que Ctrl+C/V/Z não altera a seleção/clipboard de clipes quando o campo de narração está focado e que Ctrl+C continua copiando clipes com foco na timeline. Passou; regressão completa pendente.
 
+### P0 — progresso Parakeet e pipe de diagnóstico
+
+**Achado:** `StageRunner.run_batch` criava `stderr=PIPE`, mas só consumia o fluxo quando o subprocesso encerrava. Em chamadas longas, um filho que escrevesse bastante em `stderr` poderia preencher o pipe e bloquear; isso é um risco real do contrato de subprocesso, mas não prova que tenha causado o relato específico do Parakeet. O runtime `transcribe.cpp` não fornece callback interno de progresso durante `session.run`; a porcentagem disponível é por trecho persistido, então uma inferência longa pode permanecer entre 50% e 54% até o trecho acabar.
+
+**Correção:** `stderr` do worker em lote agora vai para um arquivo temporário, lido ao fim e limitado aos últimos 8 KiB ao construir o erro. A etapa Parakeet informa explicitamente que não há percentual interno e que o progresso avança por trecho. Métricas CPU/RAM continuam vindo do painel de tarefas.
+
+**Validação direcionada:** teste injeta um subprocesso que falha, confirma ausência do pipe e verifica preservação da mensagem de diagnóstico. Passou. Ainda não repeti uma inferência Parakeet real nesta rodada para afirmar que este era o motivo do atraso observado.
+
 ## Checklist de auditoria — ainda em execução
 
 | Área | Situação desta revisão |
@@ -50,24 +58,25 @@
 | Reutilização de narração WAV | Biblioteca, inserção sem TTS e salvar/reabrir testados; renomear, excluir e exportar WAV avulso ainda não auditados |
 | Editor de legendas | Cor do contorno e posição X adicionadas; outros controles avançados e presets extensos ainda faltam |
 | Qwen TTS Base | Diagnóstico de integração anterior existe; teste real atual não executado nesta etapa |
-| Parakeet CPU/Vulkan | Benchmarks anteriores existem; investigação da percepção de travamento ainda pendente |
+| Parakeet CPU/Vulkan | Risco de bloqueio de stderr corrigido e ausência de progresso interno explicada; benchmark anterior existe; inferência longa real ainda pendente |
 | Cronômetro universal | Painel de processamento já mede etapas; cobertura de todos os fluxos ainda não auditada |
 | Remoção de silêncio/contexto | Melhorias V2/V3 já constam no histórico; precisa de validação end-to-end humana para calibrar cortes |
 | Presets profissionais de legenda | Não implementados nesta etapa |
 | Biblioteca de transições | Não implementada nesta etapa |
 | Atalhos | Guarda de foco implementado para atalhos de edição; janela de consulta/personalização e tooltips completos ainda faltam |
 | Build/instalador | Não executado nesta etapa |
-| Hardware real | Acesso WMI negado; sem benchmark físico novo |
+| Hardware real | Windows, AMD Family 25 Model 80, 16 CPUs lógicas e 15,4 GiB confirmados sem WMI; GPU/modelo comercial e benchmark físico novo pendentes |
 
 ## Próximas etapas
 
 1. Suíte Qt do painel/timeline: **81 testes passaram** antes dos controles adicionais; testes Qt focalizados de legenda e proteção de atalhos passaram.
-2. Suíte completa no código atual: **459 passaram, 5 ignorados, 0 falhas** (65,728 s). Os skips são gates opcionais para integração real de Qwen/Pure C e dicionário pt-BR. Um teste do parser de benchmark imprime o texto de uso esperado ao rejeitar threads inválidas.
-3. Completar controles avançados/presets de legenda sem duplicar lógica de renderização.
-4. Completar consulta/tooltip de atalhos e validar prevenção de conflitos.
-5. Verificar progresso e heartbeat nos fluxos Qwen/Parakeet.
-6. Continuar revisão das demais áreas priorizadas, corrigindo em unidades pequenas e testáveis.
-7. Atualizar este relatório com evidências e registrar commits somente após a validação correspondente.
+2. Pipeline ASR após a correção: **39 testes passaram**.
+3. Suíte completa no código atual: **460 passaram, 5 ignorados, 0 falhas** (69,529 s). Os skips são gates opcionais para integração real de Qwen/Pure C e dicionário pt-BR. Um teste do parser de benchmark imprime o texto de uso esperado ao rejeitar threads inválidas.
+4. Completar controles avançados/presets de legenda sem duplicar lógica de renderização.
+5. Completar consulta/tooltip de atalhos e validar prevenção de conflitos.
+6. Verificar inferência real do Parakeet em áudio longo e registrar atividade observada.
+7. Continuar revisão das demais áreas priorizadas, corrigindo em unidades pequenas e testáveis.
+8. Atualizar este relatório com evidências e registrar commits somente após a validação correspondente.
 
 ## Limites de evidência
 

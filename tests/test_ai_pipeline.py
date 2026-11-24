@@ -60,6 +60,32 @@ class FakeStages:
 
 
 class AITest(unittest.TestCase):
+    def test_batch_worker_stderr_is_drained_without_pipe_and_preserved_on_error(self):
+        class Child:
+            returncode=1
+            stderr=None
+            def poll(self):return 1
+            def wait(self):return self.returncode
+        class Control:
+            def __init__(self):self.child=Child();self.released=False
+            def popen(self,_command,**kwargs):
+                self.assert_log_file=kwargs['stderr']
+                self.assert_not_pipe=kwargs['stderr'] is not subprocess.PIPE
+                kwargs['stderr'].write(b'native runtime diagnostic: test failure\n')
+                kwargs['stderr'].flush()
+                return self.child
+            def elapsed(self):return 0.
+            def checkpoint(self):pass
+            def release(self,_proc):self.released=True
+        control=Control()
+        with tempfile.TemporaryDirectory() as folder:
+            output=Path(folder)/'parakeet.json'
+            with self.assertRaisesRegex(RuntimeError,'native runtime diagnostic: test failure'):
+                StageRunner().run_batch('parakeet',[
+                    {'payload':{},'output':str(output)}],control=control)
+        self.assertTrue(control.assert_not_pipe)
+        self.assertTrue(control.released)
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

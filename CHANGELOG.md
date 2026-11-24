@@ -2,12 +2,13 @@
 
 ## Revisão global em andamento — 23/11/2026
 
+- O worker ASR em lote grava stderr temporário em arquivo, evitando bloqueio de pipe cheio e preservando o final do diagnóstico; a UI informa que o Parakeet só reporta progresso por trecho concluído.
 - Corrigido o clique direito na timeline: seleciona o clipe alvo, preserva multisseleção quando apropriado e captura IDs estáveis para o menu de contexto.
 - WAVs de narração concluídos passam a ser registrados na biblioteca mesmo quando a geração não insere o áudio imediatamente na timeline.
 - Adicionado comando para inserir a última narração já gerada; reutiliza o WAV e não reinicia a síntese nem a reprodução.
 - O painel de legendas agora também edita a cor do contorno e a posição horizontal, propriedades já suportadas pelo projeto e pelo renderizador.
 - Atalhos de edição não capturam Ctrl+C/Ctrl+V/desfazer/exclusão enquanto o foco está em um campo textual ou de configuração; ações mantêm uma tabela central com identificadores para testes e consulta.
-- Validação da rodada anterior: 81 testes do painel/timeline passaram. Após legenda e proteção de atalhos: 459 testes passaram, 5 ignorados, sem falhas (65,7 s).
+- Validação da rodada anterior: 81 testes do painel/timeline passaram. Após legenda, atalhos e correção do worker ASR: 460 testes passaram, 5 ignorados, sem falhas (69,5 s).
 
 ## Motor contextual Python V3 — 23/11/2026
 

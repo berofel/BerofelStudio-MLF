@@ -194,14 +194,22 @@ class StageRunner:
             folder=Path(folder)
             request=folder/'jobs.json'
             answer=folder/'batch.json'
+            stderr_path=folder/'worker.stderr.log'
+            stderr_log=stderr_path.open('wb')
             write_json(request,{'schema':CACHE_SCHEMA,'jobs':jobs})
             env=os.environ.copy()
             env['PYTHONPATH']=str(ROOT)+os.pathsep+env.get('PYTHONPATH','')
             command=[sys.executable,'-m','berofel.services.ai_worker',
                      stage+'_batch',str(request),str(answer)]
             launcher=control.popen if control else subprocess.Popen
-            proc=launcher(command,cwd=str(ROOT),env=env,stdout=subprocess.DEVNULL,
-                          stderr=subprocess.PIPE,creationflags=_windows_flags())
+            try:
+                proc=launcher(command,cwd=str(ROOT),env=env,stdout=subprocess.DEVNULL,
+                              # A file avoids a child blocking on a full stderr
+                              # pipe while a long CPU/Vulkan inference runs.
+                              stderr=stderr_log,creationflags=_windows_flags())
+            except Exception:
+                stderr_log.close()
+                raise
             completed=set()
             started=control.elapsed() if control else time.monotonic()
             try:
@@ -217,7 +225,10 @@ class StageRunner:
                         raise TimeoutError(f'Etapa {stage} ultrapassou o tempo máximo do trabalho.')
                     time.sleep(.2)
                 if control:control.checkpoint()
-                error=proc.stderr.read().decode('utf-8','replace') if proc.stderr else ''
+                stderr_log.flush()
+                with stderr_path.open('rb') as saved_log:
+                    saved_log.seek(max(0,stderr_path.stat().st_size-8192))
+                    error=saved_log.read().decode('utf-8','replace')
                 for job in jobs:
                     output=str(job['output'])
                     if output not in completed and read_json(Path(output)) is not None:
@@ -231,7 +242,7 @@ class StageRunner:
                     else:proc.kill()
                 proc.wait()
                 if control:control.release(proc)
-                if proc.stderr:proc.stderr.close()
+                stderr_log.close()
 
 
 
@@ -465,7 +476,10 @@ class Pipeline:
         if needs_whisper:
             pending=[ch for ch in chunks if ch['clip'].id not in known_words]
             asr_name='Parakeet Ultra Q8' if asr_backend=='parakeet-ultra' else 'Faster-Whisper'
-            self._notify(f'{asr_name} • {len(pending)} trecho(s) sem cobertura válida')
+            asr_stage=f'{asr_name} • {len(pending)} trecho(s) sem cobertura válida'
+            if asr_backend=='parakeet-ultra' and pending:
+                asr_stage+=' · o runtime não informa percentual interno; o avanço é por trecho concluído'
+            self._notify(asr_stage)
             for ch in chunks:
                 if ch['clip'].id in known_words:
                     step()  # checkpoint equivalente a um hit de transcrição prévia
