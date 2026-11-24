@@ -24,10 +24,18 @@ O serviço percorre a gravação toda em blocos para detectar atividade e seleci
 
 A API oficial do Qwen confirma que `x_vector_only_mode=True` usa somente embedding de locutor e ignora texto/códigos de fala; em `False`, o modo ICL usa texto e códigos do áudio e exige `ref_text`. O README do projeto apresenta clonagem Base rápida a partir de amostra de 3 s; isso é suporte mínimo anunciado, não garantia de fidelidade para uma amostra ruidosa ou transcrição incorreta.
 
+## Limitação conhecida no upstream
+
+O repositório oficial Qwen3-TTS contém o issue [#80 — Base model voice clone sometimes change speaker](https://github.com/QwenLM/Qwen3-TTS/issues/80). Relatos descrevem substituição ocasional da identidade, inclusive mudança do gênero percebido, mesmo usando clonagem Base. Um relato menciona 2 falhas em 10 tentativas no 1.7B Base; outro observa o mesmo tipo de problema em espanhol. Isso não prova que o 0.6B deste perfil necessariamente falhará, mas confirma que a síntese Base pode variar mesmo quando a integração envia corretamente o condicionamento.
+
+O issue foi encerrado sem correção oficial. Há uma proposta em um projeto de terceiros que fixa seeds e escolhe nova geração pela frequência fundamental; ela não prova identidade vocal e pode rejeitar uma interpretação legítima com pitch diferente. Não foi copiada nem adotada. O próprio Qwen também tem issue [#341 sobre eco da cauda da referência no modo ICL](https://github.com/QwenLM/Qwen3-TTS/issues/341), outra razão para avaliar o áudio final auditivamente em vez de confiar só na presença de `ref_audio`/`ref_text` ou em embeddings não calibrados.
+
 Referências oficiais:
 
 - https://github.com/QwenLM/Qwen3-TTS/blob/main/qwen_tts/inference/qwen3_tts_model.py
 - https://github.com/QwenLM/Qwen3-TTS
+- https://github.com/QwenLM/Qwen3-TTS/issues/80
+- https://github.com/QwenLM/Qwen3-TTS/issues/341
 
 ## Correções registradas
 
