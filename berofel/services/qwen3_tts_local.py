@@ -13,7 +13,8 @@ import threading
 import time
 
 from .ai_cache import cache_root, source_identity, digest, write_json
-from .narration_service import NarrationRequest, persistent_folder, _process_flags
+from .narration_service import (NarrationRequest, persistent_folder,
+                                _process_flags, validate_clone_conditioning)
 
 MODEL_ID='Qwen/Qwen3-TTS-12Hz-0.6B-Base'
 MODEL_REVISION='main'
@@ -292,6 +293,7 @@ def _prune_cache(folder: Path,keep: Path,max_mb: int=2048):
 def generate_local_clone(request: NarrationRequest, progress=None, runner=None,
                          control=None, stage=None) -> dict:
     """Run voice cloning on CPU in the optional, isolated Qwen3-TTS environment."""
+    validate_clone_conditioning(request)
     if not request.text.strip():raise ValueError('Digite um texto para narrar.')
     if not request.consent:
         raise PermissionError('Confirme autorização expressa para clonar a gravação selecionada.')

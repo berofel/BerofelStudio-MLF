@@ -25,7 +25,8 @@ import numpy as np
 
 from .ai_cache import digest
 from .narration_service import (LANGUAGES, NarrationRequest, persistent_folder,
-                                _process_flags, validate_request)
+                                _process_flags, validate_request,
+                                validate_clone_conditioning)
 
 ENGINE_ID = 'qwen3-tts-purec-mixed'
 ENGINE_INT8_ID = 'qwen3-tts-purec-int8'
@@ -357,6 +358,7 @@ def _start_server(profile: Path, control=None,
 def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
                          control=None, stage=None, audio_chunk=None) -> dict:
     global _SERVER_STATE
+    validate_clone_conditioning(request)
     validate_request(request.text, request.voice, request.language, request.consent)
     if request.engine not in PUREC_ENGINES:
         raise ValueError('Selecione um modo de execução Pure C reconhecido.')

@@ -883,6 +883,7 @@ class MainWindow(QMainWindow):
         self.narration_panel.multivoice_panel.on_script_changed=self.update_multivoice_script
         self.narration_panel.multivoice_panel.on_export=self.export_multivoice_script
         self.narration_panel.on_prepare_voice=self.prepare_narration_voice
+        self.narration_panel.on_transcribe_reference=self.transcribe_narration_reference
         self.narration_panel.on_use_transcript=self.use_selected_transcript
         self.narration_panel.on_voice_eq_begin=self.begin_voice_eq_edit
         self.narration_panel.on_voice_eq_change=self.apply_voice_eq_edit
@@ -1996,6 +1997,22 @@ class MainWindow(QMainWindow):
         self.refresh(self.selected_ids)
         if self.project.path:
             self._save_at(self.project.path)
+
+    def transcribe_narration_reference(self,reference: str):
+        """Draft an exact-window transcript locally so PT-BR can use Qwen ICL."""
+        from berofel.services.voice_reference_transcription import transcribe_voice_reference
+        panel=self.narration_panel
+        def ready(result):
+            panel.set_reference_transcript(result)
+            self.statusBar().showMessage(
+                'Transcrição local pronta para revisão; confira se corresponde à gravação selecionada.')
+        task=self._task(transcribe_voice_reference,ready,reference,
+                        label='Transcrever referência vocal · Faster-Whisper local')
+        if task is None:
+            panel.set_reference_transcription_busy(False)
+            return
+        task.signals.finished.connect(
+            lambda:panel.set_reference_transcription_busy(False))
 
     def prepare_narration_voice(self,reference: str,reference_text: str,name: str='',
                                 thread_count: int | None = None):

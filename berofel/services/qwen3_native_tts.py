@@ -26,7 +26,8 @@ import numpy as np
 
 from .ai_cache import cache_root, digest, write_json
 from .narration_service import (LANGUAGES, NarrationRequest, persistent_folder,
-                                _process_flags, validate_request)
+                                _process_flags, validate_request,
+                                validate_clone_conditioning)
 
 ENGINE_ID='qwen3-tts-native-q4'
 BALANCED_ENGINE_ID='qwen3-tts-native-q4-balanced'
@@ -393,6 +394,7 @@ def _emit_stream_delta(path:Path,offset:int,callback,stats=None,started=None)->i
 def generate_native_clone(request: NarrationRequest,progress=None,runner=None,
         control=None,stage=None,audio_chunk=None) -> dict:
     """Generate with the selected cached Base x-vector/Q4 native execution profile."""
+    validate_clone_conditioning(request)
     validate_request(request.text,request.voice,request.language,request.consent)
     if request.engine not in ENGINE_IDS:
         raise ValueError('Perfil de execução Qwen Turbo desconhecido.')

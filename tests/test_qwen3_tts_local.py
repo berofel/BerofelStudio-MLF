@@ -59,7 +59,8 @@ class QwenLocalCloneTests(unittest.TestCase):
             with wave.open(str(sample),'wb') as output:
                 output.setnchannels(1);output.setsampwidth(2);output.setframerate(24000)
                 output.writeframes(b'\x01\x00'*2400)
-            request=NarrationRequest(text='teste',voice=str(sample),consent=True)
+            request=NarrationRequest(text='teste',voice=str(sample),consent=True,
+                                     reference_text='fala exata da referência')
             expected={'path':'local.wav','duration':1.,'cache_hit':False}
             with patch('berofel.services.qwen3_tts_local.generate_local_clone',
                        return_value=expected) as backend:
@@ -114,7 +115,8 @@ class QwenLocalCloneTests(unittest.TestCase):
     def test_missing_model_reports_explicit_install_step_before_any_worker(self):
         with tempfile.TemporaryDirectory() as folder:
             sample=Path(folder)/'voice.wav';sample.write_bytes(b'voice')
-            request=NarrationRequest(text='teste',voice=str(sample),consent=True)
+            request=NarrationRequest(text='teste',voice=str(sample),consent=True,
+                                     reference_text='fala exata da referência')
             with patch.object(qwen,'is_ready',return_value=False):
                 with self.assertRaisesRegex(RuntimeError,'INSTALAR_QWEN3_TTS_LOCAL.bat'):
                     qwen.generate_local_clone(request)

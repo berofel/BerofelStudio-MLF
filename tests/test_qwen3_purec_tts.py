@@ -154,11 +154,12 @@ class PureCTests(unittest.TestCase):
     def test_canonical_service_routes_purec_without_changing_original_default(self):
         with tempfile.TemporaryDirectory() as folder:
             voice = Path(folder) / 'voice.wav'; voice.write_bytes(b'authorized sample' * 8)
-            default = NarrationRequest(text='Teste', voice=str(voice), consent=True)
+            default = NarrationRequest(text='Teste', voice=str(voice), consent=True,
+                                       reference_text='fala exata da referência')
             turbo = NarrationRequest(text='Teste', voice=str(voice), consent=True,
-                                     engine=purec.ENGINE_ID)
+                                     engine=purec.ENGINE_ID, language='english')
             balanced = NarrationRequest(text='Teste', voice=str(voice), consent=True,
-                                        engine=purec.ENGINE_INT8_ID)
+                                        engine=purec.ENGINE_INT8_ID, language='english')
             self.assertEqual(default.engine, 'qwen3-tts-local')
             with patch.object(purec, 'generate_purec_clone',
                               side_effect=lambda req, **_: {'engine': req.engine}) as backend:

@@ -147,8 +147,8 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                 finally:
                     panel.close()
 
-    def test_custom_clone_can_generate_without_reference_transcript(self):
-        """Qwen Base supports x-vector-only cloning when ref_text is omitted."""
+    def test_ptbr_custom_clone_requires_reference_transcript(self):
+        from PySide6.QtWidgets import QMessageBox
         with tempfile.TemporaryDirectory(prefix='bfs_xvector_voice_ui_') as folder:
             sample=Path(folder)/'reference.wav'
             sample.write_bytes(b'RIFF'+b'a'*300)
@@ -162,11 +162,26 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                 panel.set_text('Frase de teste sem transcrição da referência.')
                 captured=[]
                 panel.on_generate=lambda request,insert:captured.append((request,insert))
+                with patch.object(QMessageBox,'warning') as warning:
+                    panel._generate(False)
+                self.assertEqual(captured,[])
+                warning.assert_called_once()
+                self.assertIn('transcrição exata',warning.call_args.args[2])
+                panel.reference_text.setText('transcrição revisada da gravação')
+                panel.clone_engine.setCurrentIndex(
+                    panel.clone_engine.findData('qwen3-tts-purec-int8'))
+                with patch.object(QMessageBox,'warning') as warning:
+                    panel._generate(False)
+                self.assertEqual(captured,[])
+                warning.assert_called_once()
+                self.assertIn('vetor vocal',warning.call_args.args[2])
+                panel.clone_engine.setCurrentIndex(
+                    panel.clone_engine.findData('qwen3-tts-local'))
                 panel._generate(False)
                 self.assertEqual(len(captured),1)
                 request,insert=captured[0]
                 self.assertFalse(insert)
-                self.assertEqual(request.reference_text,'')
+                self.assertEqual(request.reference_text,'transcrição revisada da gravação')
                 self.assertEqual(request.engine,'qwen3-tts-local')
                 self.assertTrue(request.consent)
             finally:
@@ -273,12 +288,12 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                         panel.clone_engine.findData('qwen3-tts-purec-int8'))
                     panel._update_custom()
                     purec_note=panel.license_note.text()
-                    self.assertIn('não envia a transcrição',purec_note)
+                    self.assertIn('ignora a transcrição',purec_note)
                     self.assertIn('não oferece um seletor separado de sotaque',purec_note)
                     self.assertIn('Original Qwen3-TTS Base',purec_note)
                     self.assertIn('varrida por inteiro',purec_note)
                     panel.reference_text.setText('uma transcrição nova')
-                    self.assertIn('não envia a transcrição',panel.license_note.text())
+                    self.assertIn('ignora a transcrição',panel.license_note.text())
                     self.assertEqual(panel.license_note.text().count(
                         'PT-BR usa o idioma Português'),1)
 
@@ -286,7 +301,7 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                         panel.clone_engine.findData('qwen3-tts-local'))
                     original_note=panel.license_note.text()
                     self.assertIn('envia o áudio e a transcrição literal',original_note)
-                    self.assertNotIn('não envia a transcrição',original_note)
+                    self.assertNotIn('ignora a transcrição',original_note)
                     self.assertEqual(original_note.count('PT-BR usa o idioma Português'),1)
             finally:
                 panel.close()

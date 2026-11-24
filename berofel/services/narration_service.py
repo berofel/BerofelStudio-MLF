@@ -61,6 +61,30 @@ def validate_request(text: str, voice: str, language: str,
         raise PermissionError('Confirme que possui autorização para usar esta voz.')
 
 
+def validate_clone_conditioning(request: NarrationRequest) -> None:
+    """Prevent PT-BR requests from silently falling back to x-vector-only.
+
+    Qwen3 exposes only the generic ``Portuguese`` language token. Regional
+    accent is therefore anchored by the reference speech and its transcript.
+    The optimized Pure C/native adapters accept only an x-vector and cannot
+    provide the full audio+transcript conditioning required for this path.
+    """
+    if request.language != 'portuguese':
+        return
+    if request.engine != 'qwen3-tts-local':
+        raise ValueError(
+            'Para narração em português brasileiro, selecione “Original Qwen3-TTS Base”. '
+            'Os perfis rápidos usam somente o vetor vocal e não preservam o sotaque '
+            'regional com a mesma segurança.'
+        )
+    if not str(request.reference_text or '').strip():
+        raise ValueError(
+            'A clonagem PT-BR precisa da transcrição exata da janela de referência. '
+            'Use “Transcrever referência”, revise o texto e tente novamente. Sem a '
+            'transcrição, o Qwen usa apenas o vetor vocal e pode gerar pronúncia genérica.'
+        )
+
+
 def generate_narration(request: NarrationRequest, progress: Callable | None = None,
                        runner: Callable | None = None, control=None,
                        stage=None, audio_chunk: Callable | None = None) -> dict:
@@ -77,6 +101,7 @@ def generate_narration(request: NarrationRequest, progress: Callable | None = No
                                     audio_chunk=audio_chunk)
     if request.engine != 'qwen3-tts-local':
         raise ValueError('O BerofelStudio usa exclusivamente Qwen3-TTS Base para narração.')
+    validate_clone_conditioning(request)
     validate_request(request.text,request.voice,request.language,request.consent)
     from .qwen3_tts_local import generate_local_clone
     return generate_local_clone(request,progress=progress,runner=runner,

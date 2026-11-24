@@ -154,11 +154,12 @@ class NativeQwenAdapterTests(unittest.TestCase):
     def test_narration_service_routes_native_engine_without_changing_default(self):
         with tempfile.TemporaryDirectory() as folder:
             voice=Path(folder)/'voice.wav';voice.write_bytes(b'authorized reference audio'*4)
-            original=NarrationRequest(text='teste',voice=str(voice),consent=True)
+            original=NarrationRequest(text='teste',voice=str(voice),consent=True,
+                                      reference_text='fala exata da referência')
             turbo=NarrationRequest(text='teste',voice=str(voice),consent=True,
-                                   engine=native.ENGINE_ID)
+                                   engine=native.ENGINE_ID,language='english')
             balanced=NarrationRequest(text='teste equilibrado',voice=str(voice),consent=True,
-                                      engine=native.BALANCED_ENGINE_ID)
+                                      engine=native.BALANCED_ENGINE_ID,language='english')
             self.assertEqual(original.engine,'qwen3-tts-local')
             chunks=[]
             with patch.object(native,'generate_native_clone',

@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QTextEdit,
 from .wheel_controls import (WheelGuardComboBox as QComboBox,
     WheelGuardDoubleSpinBox as QDoubleSpinBox, WheelGuardSlider as QSlider)
 
-from berofel.services.narration_service import LANGUAGES, NarrationRequest
+from berofel.services.narration_service import (LANGUAGES, NarrationRequest,
+                                                validate_clone_conditioning)
 from berofel.services.voice_dsp import VOICE_EQ_PRESETS, clip_voice_eq
 from berofel.services.voice_presets import VoicePresetManager
 from berofel.services.voice_profiles import VoiceProfileManager
@@ -43,6 +44,7 @@ class NarrationPanel(QScrollArea):
         self.on_add_last_to_timeline = None
         self.on_use_transcript = None
         self.on_prepare_voice = None
+        self.on_transcribe_reference = None
         self.last_audio = ''
         self.audio_history=[]
         self._voice_reference_quality_cache={}
@@ -185,6 +187,14 @@ class NarrationPanel(QScrollArea):
         self.reference_text.setPlaceholderText('Transcrição exata do trecho escolhido — confira o horário em Verificar gravação')
         self.reference_text.setToolTip('A gravação completa é varrida e o Qwen usa uma janela curta. No Original, o texto precisa corresponder exatamente ao áudio dessa janela, não à transcrição do arquivo inteiro.')
         layout.addWidget(self.reference_text)
+        self.transcribe_reference=QPushButton('Transcrever referência (Whisper local)')
+        self.transcribe_reference.setToolTip(
+            'Transcreve a janela vocal selecionada com o Faster-Whisper local. '
+            'Revise e corrija o texto antes de usá-lo na clonagem PT-BR.')
+        self.transcribe_reference.clicked.connect(self._transcribe_reference)
+        layout.addWidget(self.transcribe_reference)
+        self._responsive_buttons.append((self.transcribe_reference,
+            'Transcrever referência','Transcrever referência'))
         self.install_qwen = QPushButton('⬇ Preparar Qwen3 local (download explícito)')
         self.install_qwen.clicked.connect(self._install_qwen)
         layout.addWidget(self.install_qwen)
@@ -408,6 +418,7 @@ class NarrationPanel(QScrollArea):
         self._preferences_timer.timeout.connect(self.save_preferences)
         self.text.textChanged.connect(self._schedule_preferences_save)
         self.language.currentIndexChanged.connect(self._schedule_preferences_save)
+        self.language.currentIndexChanged.connect(self._update_custom)
         self.voice.currentIndexChanged.connect(self._schedule_preferences_save)
         self.voice.activated.connect(self._warn_selected_saved_voice_quality)
         self.sample_path.textChanged.connect(self._schedule_preferences_save)
@@ -708,7 +719,6 @@ class NarrationPanel(QScrollArea):
         engine=str(settings.value('narration/clone_engine','qwen3-tts-purec-int8'))
         index=self.clone_engine.findData(engine)
         if index<0:index=self.clone_engine.findData('qwen3-tts-purec-int8')
-        if index<0:index=self.clone_engine.findData('qwen3-tts-local')
         if index>=0:self.clone_engine.setCurrentIndex(index)
         try:thread_count=int(settings.value('narration/purec_threads',6))
         except (TypeError,ValueError):thread_count=6
@@ -809,6 +819,7 @@ class NarrationPanel(QScrollArea):
         self.purec_thread_label.setVisible(use_thread_choice)
         self.purec_threads.setVisible(use_thread_choice)
         self.reference_text.setVisible(qwen)
+        self.transcribe_reference.setVisible(qwen and self.language.currentData()=='portuguese')
         self.update_voice_reference.setVisible(bool(profile_id) and qwen)
         self.install_qwen.setVisible(qwen and engine=='qwen3-tts-local')
         self.qwen_status.setVisible(qwen and bool(self.qwen_status.text()))
@@ -841,9 +852,9 @@ class NarrationPanel(QScrollArea):
             notes.append('PT-BR usa o idioma Português aceito pelo modelo. O Qwen3 Base não oferece um seletor separado de sotaque brasileiro/português; o sotaque vem principalmente da gravação de referência.')
         if engine in ('qwen3-tts-purec-int8','qwen3-tts-purec-mixed',
                       'qwen3-tts-native-q4','qwen3-tts-native-q4-balanced'):
-            notes.append('Este backend rápido condiciona a voz pelo x-vector e não envia a transcrição da referência. Para maximizar a clonagem e a pronúncia regional, escolha “Original Qwen3-TTS Base” e preencha a transcrição exata.')
+            notes.append('Este backend rápido usa somente o x-vector e ignora a transcrição. Em PT-BR, a geração fica bloqueada nesse modo para evitar voz/sotaque genéricos. Escolha “Original Qwen3-TTS Base”, transcreva e confira a referência.')
         elif not self.reference_text.text().strip():
-            notes.append('A transcrição da referência está vazia: o Original também cairá no modo x-vector-only. Preencha o texto exato para o Qwen usar áudio e transcrição juntos.')
+            notes.append('A transcrição da referência está vazia. Em PT-BR, a geração fica bloqueada até o Qwen usar áudio e transcrição juntos. Clique em “Transcrever referência” e revise o texto.')
         else:
             notes.append('Original Qwen3-TTS Base envia o áudio e a transcrição literal da referência juntos (clonagem por contexto), preservando melhor a pronúncia e o estilo da amostra.')
         if self.sample_path.text().strip():
@@ -1169,15 +1180,53 @@ class NarrationPanel(QScrollArea):
         engine=self.clone_engine.currentData() or 'qwen3-tts-local'
         req = NarrationRequest(text=self.text.toPlainText(), voice=voice,
                                language=self.language.currentData(),
-                               consent=custom and self.authorized.isChecked(),
+                               consent=custom and (profile_authorized or self.authorized.isChecked()),
                                quantize=self.quantize.isChecked(),
                                title=self.name.text().strip() or 'Narração',
                                engine=engine,
                                reference_text=self.reference_text.text().strip() if custom else '',
                                thread_count=(self.purec_threads.currentData()
                                              if engine=='qwen3-tts-purec-mixed' else None))
+        try:
+            validate_clone_conditioning(req)
+        except ValueError as exc:
+            QMessageBox.warning(self,'Clonagem PT-BR',str(exc))
+            return
         if self.on_generate:
             self.on_generate(req, add_to_timeline)
+
+    def _transcribe_reference(self):
+        source=self.sample_path.text().strip()
+        if not source or not Path(source).is_file():
+            QMessageBox.warning(self,'Transcrever referência',
+                'Escolha uma gravação de voz antes de transcrevê-la.')
+            return
+        if self.on_transcribe_reference is None:
+            QMessageBox.warning(self,'Transcrever referência',
+                'A transcrição local não está conectada nesta sessão do editor.')
+            return
+        self.transcribe_reference.setDisabled(True)
+        self.status.setText('Preparando transcrição local da janela vocal…')
+        self.on_transcribe_reference(source)
+
+    def set_reference_transcript(self,result:dict):
+        """Place a local ASR draft into the editable field; user must review it."""
+        text=str(result.get('text') or '').strip()
+        if not text:
+            raise ValueError('A transcrição local não contém texto para revisar.')
+        self.reference_text.setText(text)
+        window=result.get('reference_window') or {}
+        start=float(window.get('start',0.0));duration=float(window.get('duration',0.0))
+        confidence=result.get('mean_word_confidence')
+        confidence_note=(f' confiança média {float(confidence):.0%};' if confidence is not None
+                         else '')
+        self.status.setText(
+            f'Rascunho Whisper local pronto{confidence_note} · janela {start:.1f}–'
+            f'{start+duration:.1f}s. Revise a transcrição e corrija qualquer erro antes '
+            'de gerar; o texto da gravação não foi alterado automaticamente.')
+
+    def set_reference_transcription_busy(self,busy:bool):
+        self.transcribe_reference.setDisabled(bool(busy))
 
     def busy(self, busy: bool):
         self.insert.setDisabled(busy)
