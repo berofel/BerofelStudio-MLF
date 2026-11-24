@@ -163,6 +163,25 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             finally:
                 panel.close()
 
+    def test_choosing_reference_with_moderate_silence_warns_consistently(self):
+        from PySide6.QtWidgets import QFileDialog,QMessageBox
+        report={'warnings':[],'silence_fraction':.35,
+                'audible_signal_seconds':9.6}
+        with tempfile.TemporaryDirectory(prefix='bfs_voice_moderate_silence_') as folder:
+            source=Path(folder)/'reference.wav';source.write_bytes(b'RIFF'+b'a'*300)
+            panel=NarrationPanel()
+            try:
+                with (patch.object(QFileDialog,'getOpenFileName',return_value=(str(source),'Audio')),
+                      patch('berofel.services.audio_reference.inspect_voice_reference',
+                            return_value=report),
+                      patch.object(QMessageBox,'warning') as warning):
+                    panel._choose_sample()
+                self.assertEqual(warning.call_count,1)
+                self.assertIn('35%',warning.call_args.args[2])
+                self.assertIn('fala mais contínua',warning.call_args.args[2])
+            finally:
+                panel.close()
+
     def test_clone_guidance_explains_purec_reference_limit_and_portuguese_dialect(self):
         with tempfile.TemporaryDirectory(prefix='bfs_clone_guidance_ui_') as folder:
             sample=Path(folder)/'reference.wav';sample.write_bytes(b'RIFF'+b'a'*200)

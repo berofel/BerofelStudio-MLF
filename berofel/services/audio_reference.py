@@ -9,6 +9,24 @@ import numpy as np
 from scipy.io import wavfile
 
 
+def voice_reference_warnings(report: dict) -> list[str]:
+    """Return actionable, non-blocking guidance for a voice sample report.
+
+    The UI has historically surfaced a note at 30% near-silence while the
+    audio analyzer's stronger warning began above 50%. Keep those paths
+    consistent without rejecting or modifying the user's reference.
+    """
+    warnings=[str(item) for item in (report.get('warnings') or ())]
+    try:
+        silence_fraction=float(report.get('silence_fraction',0.0))
+    except (TypeError,ValueError):
+        silence_fraction=0.0
+    if silence_fraction>=.30 and not any('silenc' in item.casefold()
+                                         for item in warnings):
+        warnings.append('Parte significativa da amostra está quase silenciosa; prefira uma fala mais contínua para uma clonagem mais estável.')
+    return warnings
+
+
 def prepare_audio_prompt(voice: str,output_path: str | Path,
                         ffmpeg: str | None=None) -> tuple[str,Path | None]:
     """Convert an audio file to a short mono PCM16/24 kHz WAV for local TTS."""

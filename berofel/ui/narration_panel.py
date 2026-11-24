@@ -857,16 +857,19 @@ class NarrationPanel(QScrollArea):
 
     def _warn_sample_quality_if_needed(self,source):
         try:
-            from berofel.services.audio_reference import inspect_voice_reference
+            from berofel.services.audio_reference import (inspect_voice_reference,
+                voice_reference_warnings)
             report=inspect_voice_reference(source)
         except Exception as exc:
             QMessageBox.warning(self,'Verificação da gravação',str(exc))
             return
-        if report['warnings']:
-            details='\n'.join('• '+warning for warning in report['warnings'])
+        silence_fraction=float(report.get('silence_fraction',0.0))
+        warnings=voice_reference_warnings(report)
+        if warnings:
+            details='\n'.join('• '+str(warning) for warning in warnings)
             QMessageBox.warning(self,'Amostra pode prejudicar a clonagem',
                 f'{report.get("audible_signal_seconds",0):.1f} s com sinal acima do piso de silêncio; '
-                f'trecho quase silencioso: {report["silence_fraction"]:.0%}.\n'
+                f'trecho quase silencioso: {silence_fraction:.0%}.\n'
                 f'Essas condições podem reduzir a clareza ou a semelhança vocal. Para uma clonagem mais estável, grave 10–20 s de fala contínua, limpa e no sotaque desejado.\n\n'
                 f'{details}\n\nA gravação original será preservada; você pode escolher outra amostra.')
 

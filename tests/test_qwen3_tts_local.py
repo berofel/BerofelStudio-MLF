@@ -382,6 +382,18 @@ class QwenLocalCloneTests(unittest.TestCase):
             self.assertGreater(report['silence_fraction'],.50)
             self.assertTrue(any('Mais de 50%' in warning for warning in report['warnings']))
 
+    def test_voice_reference_guidance_also_covers_moderate_silence(self):
+        from berofel.services.audio_reference import voice_reference_warnings
+        warnings=voice_reference_warnings({'warnings':[],'silence_fraction':.35})
+        self.assertEqual(len(warnings),1)
+        self.assertIn('quase silenciosa',warnings[0])
+
+    def test_voice_reference_guidance_does_not_duplicate_silence_warning(self):
+        from berofel.services.audio_reference import voice_reference_warnings
+        warnings=voice_reference_warnings({'warnings':['Mais de 50% está quase silencioso.'],
+                                           'silence_fraction':.65})
+        self.assertEqual(len(warnings),1)
+
     def test_prepare_voice_prompt_supports_official_xvector_only_mode(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);sample=root/'reference.wav';sample.write_bytes(b'RIFF'+b'x'*200)
