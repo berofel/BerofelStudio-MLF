@@ -9,8 +9,9 @@ Repositório oficial: <https://github.com/berofel/BerofelStudio-MLF>
 - Versão declarada pelo aplicativo: `0.10.0-alpha.1` (`berofel/__init__.py`).
 - O remoto `origin` aponta para o repositório oficial.
 - Na auditoria de 2026-11-23, o remoto tinha somente o commit inicial e um README de 19 bytes; seu histórico era independente do histórico local.
-- O histórico local foi integrado ao histórico inicial remoto sem force push; veja os commits da branch.
-- A conexão GitHub disponível para esta sessão permitia leitura, mas não escrita. `gh` não estava instalado e a rede Git local não conseguiu conectar a `github.com:443`. Portanto, nenhum push ou release foi confirmado nesta sessão.
+- O histórico local foi integrado ao histórico inicial remoto sem force push. A branch `feat/automatic-cleanup-modules` foi publicada e verificada no remoto.
+- O pull request [#1](https://github.com/berofel/BerofelStudio-MLF/pull/1) foi aberto para `main` e permanece aguardando revisão; não foi mesclado.
+- `gh` não está instalado. O conector GitHub indicava acesso somente de leitura, mas o credential helper Git configurado permitiu testar e efetuar o push autenticado pela linha de comando. A conectividade HTTPS foi restabelecida durante a sessão. Nenhum token foi exibido ou salvo no repositório.
 
 ## Preparar ambiente e verificar acesso
 
