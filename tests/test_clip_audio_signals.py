@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import numpy as np
 from berofel.services.clip_audio_signals import (
     FrameFeatures, extract_frames_from_chunks,
@@ -51,6 +52,38 @@ class ClipAudioTests(unittest.TestCase):
                   [(0,10000,91),(1000,9000,88),(14000,25000,79)]]
         out = select_diverse_clips(ranked)
         self.assertEqual(len(out), 2)
+
+    def test_nonoverlapping_repeated_transcript_does_not_fill_two_slots(self):
+        ranked = [
+            dict(start_ms=0, end_ms=10000, score=91,
+                 text='O programa gera legendas automáticas, remove o silêncio e cria cortes contextuais para o vídeo.'),
+            dict(start_ms=20000, end_ms=30000, score=84,
+                 text='Esse programa gera legendas automáticas, remove o silêncio e cria cortes contextuais para o vídeo.'),
+            dict(start_ms=40000, end_ms=50000, score=79,
+                 text='A gravação mostra como configurar o microfone antes de iniciar a narração.'),
+        ]
+        out = select_diverse_clips(ranked, max_clips=3)
+        self.assertEqual([item['score'] for item in out], [91, 79])
+
+    def test_candidate_with_substantial_new_information_is_preserved(self):
+        ranked = [
+            dict(start_ms=0, end_ms=10000, score=91,
+                 text='O programa gera legendas automáticas, remove o silêncio e cria cortes contextuais para o vídeo.'),
+            dict(start_ms=20000, end_ms=35000, score=84,
+                 text='O programa gera legendas automáticas, remove o silêncio e cria cortes contextuais para o vídeo, com revisão manual, ajuste de fonte, tamanho e cor.'),
+        ]
+        out = select_diverse_clips(ranked, max_clips=2)
+        self.assertEqual(len(out), 2)
+
+    def test_diversity_terms_are_extracted_once_per_candidate(self):
+        from berofel.services import clip_audio_signals as signals
+        ranked = [dict(start_ms=i*20000, end_ms=i*20000+10000, score=90-i,
+                       text=f'Este trecho apresenta conteúdo diferente número índice {i} sobre edição tema {i}.')
+                  for i in range(6)]
+        with patch.object(signals, '_diversity_terms',
+                           wraps=signals._diversity_terms) as terms:
+            select_diverse_clips(ranked, max_clips=6)
+        self.assertEqual(terms.call_count, len(ranked))
 
     def test_align_event_to_answer(self):
         e = [{"start_ms": 2400, "end_ms": 2700, "strength": .7,

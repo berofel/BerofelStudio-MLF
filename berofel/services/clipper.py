@@ -24,7 +24,7 @@ from .clip_audio_signals import (FrameFeatures, align_events_to_conversation,
     select_diverse_clips)
 from .ffmpeg import ffmpeg_path, media_info
 
-CLIPPER_VERSION = 1
+CLIPPER_VERSION = 2
 FEATURE_RATE = 16_000
 FEATURE_FRAME_MS = 20
 CACHE_SCHEMA = 1
@@ -321,6 +321,88 @@ def _text_scores(text: str, words: Sequence[Mapping], utterance_start: bool,
     return context,hook,boundary,reasons
 
 
+def _dialogue_context_index(words: Sequence[Mapping]):
+    """Build reusable word-to-turn indexes once for the candidate scan."""
+    turns = _utterances(words)
+    by_first = {id(turn['words'][0]): index for index, turn in enumerate(turns)}
+    by_last = {id(turn['words'][-1]): index for index, turn in enumerate(turns)}
+    word_positions = {id(word): index for index, word in enumerate(words)}
+    return turns, by_first, by_last, word_positions
+
+
+def _dialogue_context_bounds(words: Sequence[Mapping], start_index: int,
+                             end_index: int, max_duration_ms: float,
+                             turn_index=None) -> tuple[int, int, bool, bool]:
+    """Keep a nearby question and its answer in the same candidate when safe.
+
+    This is a local deterministic boundary adjustment. It uses only existing
+    transcript word timestamps and speaker labels; it does not infer missing
+    words or extend beyond the configured candidate duration.
+    """
+    if not words or not (0 <= start_index <= end_index < len(words)):
+        return start_index, end_index, False, False
+    turns, by_first, by_last, word_positions = (
+        turn_index if turn_index is not None else _dialogue_context_index(words))
+    if len(turns) < 2:
+        return start_index, end_index, False, False
+    start_turn = by_first.get(id(words[start_index]))
+    end_turn = by_last.get(id(words[end_index]))
+    if start_turn is None or end_turn is None:
+        return start_index, end_index, False, False
+
+    linked_start = linked_end = False
+    start_ms = float(words[start_index]['start_ms'])
+    end_ms = float(words[end_index]['end_ms'])
+    if start_turn > 0:
+        previous = turns[start_turn - 1]
+        current = turns[start_turn]
+        previous_end = float(previous['end_ms'])
+        current_start = float(current['start_ms'])
+        current_text = str(current['text']).strip().lower()
+        previous_words = previous['words']
+        current_words = current['words']
+        changed_speaker = (previous.get('speaker_id') is not None and
+            current.get('speaker_id') is not None and
+            previous.get('speaker_id') != current.get('speaker_id'))
+        answer_cue = current.get('role') == 'answer' or bool(
+            re.match(r'^(?:porque|por isso|a resposta|isso significa|quer dizer)\b',
+                     current_text))
+        current_first = re.sub(r'^\W+|\W+$', '',
+                               str(current_words[0]['text']).lower())
+        dependent_start = current_first in _DEPENDENT_OPENERS
+        joins_question = (previous.get('role') == 'question' and
+                          (changed_speaker or answer_cue or dependent_start))
+        combined = end_ms - float(previous_words[0]['start_ms'])
+        if joins_question and current_start - previous_end <= 1800 and \
+                combined <= max_duration_ms:
+            start_index = word_positions[id(previous_words[0])]
+            start_ms = float(words[start_index]['start_ms'])
+            linked_start = True
+
+    if end_turn + 1 < len(turns):
+        current = turns[end_turn]
+        following = turns[end_turn + 1]
+        current_end = float(current['end_ms'])
+        following_start = float(following['start_ms'])
+        following_text = str(following['text']).strip().lower()
+        changed_speaker = (current.get('speaker_id') is not None and
+            following.get('speaker_id') is not None and
+            current.get('speaker_id') != following.get('speaker_id'))
+        answer_cue = following.get('role') == 'answer' or bool(
+            re.match(r'^(?:porque|por isso|a resposta|isso significa|quer dizer)\b',
+                     following_text))
+        if current.get('role') == 'question' and \
+                (changed_speaker or answer_cue) and \
+                following_start - current_end <= 1800:
+            following_words = following['words']
+            proposed_end = float(following_words[-1]['end_ms'])
+            if proposed_end - start_ms <= max_duration_ms:
+                end_index = word_positions[id(following_words[-1])]
+                end_ms = proposed_end
+                linked_end = True
+    return start_index, end_index, linked_start, linked_end
+
+
 def _candidate_spans(words: Sequence[Mapping], options: ClipperOptions) -> list[dict]:
     if not words:return []
     minimum=options.min_seconds*1000.;maximum=options.max_seconds*1000.
@@ -341,6 +423,7 @@ def _candidate_spans(words: Sequence[Mapping], options: ClipperOptions) -> list[
         elif elapsed>=stride:
             starts.append(i);next_allowed=i
     ends=[float(word['end_ms']) for word in words]
+    dialogue_index=_dialogue_context_index(words)
     candidates=[];seen=set()
     for start_index in starts:
         start=float(words[start_index]['start_ms'])
@@ -356,11 +439,14 @@ def _candidate_spans(words: Sequence[Mapping], options: ClipperOptions) -> list[
             end_index=max_index-1
         if end_index<start_index or end_index>=len(words):
             continue
+        start_index,end_index,dialogue_start,dialogue_end=_dialogue_context_bounds(
+            words,start_index,end_index,maximum,turn_index=dialogue_index)
+        start=float(words[start_index]['start_ms'])
         duration=ends[end_index]-start
         if duration<minimum or duration>maximum:
             continue
         # Prefer a natural terminal boundary near target, but never extend past max.
-        terminal_indices=[i for i in range(start_index,end_index+1)
+        terminal_indices=[] if dialogue_end else [i for i in range(start_index,end_index+1)
                           if _TERMINAL.search(str(words[i]['text']).strip())]
         if terminal_indices:
             best=min(terminal_indices,key=lambda i:abs(ends[i]-(start+target)))
@@ -381,6 +467,8 @@ def _candidate_spans(words: Sequence[Mapping], options: ClipperOptions) -> list[
         gap_after=(float(words[end_index+1]['start_ms'])-end)/1000. if end_index+1<len(words) else 1.
         context,hook,boundary,reasons=_text_scores(text,subset,utterance_start,
             terminal,gap_before,gap_after)
+        if dialogue_start or dialogue_end:
+            reasons.append('Pergunta e resposta próximas mantidas no mesmo clipe')
         candidates.append({'start_ms':int(start),'end_ms':int(end),'text':text,
             'words':subset,'context_score':context,'hook_score':hook,
             'boundary_score':boundary,'text_reasons':reasons})

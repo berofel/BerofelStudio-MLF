@@ -9,7 +9,7 @@ import numpy as np
 from berofel.core.project import Clip
 from berofel.services.clip_audio_signals import extract_frames_from_chunks
 from berofel.services.clipper import (ClipperOptions, _candidate_spans,
-    analyze_clips, audio_features)
+    _dialogue_context_bounds, _normalise_words, analyze_clips, audio_features)
 
 
 def transcript(source, count=180, start=0., step=.2):
@@ -28,6 +28,64 @@ def transcript(source, count=180, start=0., step=.2):
 
 
 class ClipperTests(unittest.TestCase):
+    def test_dialogue_boundary_keeps_nearby_question_and_answer_together(self):
+        words=[]
+        at=0.
+        for text in ('Como isso funciona?', 'Porque o editor mantém contexto.'):
+            for token in text.split():
+                words.append({'id':f'w{len(words)}','start_ms':round(at*1000),
+                    'end_ms':round((at+.22)*1000),'text':token,
+                    'speaker_id':'speaker-a' if len(words)<3 else 'speaker-b'})
+                at+=.3
+            at+=.4
+        start,end,expanded_start,expanded_end=_dialogue_context_bounds(
+            words,0,2,5000.)
+        self.assertEqual(start,0)
+        self.assertEqual(end,len(words)-1)
+        self.assertFalse(expanded_start)
+        self.assertTrue(expanded_end)
+
+    def test_dialogue_boundary_never_exceeds_configured_candidate_duration(self):
+        words=[]
+        at=0.
+        for text in ('Como isso funciona?', 'Porque o editor mantém contexto.'):
+            for token in text.split():
+                words.append({'id':f'w{len(words)}','start_ms':round(at*1000),
+                    'end_ms':round((at+.22)*1000),'text':token,
+                    'speaker_id':'speaker-a' if len(words)<3 else 'speaker-b'})
+                at+=.3
+            at+=.4
+        start,end,_,expanded_end=_dialogue_context_bounds(words,0,2,1800.)
+        self.assertEqual(start,0)
+        self.assertEqual(end,2)
+        self.assertFalse(expanded_end)
+
+    def test_dependent_answer_candidate_can_include_its_nearby_question(self):
+        words=[]
+        at=0.
+        for text in ('Como isso funciona?', 'Porque o editor mantém contexto.'):
+            for token in text.split():
+                words.append({'id':f'w{len(words)}','start_ms':round(at*1000),
+                    'end_ms':round((at+.22)*1000),'text':token,
+                    'speaker_id':'speaker-a' if len(words)<3 else 'speaker-b'})
+                at+=.3
+            at+=.4
+        start,end,expanded_start,_=_dialogue_context_bounds(
+            words,3,len(words)-1,5000.)
+        self.assertEqual(start,0)
+        self.assertEqual(end,len(words)-1)
+        self.assertTrue(expanded_start)
+
+    def test_dialogue_turn_index_is_built_once_for_all_candidate_windows(self):
+        from berofel.services import clipper as clipper_service
+        source=str(Path('fixture.wav').resolve())
+        clip=Clip(source,0.,40.,kind='audio')
+        words=_normalise_words(clip,transcript(source,count=220,step=.12))
+        with patch.object(clipper_service,'_utterances',
+                          wraps=clipper_service._utterances) as utterances:
+            _candidate_spans(words,ClipperOptions(4.,8.,8,6.))
+        self.assertEqual(utterances.call_count,1)
+
     def test_candidate_edges_snap_to_whole_transcribed_words_and_duration(self):
         with tempfile.TemporaryDirectory(prefix='bfs_clipper_words_') as folder:
             words=transcript(Path(folder)/'voice.wav',count=150,step=.12)

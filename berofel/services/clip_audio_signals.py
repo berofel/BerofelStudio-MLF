@@ -11,10 +11,58 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from typing import Iterable, Mapping, Sequence
+import re
+import unicodedata
 import numpy as np
 
 
 EPS = 1e-9
+
+# Small PT-BR function-word list for candidate diversity only. It is not a
+# prohibited-word list and never changes transcript text or timestamps.
+_DIVERSITY_STOPWORDS = frozenset((
+    'a', 'ao', 'aos', 'aquela', 'aquele', 'aquilo', 'as', 'ate', 'com',
+    'como', 'da', 'das', 'de', 'dela', 'dele', 'deles', 'demais', 'do',
+    'dos', 'e', 'ela', 'elas', 'ele', 'eles', 'em', 'essa', 'esse', 'esta',
+    'este', 'eu', 'foi', 'foram', 'isso', 'isto', 'ja', 'la', 'lhe', 'mais',
+    'mas', 'me', 'mesmo', 'menos', 'meu', 'minha', 'muito', 'na', 'nas',
+    'nem', 'no', 'nos', 'nossa', 'nossas', 'nosso', 'nossos', 'o', 'os',
+    'ou', 'para', 'pela', 'pelas', 'pelo', 'pelos', 'por', 'porque', 'qual',
+    'quando', 'que', 'quem', 'se', 'sem', 'ser', 'seu', 'sua', 'suas',
+    'tambem', 'tem', 'tendo', 'te', 'um', 'uma', 'voce', 'voces', 'vou',
+    'vai', 'vamos', 'foi', 'era', 'sao', 'esta', 'estao', 'ter', 'tinha'))
+
+
+def _diversity_terms(text: object) -> set[str]:
+    """Extract cheap, accent-insensitive content terms for list diversity."""
+    normalized = unicodedata.normalize('NFKD', str(text or '').casefold())
+    normalized = ''.join(char for char in normalized
+                         if not unicodedata.combining(char))
+    return {token for token in re.findall(r'[a-z0-9]+', normalized)
+            if len(token) > 1 and token not in _DIVERSITY_STOPWORDS}
+
+
+def _same_topic_duplicate(left: Mapping, right: Mapping,
+                          left_terms: set[str] | None = None,
+                          right_terms: set[str] | None = None) -> bool:
+    """Conservatively detect near-duplicate transcript candidates.
+
+    Require several shared content terms and both high containment and
+    substantial Jaccard overlap. This keeps a candidate that adds a meaningful
+    detail from being discarded just because it discusses the same topic.
+    """
+    left_terms = left_terms if left_terms is not None else _diversity_terms(
+        left.get('text', ''))
+    right_terms = right_terms if right_terms is not None else _diversity_terms(
+        right.get('text', ''))
+    if min(len(left_terms), len(right_terms)) < 5:
+        return False
+    shared = left_terms & right_terms
+    if len(shared) < 5:
+        return False
+    containment = len(shared) / min(len(left_terms), len(right_terms))
+    jaccard = len(shared) / len(left_terms | right_terms)
+    return containment >= .92 and jaccard >= .82
 
 
 @dataclass
@@ -334,22 +382,30 @@ def score_clip(
 
 def select_diverse_clips(ranked: Sequence[Mapping], max_clips: int = 5,
                          max_overlap_ratio: float = 0.35) -> list[dict]:
-    """Simple greedy interval de-duplication, retaining the highest-ranking clip."""
-    chosen: list[dict] = []
+    """Greedily retain high-ranking clips with temporal and lexical diversity.
+
+    Lexical deduplication is deliberately conservative and only operates on
+    transcript text already attached to candidates. It adds no ASR/model work.
+    """
+    chosen: list[tuple[dict, set[str]]] = []
     for c in sorted(ranked, key=lambda c: float(c["score"]), reverse=True):
         s, e = float(c["start_ms"]), float(c["end_ms"])
         if e <= s:
             continue
+        terms = _diversity_terms(c.get('text', ''))
         duplicates = False
-        for prev in chosen:
+        for prev, prev_terms in chosen:
             ps, pe = float(prev["start_ms"]), float(prev["end_ms"])
             intersection = max(0.0, min(e, pe)-max(s, ps))
             ratio = intersection / min(e-s, pe-ps)
             if ratio > max_overlap_ratio:
                 duplicates = True
                 break
+            if _same_topic_duplicate(c, prev, terms, prev_terms):
+                duplicates = True
+                break
         if not duplicates:
-            chosen.append(dict(c))
+            chosen.append((dict(c), terms))
             if len(chosen) >= max_clips:
                 break
-    return chosen
+    return [candidate for candidate, _terms in chosen]
