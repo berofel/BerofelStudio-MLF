@@ -210,6 +210,27 @@ class ActionsUITests(unittest.TestCase):
             self.assertEqual(reopened.clips[0].source,str(wav_path.resolve()))
         win.close()
 
+    def test_clip_edit_shortcuts_do_not_capture_text_field_commands(self):
+        win=MainWindow()
+        try:
+            project=Project();track=project.tracks[0].id
+            clip=project.add_clip(Clip('source.mp4',0,2,track_id=track))
+            win.project=project;win.refresh([clip.id]);win.show();self.app.processEvents()
+            editor=win.narration_panel.text
+            editor.setPlainText('Texto que deve continuar editável')
+            editor.setFocus();self.app.processEvents()
+            self.assertIs(QApplication.focusWidget(),editor)
+            win._shortcut_actions['Ctrl+C'].trigger()
+            win._shortcut_actions['Ctrl+V'].trigger()
+            win._shortcut_actions['Ctrl+Z'].trigger()
+            self.assertEqual(win._clip_clipboard,[])
+            self.assertEqual(len(win.project.clips),1)
+            win.timeline.view.setFocus();self.app.processEvents()
+            win._shortcut_actions['Ctrl+C'].trigger()
+            self.assertEqual(len(win._clip_clipboard),1)
+        finally:
+            win.close()
+
     def test_timecode_and_scope_ui(self):
         self.assertEqual(parse_timecode('01:02:03.500'),3723.5)
         self.assertEqual(parse_timecode('00:12.5'),12.5)
@@ -1096,6 +1117,12 @@ class ActionsUITests(unittest.TestCase):
             win.captions_panel.font_size.setValue(58)
             win.captions_panel.font_size.editingFinished.emit()
             self.assertEqual(win.project.clip(clip.id).font_size,58)
+            win.captions_panel.stroke_color.setText('#223344')
+            win.captions_panel.stroke_color.editingFinished.emit()
+            self.assertEqual(win.project.clip(clip.id).stroke_color,'#223344')
+            win.captions_panel.pos_x.setValue(36)
+            win.captions_panel.pos_x.editingFinished.emit()
+            self.assertEqual(win.project.clip(clip.id).pos_x,36)
             win.captions_panel.preset_requested.emit(3)
             self.assertEqual(win.project.clip(clip.id).font_size,54)
         finally:

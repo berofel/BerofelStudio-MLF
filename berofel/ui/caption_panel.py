@@ -140,6 +140,18 @@ class CaptionPanel(QWidget):
         color_holder = QWidget(); color_holder.setLayout(color_row)
         root.addWidget(self._labeled('Cor do texto', color_holder))
 
+        stroke_color_row=QHBoxLayout()
+        self.stroke_color=QLineEdit();self.stroke_color.setObjectName('captionStrokeColor')
+        self.stroke_color.setMaxLength(7);self.stroke_color.setPlaceholderText('#000000')
+        self.stroke_color.editingFinished.connect(
+            lambda:self._change('stroke_color',self.stroke_color.text()))
+        stroke_color_row.addWidget(self.stroke_color,1)
+        self.stroke_color_button=QPushButton('Escolher')
+        self.stroke_color_button.clicked.connect(self._choose_stroke_color)
+        stroke_color_row.addWidget(self.stroke_color_button)
+        stroke_color_holder=QWidget();stroke_color_holder.setLayout(stroke_color_row)
+        root.addWidget(self._labeled('Cor do contorno',stroke_color_holder))
+
         self.stroke_width = QSpinBox()
         self.stroke_width.setObjectName('captionStrokeWidth')
         self.stroke_width.setRange(0, 12)
@@ -153,6 +165,13 @@ class CaptionPanel(QWidget):
         self.pos_y.setSuffix(' px')
         self.pos_y.editingFinished.connect(lambda: self._change('pos_y', self.pos_y.value()))
         root.addWidget(self._labeled('Posição vertical', self.pos_y))
+
+        self.pos_x = QSpinBox()
+        self.pos_x.setObjectName('captionPositionX')
+        self.pos_x.setRange(-4000,4000)
+        self.pos_x.setSuffix(' px')
+        self.pos_x.editingFinished.connect(lambda:self._change('pos_x',self.pos_x.value()))
+        root.addWidget(self._labeled('Posição horizontal',self.pos_x))
 
         self.state_label = QLabel('Nenhuma legenda selecionada.')
         self.state_label.setWordWrap(True)
@@ -191,8 +210,10 @@ class CaptionPanel(QWidget):
             for widget, value in ((self.font_family, clip.font_family),
                                   (self.font_size, clip.font_size),
                                   (self.font_color, clip.font_color),
+                                  (self.stroke_color,clip.stroke_color),
                                   (self.stroke_width, clip.stroke_width),
-                                  (self.pos_y, clip.pos_y)):
+                                  (self.pos_y, clip.pos_y),
+                                  (self.pos_x, clip.pos_x)):
                 with QSignalBlocker(widget):
                     if isinstance(widget, QLineEdit):
                         widget.setText(str(value))
@@ -207,7 +228,8 @@ class CaptionPanel(QWidget):
 
     def _set_controls_enabled(self, enabled):
         for widget in (self.apply_button, self.preset, self.font_family, self.font_size,
-                       self.font_color, self.color_button, self.stroke_width, self.pos_y):
+                       self.font_color, self.color_button, self.stroke_color,
+                       self.stroke_color_button,self.stroke_width,self.pos_y,self.pos_x):
             widget.setEnabled(bool(enabled))
 
     def _change(self, field, value):
@@ -320,6 +342,13 @@ class CaptionPanel(QWidget):
         if color.isValid():
             self.font_color.setText(color.name().upper())
             self._change('font_color', color.name().upper())
+
+    def _choose_stroke_color(self):
+        color=QColorDialog.getColor(QColor(self.stroke_color.text() or '#000000'),self,
+                                    'Cor do contorno')
+        if color.isValid():
+            self.stroke_color.setText(color.name().upper())
+            self._change('stroke_color',color.name().upper())
 
     def set_context(self, project, selected_ids=()):
         self._project = project

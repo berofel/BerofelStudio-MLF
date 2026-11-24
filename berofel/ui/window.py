@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QLabel, QFileDialog, QMessageBox, QScrollArea,
     QCheckBox, QDialog, QDialogButtonBox, QProgressBar,
     QToolButton, QFrame, QStackedWidget, QLineEdit,
-    QTextEdit, QSizePolicy, QInputDialog, QApplication, QTabWidget,
+    QTextEdit, QPlainTextEdit, QSizePolicy, QInputDialog, QApplication, QTabWidget,
     QAbstractScrollArea
 )
 from .wheel_controls import (WheelGuardComboBox as QComboBox,
@@ -1275,10 +1275,23 @@ class MainWindow(QMainWindow):
                    ('J',lambda:self.nudge_playhead(-2)),('K',self.pause_playback),
                    ('L',self.play_forward),(',',lambda:self.step_frame(-1)),
                    ('.',lambda:self.step_frame(1))]
+        editing_shortcuts={'Ctrl+C','Ctrl+V','Ctrl+Z','Ctrl+Y','Delete','Ctrl+K',
+                           'Ctrl+Shift+Delete','Ctrl+G','Ctrl+Shift+G'}
+        self._shortcut_actions={}
         for text,fn in shortcuts:
             action=QAction(self)
+            action.setObjectName('shortcut_'+text.replace('+','_').replace(',','comma').replace('.','period'))
             action.setShortcut(QKeySequence(text))
-            action.triggered.connect(fn)
+            edit_command=text in editing_shortcuts
+            def dispatch(_checked=False,callback=fn,guard_edit=edit_command):
+                if guard_edit:
+                    focus=QApplication.focusWidget()
+                    if focus and any(focus.inherits(name) for name in
+                            ('QLineEdit','QTextEdit','QPlainTextEdit','QAbstractSpinBox','QComboBox')):
+                        return
+                callback()
+            action.triggered.connect(dispatch)
+            self._shortcut_actions[text]=action
             if text in ('J','K','L',',','.','M','F','S','Ctrl+C','Ctrl+V'):
                 action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
                 self.timeline.addAction(action)

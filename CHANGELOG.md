@@ -5,7 +5,9 @@
 - Corrigido o clique direito na timeline: seleciona o clipe alvo, preserva multisseleção quando apropriado e captura IDs estáveis para o menu de contexto.
 - WAVs de narração concluídos passam a ser registrados na biblioteca mesmo quando a geração não insere o áudio imediatamente na timeline.
 - Adicionado comando para inserir a última narração já gerada; reutiliza o WAV e não reinicia a síntese nem a reprodução.
-- Validação Qt direcionada: 81 testes do painel/timeline passaram; suíte completa no estado atual: 458 passaram, 5 ignorados, sem falhas (60,6 s). Um teste imprimiu uso esperado do parser de benchmark ao validar argumento inválido.
+- O painel de legendas agora também edita a cor do contorno e a posição horizontal, propriedades já suportadas pelo projeto e pelo renderizador.
+- Atalhos de edição não capturam Ctrl+C/Ctrl+V/desfazer/exclusão enquanto o foco está em um campo textual ou de configuração; ações mantêm uma tabela central com identificadores para testes e consulta.
+- Validação da rodada anterior: 81 testes do painel/timeline passaram. Após legenda e proteção de atalhos: 459 testes passaram, 5 ignorados, sem falhas (65,7 s).
 
 ## Motor contextual Python V3 — 23/11/2026
 
