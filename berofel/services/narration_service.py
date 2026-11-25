@@ -85,6 +85,18 @@ def validate_clone_conditioning(request: NarrationRequest) -> None:
             'Este backend ainda não foi validado para clonagem PT-BR. Selecione '
             'Original Qwen3-TTS Base ou um perfil Pure C explicitamente identificado.'
         )
+    if not str(request.reference_text or '').strip():
+        raise ValueError(
+            'A clonagem PT-BR precisa da transcrição exata da janela de referência. '
+            'Use “Transcrever referência”, revise o texto e tente novamente. Sem a '
+            'transcrição, o Qwen usa apenas o vetor vocal e pode gerar pronúncia genérica.'
+        )
+    if not request.reference_text_reviewed:
+        raise ValueError(
+            'A transcrição PT-BR ainda não foi confirmada. Confira o texto da janela '
+            'vocal e marque “Conferi que a transcrição corresponde à janela vocal '
+            'selecionada” antes de gerar ou salvar o perfil.'
+        )
 
 
 # Pure C's packaged HTTP endpoint does not expose max_new_tokens. Keep its
@@ -234,18 +246,6 @@ def _generate_long_narration(request: NarrationRequest, chunks: list[str],
         'title': request.title, 'voice': request.voice, 'language': request.language,
         'chunk_count': len(chunks), 'continuous_wav': True,
         'generation_seconds': sum(float(item.get('generation_seconds', 0.0)) for item in results)}
-    if not str(request.reference_text or '').strip():
-        raise ValueError(
-            'A clonagem PT-BR precisa da transcrição exata da janela de referência. '
-            'Use “Transcrever referência”, revise o texto e tente novamente. Sem a '
-            'transcrição, o Qwen usa apenas o vetor vocal e pode gerar pronúncia genérica.'
-        )
-    if not request.reference_text_reviewed:
-        raise ValueError(
-            'A transcrição PT-BR ainda não foi confirmada. Confira o texto da janela '
-            'vocal e marque “Conferi que a transcrição corresponde à janela vocal '
-            'selecionada” antes de gerar ou salvar o perfil.'
-        )
 
 
 def generate_narration(request: NarrationRequest, progress: Callable | None = None,
