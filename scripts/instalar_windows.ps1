@@ -178,17 +178,15 @@ try {
 
     Step '9/9 - Verificacao final da instalacao principal'
     Run-Python @((Join-Path $root 'scripts\verificar.py'),'--strict','--quick','--editor-only')
-    $env:BEROFEL_APP_ROOT = $root
-    $versionCode = 'import os,sys;sys.path.insert(0,os.environ["BEROFEL_APP_ROOT"]);from berofel import __version__;print(__version__)'
-    # Capture all stdout before selecting the last line. A native command piped
-    # through Select-Object can leave $LASTEXITCODE unset in Windows PowerShell.
-    $versionOutput = @(& $venvExe -c $versionCode)
-    $versionExitCode = $LASTEXITCODE
-    $appVersion = $versionOutput | Select-Object -Last 1
-    if ($versionExitCode -ne 0 -or -not $appVersion) {
-        throw 'Instalacao terminou, mas nao foi possivel ler a versao do codigo local.'
+    $versionSource = Join-Path $root 'berofel\__init__.py'
+    if (-not (Test-Path -LiteralPath $versionSource -PathType Leaf)) {
+        throw "Arquivo de versão do aplicativo não foi instalado: $versionSource"
     }
-    Write-Host "`n[OK] Instalacao do BerofelStudio $($appVersion.Trim()) concluida." -ForegroundColor Green
+    $versionText = Get-Content -LiteralPath $versionSource -Raw
+    $versionMatch = [regex]::Match($versionText, "__version__\s*=\s*'([^']+)'")
+    if (-not $versionMatch.Success) { throw 'A versão do BerofelStudio não foi encontrada em berofel/__init__.py.' }
+    $appVersion = $versionMatch.Groups[1].Value
+    Write-Host "`n[OK] Instalacao do BerofelStudio $appVersion concluida." -ForegroundColor Green
     Write-Host 'Motor único de narração e clonagem: Qwen3-TTS Base 0.6B.'
     Write-Host 'Parakeet TDT v3/Silero: INSTALAR_TODAS_AS_IAS.bat.'
     Write-Host "Abra: $root\ABRIR_BEROFELSTUDIO.bat" -ForegroundColor Green
