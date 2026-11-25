@@ -40,7 +40,7 @@ class CloneConditioningTests(unittest.TestCase):
 
     def test_ptbr_original_rejects_unreviewed_asr_draft(self):
         with self.assertRaisesRegex(ValueError,'ainda não foi confirmada'):
-            validate_clone_conditioning(self._request(text='rascunho Whisper'))
+            validate_clone_conditioning(self._request(text='rascunho Parakeet'))
 
     def test_non_portuguese_fast_backend_is_unaffected(self):
         validate_clone_conditioning(self._request(

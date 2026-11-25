@@ -10,7 +10,7 @@ echo   BerofelStudio - INSTALACAO PARA WINDOWS LIMPO
 echo.
 echo Este instalador NAO depende de Python preinstalado.
 echo Ele baixa Python, Visual C++, FFmpeg/FFprobe, pacotes
-echo Python. O modelo Whisper fica em instalador opcional.
+echo Python. Parakeet TDT v3 e Silero ficam no instalador opcional de IA.
 echo Pode aparecer uma confirmacao do Windows para Visual C++.
 echo.
 

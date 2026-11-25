@@ -30,7 +30,7 @@ class PanelTests(unittest.TestCase):
         self.assertGreater(panel.geometry().height(),0)
         self.assertLess(panel.geometry().height(),60)  # ocioso não ocupa a altura de um job
         control=ProcessControl()
-        panel.begin('Faster-Whisper',control)
+        panel.begin('Parakeet TDT v3 ONNX INT8/CPU',control)
         self.app.processEvents()
         self.assertGreater(panel.geometry().height(),80)
         panel.set_stage('Transcrição • 3 trechos')

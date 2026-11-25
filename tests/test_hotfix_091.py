@@ -44,5 +44,14 @@ class ParakeetWorkerTests(unittest.TestCase):
         self.assertNotIn('whisper',ai_worker.HANDLERS)
         self.assertNotIn('whisper_batch',ai_worker.HANDLERS)
 
+    def test_windows_installers_name_parakeet_as_the_optional_asr(self):
+        root=Path(__file__).resolve().parents[1]
+        dependencies=(root/'instalar_dependencias.bat').read_text(encoding='utf-8')
+        qwen=(root/'INSTALAR_QWEN_OPCIONAL.bat').read_text(encoding='utf-8')
+        self.assertIn('Parakeet TDT v3',dependencies)
+        self.assertIn('Parakeet TDT v3/Silero',qwen)
+        self.assertNotIn('Whisper',dependencies)
+        self.assertNotIn('Whisper',qwen)
+
 
 if __name__=='__main__': unittest.main()

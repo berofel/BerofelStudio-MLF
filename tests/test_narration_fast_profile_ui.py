@@ -325,7 +325,7 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                 panel.sample_path.setText(str(sample))
                 panel.authorized.setChecked(True)
                 panel.text.setPlainText('Uma frase diferente da referência.')
-                panel.set_reference_transcript({'text':'Rascunho do Whisper.',
+                panel.set_reference_transcript({'text':'Rascunho do Parakeet.',
                     'reference_window':{'start':2.0,'duration':12.0},
                     'mean_word_confidence':.64})
                 self.assertFalse(panel.reference_text_reviewed.isChecked())

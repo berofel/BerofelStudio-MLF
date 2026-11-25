@@ -351,7 +351,7 @@ class AITest(unittest.TestCase):
         before=timeline_words(self.prj)
         self.assertEqual(len(before),3)
         self.assertAlmostEqual(before[0]['start'],4.2)
-        # Corta a primeira palavra: as seguintes passam para 4.0, sem novo Whisper.
+        # Corta a primeira palavra: as seguintes passam para 4.0, sem nova chamada ao Parakeet.
         self.prj.cut_intervals(self.clip.id,[(0.,.5)])
         after=timeline_words(self.prj)
         self.assertEqual(len(after),2)

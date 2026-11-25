@@ -15,7 +15,7 @@ class QwenLocalCloneTests(unittest.TestCase):
     def test_canonical_service_rejects_unreviewed_ptbr_transcript_before_backend(self):
         request=NarrationRequest(text='frase nova',voice='voice.wav',consent=True,
             engine='qwen3-tts-local',language='portuguese',
-            reference_text='rascunho do Whisper',reference_text_reviewed=False)
+            reference_text='rascunho do Parakeet',reference_text_reviewed=False)
         with patch('berofel.services.qwen3_tts_local.generate_local_clone') as backend:
             with self.assertRaisesRegex(ValueError,'ainda não foi confirmada'):
                 generate_narration(request)

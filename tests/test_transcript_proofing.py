@@ -53,7 +53,7 @@ class TranscriptProofingTests(unittest.TestCase):
         project = SimpleNamespace(clips=[
             SimpleNamespace(kind='text', text='BerofelStudio usa Qwen3-TTS',
                 generated_by='manual_caption', caption_generated_text=''),
-            SimpleNamespace(kind='text', text='Faster-Whisper está correto',
+            SimpleNamespace(kind='text', text='Parakeet está correto',
                 generated_by='auto_caption', caption_generated_text='transcrição original'),
             SimpleNamespace(kind='text', text='Legenda automática',
                 generated_by='auto_caption', caption_generated_text='Legenda automática'),
@@ -61,7 +61,7 @@ class TranscriptProofingTests(unittest.TestCase):
         approved = project_approved_words(project)
         self.assertIn('berofelstudio', approved)
         self.assertIn('qwen3-tts', approved)
-        self.assertIn('faster-whisper', approved)
+        self.assertIn('parakeet', approved)
         self.assertNotIn('legenda', approved)
         self.assertNotIn('correto', approved)
 

@@ -268,7 +268,8 @@ def generate_narration(request: NarrationRequest, progress: Callable | None = No
         speech_text = source_text
     else:
         pronunciation_text = source_text
-        if request.language == 'portuguese' and request.voice:
+        if (request.language == 'portuguese' and request.voice and
+                Path(request.voice).expanduser().is_file()):
             dictionary = PronunciationDictionary(request.voice)
             entries = dictionary.load()
             pronunciation_text, pronunciation_terms = apply_pronunciations(
