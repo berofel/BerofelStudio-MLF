@@ -140,10 +140,14 @@ class PureCCapabilityTests(TestCase):
             def runner(command, **_kwargs):
                 argument = command[-1]
                 if argument == '--help':
-                    return Mock(returncode=0, stdout=(
+                        return Mock(returncode=0, stdout=(
                         '--load-voice --xvector-only --icl-only --icl-frames '
-                        '--quant-mixed-cpu --int8 --emotion <spec> (1.7B only) '
-                        '--emotion-strength <s> (0.6B only) --compose --max-ref-duration'),
+                        '--quant-mixed-cpu --int8\n'
+                        '--emotion <spec> (1.7B only)\n'
+                        '--emotion-strength <s> (0.6B only)\n'
+                        '--emo-ref <wav> EMOTION BY EXAMPLE (24kHz mono)\n'
+                        '--emo-ref-text <text> required\n'
+                        '--compose --max-ref-duration'),
                         stderr='')
                 return Mock(returncode=0, stdout='build: unknown · AVX2', stderr='')
             manifest = inspect_purec_capabilities(executable, runner=runner)
@@ -154,8 +158,12 @@ class PureCCapabilityTests(TestCase):
             self.assertEqual(manifest['cli']['int8_precision'],
                              'Talker INT8 + Code Predictor INT8')
             self.assertFalse(manifest['cli']['emotion_flag_is_06b'])
+            self.assertTrue(manifest['cli']['emotion_by_example_advertised'])
+            self.assertTrue(manifest['cli']['emotion_by_example_needs_transcript'])
+            self.assertEqual(manifest['cli']['emotion_by_example_wav_constraints'], '24khz mono')
             self.assertFalse(manifest['http_adapter']['dynamic_voice_per_request'])
             self.assertFalse(manifest['http_adapter']['emotion_per_request_validated'])
+            self.assertFalse(manifest['http_adapter']['emotion_by_example_per_request_validated'])
             self.assertFalse(manifest['http_adapter']['emotion_vectors_available'])
             self.assertEqual(manifest['build_id'], 'unknown · AVX2')
 

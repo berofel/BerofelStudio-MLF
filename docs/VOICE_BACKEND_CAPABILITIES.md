@@ -12,5 +12,7 @@ O módulo `berofel.services.voice_intelligence.capabilities` consulta os recurso
 | Emoção por requisição | Não validada pelo adaptador HTTP | A flag CLI não comprova integração do servidor |
 | ASR de revisão | Parakeet TDT v3 ONNX INT8, CPUExecutionProvider | Não é medida de identidade vocal |
 
+Na verificação do executável local em 25/11/2026, `--help` também anunciou `--emo-ref` e `--emo-ref-text` (referência emocional WAV mono 24 kHz com transcrição), além de `--emotion-strength`. Esses são recursos anunciados pela CLI. O backend do editor inicia um servidor persistente com `--serve` e envia texto, idioma e amostragem em `/v1/tts/stream`; ele não envia essas opções, e a API instalada não foi testada para aceitá-las. O runtime instalado não tem a pasta local `presets/emovoice`, e nenhum vetor emocional foi encontrado pelo manifesto. Portanto, a interface não deve apresentar controle emocional neural como funcional até existir integração HTTP comprovada e teste auditivo no Qwen 0.6B. A receita upstream atual distingue as rotas 0.6B/1.7B e recomenda não usar `--emotion` do 1.7B no 0.6B.
+
 O executável pode ser inspecionado com `inspect_purec_capabilities(path)`. O resultado inclui SHA-256 para vincular o diagnóstico ao arquivo concreto. O build local observado retornou identificação de build/source desconhecida; portanto não se atribui a ele um commit upstream específico.
 

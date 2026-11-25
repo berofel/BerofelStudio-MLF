@@ -47,6 +47,10 @@ def inspect_purec_capabilities(executable: str | Path, *,
     emotion_lines = [line.casefold() for line in help_text.splitlines()
                      if re.match(r"^\s*--emotion\s", line, re.IGNORECASE)
                      and "--emotion-strength" not in line.casefold()]
+    emo_ref_lines = [line.casefold() for line in help_text.splitlines()
+                     if re.match(r"^\s*--emo-ref\s", line, re.IGNORECASE)]
+    emo_ref_text_lines = [line.casefold() for line in help_text.splitlines()
+                          if re.match(r"^\s*--emo-ref-text\s", line, re.IGNORECASE)]
     asset_dir = Path(emotion_asset_dir).expanduser() if emotion_asset_dir else None
     emotion_assets = sorted(asset_dir.glob("dir_*.bin")) if asset_dir and asset_dir.is_dir() else []
     build_match = re.search(r"^\s*build:\s*(.+)$", caps_text, re.MULTILINE | re.IGNORECASE)
@@ -67,6 +71,13 @@ def inspect_purec_capabilities(executable: str | Path, *,
             "emotion_flag_is_06b": any("0.6b" in line and "1.7b" not in line
                                         for line in emotion_lines),
             "emotion_strength_advertised": "--emotion-strength" in flags,
+            "emotion_by_example_advertised": (
+                "--emo-ref" in flags and "--emo-ref-text" in flags),
+            "emotion_by_example_needs_transcript": any(
+                "required" in line for line in emo_ref_text_lines),
+            "emotion_by_example_wav_constraints": (
+                "24khz mono" if any("24khz mono" in line for line in emo_ref_lines)
+                else None),
             "paralinguistic_compose_advertised": "--compose" in flags,
             "paralinguistic_tags_advertised": "tags:" in help_text.casefold(),
             "mixed_cpu_precision": ("Talker INT8 + Code Predictor INT4"
@@ -79,6 +90,7 @@ def inspect_purec_capabilities(executable: str | Path, *,
             "profile_is_loaded_at_server_start": True,
             "dynamic_voice_per_request": False,
             "emotion_per_request_validated": False,
+            "emotion_by_example_per_request_validated": False,
             "emotion_vectors_available": bool(emotion_assets),
             "paralinguistic_markers_validated": False,
         },
