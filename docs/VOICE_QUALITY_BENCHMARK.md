@@ -15,6 +15,12 @@ Cada configuração foi executada uma vez, em sequência; a segunda reutilizou o
 
 Também foi concluída uma chamada real de transcrição de referência via Parakeet CPU + Silero + FFmpeg: trecho selecionado de 3 s, seis palavras reconhecidas, 7,56 s de execução. A interface do adaptador não expõe confiança nessa chamada. Esse teste curto confirma o caminho de execução, não a precisão do ASR em conteúdo geral.
 
+### Investigação de expressividade no Pure C local
+
+Com a mesma referência local autorizada, mesmo texto-alvo, Qwen 0.6B Base, INT8 e seis threads, o binário foi exercitado em duas rotas. A transcrição da janela de referência foi obtida pelo Parakeet TDT v3 ONNX INT8/CPU. O modo CLI `--emo-ref` + `--emo-ref-text` aceitou os argumentos e gravou WAV mono 24 kHz de 4,32 s em 11,564 s (RTF total exploratório 2,677). A baseline CLI sem esses argumentos gravou WAV válido de 4,24 s em 5,222 s (RTF total 1,231). Uma execução por condição, sem escuta; não prova que a interpretação emocional melhorou. O custo sugere carga/condicionamento one-shot e não justifica substituir a rota persistente normal.
+
+Separadamente, duas requisições ao servidor residente usaram seed 42; a segunda incluía `emotion: joy`. Ambas tiveram status HTTP 200, duração 3,76 s e o mesmo SHA-256 (`2fbcd01b5c85a62f…e825f2ed5`). Nesta build instalada o campo não alterou a saída. Não se deve expor emoção neural via API nesta versão como se tivesse efeito. Upstream pode ter evoluído depois da build local; o SHA executável e a incompatibilidade estão registrados em `VOICE_BACKEND_CAPABILITIES.md`.
+
 O cache padrão de perfil sob `%LOCALAPPDATA%\\BFS` não era gravável pelo processo Codex sandbox nesta sessão. Para concluir a inferência sem alterar ACLs, os testes apontaram `BEROFEL_QWEN3_PUREC_PROFILE_CACHE` e logs para uma pasta temporária gravável. Isso é uma restrição do processo sandbox, não uma falha observada do aplicativo executado normalmente pelo usuário.
 
 ## Procedimento reproduzível para benchmark comparativo

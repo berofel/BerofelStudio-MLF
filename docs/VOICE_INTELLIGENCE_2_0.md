@@ -20,7 +20,7 @@ A mesma verificação agora estima F0 descritiva usando a diferença normalizada
 
 ## Capacidades Pure C observadas
 
-O manifesto consulta `--help` e `--caps` sem iniciar o servidor ou carregar pesos. A cópia local consultada em 25/11/2026 tem SHA-256 `3a5f89d923bfdbea29327bd4111ecd651afa3ef448b2643b6ea8ad63dd907d13`, tamanho 2.076.680 bytes e informa build/source desconhecidos. A ajuda confirma `--quant-mixed-cpu` como Talker INT8 + Code Predictor INT4 e `--int8` como INT8 + INT8. A opção `--emotion` é indicada para 1.7B; a ajuda diz que `--emotion-strength` é recurso 0.6B, mas isso não prova que o adaptador HTTP usado pelo editor o aceite.
+O manifesto consulta `--help` e `--caps` sem iniciar o servidor ou carregar pesos. A cópia local consultada em 25/11/2026 tem SHA-256 `3a5f89d923bfdbea29327bd4111ecd651afa3ef448b2643b6ea8ad63dd907d13`, tamanho 2.076.680 bytes e informa build/source desconhecidos. A ajuda confirma `--quant-mixed-cpu` como Talker INT8 + Code Predictor INT4 e `--int8` como INT8 + INT8. O binário anuncia `--emo-ref`/`--emo-ref-text`, e um teste CLI gerou WAV com esses argumentos. O teste HTTP, porém, produziu saída byte a byte igual com e sem `emotion: joy`; não há controle emocional funcional qualificado no servidor usado pelo editor. Veja medições em `VOICE_QUALITY_BENCHMARK.md`.
 
 Não há arquivos `dir_*.bin` no diretório de assets consultado. O adaptador atual carrega um perfil vocal na inicialização do servidor e não valida mudança de voz ou vetor emocional por requisição. Por segurança, esta etapa não expõe sliders de emoção nem promete controle neural inexistente. A documentação Pure C descreve steering por vetor para 0.6B, mas requer assets compatíveis e validação auditiva; não foi ativado.
 

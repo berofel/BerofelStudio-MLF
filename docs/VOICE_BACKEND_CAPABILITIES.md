@@ -4,15 +4,18 @@ O módulo `berofel.services.voice_intelligence.capabilities` consulta os recurso
 
 | Recurso | Evidência local consultada | Limite conhecido |
 |---|---|---|
-| Qwen3-TTS Base 0.6B | Diretório local de pesos e identificador no aplicativo | Síntese não executada nesta sessão |
+| Qwen3-TTS Base 0.6B | Diretório local de pesos, identificador no aplicativo e síntese local | Identificação de build/source do executável desconhecida |
 | Pure C Mixed CPU | `--quant-mixed-cpu`: Talker INT8 + Code Predictor INT4 | Não equivale a INT8 uniforme |
-| Pure C INT8 | `--int8`: Talker INT8 + Code Predictor INT8 | Não executado nesta sessão |
+| Pure C INT8 | `--int8`: Talker INT8 + Code Predictor INT8; WAV gerado localmente | Uma repetição curta não qualifica desempenho/qualidade geral |
 | Clone por x-vector | `--load-voice`, `--xvector-only` | Voz vinculada à inicialização do servidor |
 | ICL / `.qvoice` | Flags e extensões anunciadas em `--help` | Arquivo compatível não foi exercitado |
-| Emoção por requisição | Não validada pelo adaptador HTTP | A flag CLI não comprova integração do servidor |
+| Campo HTTP `emotion` | Teste local com seed fixo: status 200, mas o WAV resultou byte a byte idêntico ao pedido neutro | O campo não teve efeito observável nesta build do servidor |
+| `--emo-ref` / `--emo-ref-text` pela CLI | O binário gerou WAV válido com referência emocional e texto obtido pelo Parakeet | Execução one-shot; efeito perceptivo não foi avaliado e inclui custo de carga do modelo |
 | ASR de revisão | Parakeet TDT v3 ONNX INT8, CPUExecutionProvider | Não é medida de identidade vocal |
 
-Na verificação do executável local em 25/11/2026, `--help` também anunciou `--emo-ref` e `--emo-ref-text` (referência emocional WAV mono 24 kHz com transcrição), além de `--emotion-strength`. Esses são recursos anunciados pela CLI. O backend do editor inicia um servidor persistente com `--serve` e envia texto, idioma e amostragem em `/v1/tts/stream`; ele não envia essas opções, e a API instalada não foi testada para aceitá-las. O runtime instalado não tem a pasta local `presets/emovoice`, e nenhum vetor emocional foi encontrado pelo manifesto. Portanto, a interface não deve apresentar controle emocional neural como funcional até existir integração HTTP comprovada e teste auditivo no Qwen 0.6B. A receita upstream atual distingue as rotas 0.6B/1.7B e recomenda não usar `--emotion` do 1.7B no 0.6B.
+Na verificação do executável local em 25/11/2026, `--help` anunciou `--emo-ref` e `--emo-ref-text` (WAV mono 24 kHz com transcrição), além de `--emotion-strength`. Em teste one-shot, `--emo-ref` produziu WAV válido, mas a execução levou 11,564 s para 4,32 s de áudio; a baseline sem essa opção levou 5,222 s para 4,24 s. Foi uma única repetição por condição e não houve escuta; os tempos incluem inicialização do processo/modelo, portanto são exploratórios.
+
+O servidor persistente foi testado separadamente: duas requisições idênticas, com seed 42, uma neutra e outra com campo HTTP `emotion: joy`, retornaram status 200 e o mesmo SHA-256 de WAV (`2fbcd01b…e825f2ed5`). Isso mostra que o campo não teve efeito nesta build instalada. O teste não altera a conclusão para versões upstream diferentes. O runtime não tem `presets/emovoice` nem vetores emocionais no diretório examinado. Assim, o editor continua sem controle neural de emoção anunciado como funcional. A receita Pure C para 0.6B separa o caminho pequeno da receita do modelo maior ([emotion 0.6B](https://github.com/gabriele-mastrapasqua/qwen3-tts/blob/main/docs/emotion-06b-recipe.md)); a documentação atual da API descreve um campo `emotion` ([serving API](https://github.com/gabriele-mastrapasqua/qwen3-tts/blob/main/docs/serving/api.md)). Essa diferença reforça a necessidade de qualificar cada executável instalado, cujo build/source permanece desconhecido.
 
 O executável pode ser inspecionado com `inspect_purec_capabilities(path)`. O resultado inclui SHA-256 para vincular o diagnóstico ao arquivo concreto. O build local observado retornou identificação de build/source desconhecida; portanto não se atribui a ele um commit upstream específico.
 

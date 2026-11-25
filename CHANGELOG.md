@@ -18,6 +18,7 @@
 - Corrigida a reavaliação acústica da janela de referência: os candidatos pré-ranqueados agora são convertidos para os registros esperados pelo ranqueador PCM, evitando falha quando FFmpeg mede candidatos reais.
 - Suíte no venv completo do aplicativo: 571 aprovados, 5 ignorados. Uma síntese curta real por preset (Mixed e INT8, seis threads) e checagem Parakeet CPU foram registradas como medições exploratórias, sem alegar avaliação perceptiva ou superioridade estatística.
 - A verificação técnica da referência vocal agora exibe F0 descritiva via YIN, com confiança, faixa robusta e exclusão de quadros não vozeados/duvidosos; o dado não altera x-vector, seleção ou síntese. Testes determinísticos e microbenchmark sintético de 30 s documentados em `VOICE_INTELLIGENCE_2_0.md`.
+- Investigada a expressividade do binário Pure C instalado: `--emo-ref` na CLI gera WAV, mas a rota HTTP do servidor produziu o mesmo WAV (hash idêntico com seed fixo) com `emotion: joy` e sem o campo. A documentação agora distingue esse comportamento local dos recursos descritos pelo upstream; nenhum controle foi ativado sem efeito comprovado.
 
 # 0.10.0-alpha.4 — instalação sem janela de terminal
 
