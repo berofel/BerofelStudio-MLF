@@ -151,6 +151,27 @@ class PronunciationDictionaryTests(TestCase):
 
 
 class PureCCapabilityTests(TestCase):
+    def test_style_by_example_capability_is_cached_and_invalidated_by_binary_change(self):
+        from berofel.services import qwen3_purec_tts as purec
+        with tempfile.TemporaryDirectory() as folder:
+            executable=Path(folder)/'qwen_tts.exe';executable.write_bytes(b'build one')
+            manifest={'cli':{'emotion_by_example_advertised':True,
+                'emotion_by_example_needs_transcript':True,
+                'emotion_by_example_wav_constraints':'24khz mono'}}
+            try:
+                with patch.object(purec,'_layout',return_value=(executable,Path(folder),[])), \
+                     patch('berofel.services.voice_intelligence.capabilities.inspect_purec_capabilities',
+                           return_value=manifest) as inspect:
+                    self.assertTrue(purec.supports_emotion_by_example())
+                    self.assertTrue(purec.supports_emotion_by_example())
+                    self.assertEqual(inspect.call_count,1)
+                    manifest['cli']['emotion_by_example_advertised']=False
+                    executable.write_bytes(b'build two is different')
+                    self.assertFalse(purec.supports_emotion_by_example())
+                    self.assertEqual(inspect.call_count,2)
+            finally:
+                purec._emotion_by_example_capability.cache_clear()
+
     def test_cli_flags_are_not_misreported_as_http_per_request_features(self):
         with tempfile.TemporaryDirectory() as folder:
             executable = Path(folder) / 'qwen_tts.exe'

@@ -20,3 +20,5 @@ O servidor persistente foi testado separadamente: duas requisições idênticas,
 
 O executável pode ser inspecionado com `inspect_purec_capabilities(path)`. O resultado inclui SHA-256 para vincular o diagnóstico ao arquivo concreto. O build local observado retornou identificação de build/source desconhecida; portanto não se atribui a ele um commit upstream específico.
 
+O controle de estilo do painel só aparece quando a build instalada anuncia `--emo-ref` e `--emo-ref-text`, exige transcrição e documenta WAV mono 24 kHz. Essa verificação (`--help`/`--caps`, sem carregar pesos) é cacheada por caminho, tamanho e data de modificação do executável; a chamada de geração repete a guarda lógica. Em builds incompatíveis, o controle fica oculto e a interface explica a indisponibilidade. O argumento HTTP `emotion` continua desativado.
+

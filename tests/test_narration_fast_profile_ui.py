@@ -266,6 +266,22 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             finally:
                 panel.close()
 
+    def test_emotional_reference_control_is_hidden_when_installed_binary_lacks_capability(self):
+        panel=NarrationPanel()
+        try:
+            engine='qwen3-tts-purec-int8'
+            if panel.clone_engine.findData(engine)<0:
+                panel.clone_engine.addItem('Equilibrado Pure C INT8',engine)
+            panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+            panel.clone_engine.setCurrentIndex(panel.clone_engine.findData(engine))
+            with patch('berofel.services.qwen3_purec_tts.supports_emotion_by_example',
+                       return_value=False):
+                panel._update_custom()
+            self.assertTrue(panel.use_emotional_reference.isHidden())
+            self.assertIn('indisponível',panel.license_note.text())
+        finally:
+            panel.close()
+
     def test_choosing_low_quality_reference_warns_without_editing_the_source(self):
         from PySide6.QtWidgets import QFileDialog,QMessageBox
         report={'warnings':['Mais de 50% do trecho está quase silencioso; escolha uma fala mais contínua.'],

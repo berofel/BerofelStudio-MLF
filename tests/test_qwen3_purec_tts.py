@@ -247,6 +247,20 @@ class PureCTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             purec._quantization_flag('unsupported')
 
+    def test_style_request_fails_before_preparation_when_binary_lacks_capability(self):
+        with tempfile.TemporaryDirectory() as folder:
+            voice=Path(folder)/'voice.wav';voice.write_bytes(b'RIFF'+b'x'*128)
+            request=NarrationRequest(text='Teste',voice=str(voice),language='english',
+                consent=True,engine=purec.ENGINE_INT8_ID,
+                reference_text='Texto conferido pelo Parakeet',
+                reference_text_reviewed=True,emotion_by_example=True)
+            with patch.object(purec,'is_ready',return_value=True), \
+                 patch.object(purec,'supports_emotion_by_example',return_value=False), \
+                 patch.object(purec,'prepare_voice_profile') as prepare:
+                with self.assertRaisesRegex(RuntimeError,'não anuncia referência de estilo'):
+                    purec.generate_purec_clone(request)
+                prepare.assert_not_called()
+
 
 @unittest.skipUnless(os.environ.get('BEROFEL_RUN_PUREC_TURBO_INTEGRATION') == '1',
                      'Defina BEROFEL_RUN_PUREC_TURBO_INTEGRATION=1 para usar o backend local compilado.')

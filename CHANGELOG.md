@@ -22,7 +22,8 @@
 - BVI 2.0 experimental: Pure C agora pode iniciar o servidor com a gravação de referência como exemplo de estilo (`--emo-ref`/`--emo-ref-text`). Opção manual e desligada por padrão; requer transcrição conferida via Parakeet, usa cache local mono 24 kHz e reinicia o servidor ao trocar estilo. O resultado ainda exige avaliação auditiva e pode demorar mais; sem promessa de emoção ou fidelidade melhor.
 - Teste real via serviço do editor em INT8/6 threads: chamada padrão 8,60 s/3,44 s WAV; referência de estilo 19,927 s/6,48 s WAV. Uma execução por condição, sem avaliação auditiva ou medição de RAM. Ver `docs/VOICE_QUALITY_BENCHMARK.md`.
 - Regressão corrigida na interface: ligar o modo experimental não limpa a confirmação de revisão da transcrição.
-- Regressão geral após a integração: `python -m unittest discover -s tests -q` passou com 577 testes e 6 ignorados (70,494 s); `pytest` não está instalado no venv do app. O teste Qt real da opção experimental passou separadamente em 24,909 s.
+- Regressão geral após a integração: `python -m unittest discover -s tests -q` passou com 580 testes e 6 ignorados (66,503 s); `pytest` não está instalado no venv do app. O teste Qt real da opção experimental passou separadamente em 24,692 s.
+- O modo por exemplo agora é exibido apenas quando o executável Pure C local anuncia os argumentos e o formato esperados; a consulta leve é cacheada por versão do binário e a camada de serviço também bloqueia builds incompatíveis.
 
 # 0.10.0-alpha.4 — instalação sem janela de terminal
 

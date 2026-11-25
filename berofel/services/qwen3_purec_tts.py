@@ -20,6 +20,7 @@ import threading
 import time
 import uuid
 import wave
+from functools import lru_cache
 
 import numpy as np
 
@@ -77,6 +78,36 @@ def is_ready() -> bool:
             (model / 'model.safetensors').is_file() and
             (model / 'speech_tokenizer' / 'model.safetensors').is_file() and
             all(path.is_dir() for path in paths))
+
+
+@lru_cache(maxsize=8)
+def _emotion_by_example_capability(binary: str, size: int, mtime_ns: int) -> bool:
+    """Cache CLI capability detection by concrete executable metadata."""
+    del size, mtime_ns  # They intentionally form part of this cache key.
+    try:
+        from .voice_intelligence.capabilities import inspect_purec_capabilities
+        manifest = inspect_purec_capabilities(binary, timeout=1.5)
+        cli = manifest.get('cli', {})
+        return bool(cli.get('emotion_by_example_advertised') and
+                    cli.get('emotion_by_example_needs_transcript') and
+                    cli.get('emotion_by_example_wav_constraints') == '24khz mono')
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def supports_emotion_by_example() -> bool:
+    """Return whether the installed Pure C binary advertises the exact route.
+
+    This only probes ``--help``/``--caps`` (no weights or model load) and is
+    cached until the executable's size or modification time changes.
+    """
+    executable, _model, _paths = _layout()
+    try:
+        stat = executable.stat()
+    except OSError:
+        return False
+    return _emotion_by_example_capability(
+        str(executable), stat.st_size, stat.st_mtime_ns)
 
 
 def _environment(exe: Path, paths: list[Path], thread_count: int | None = None) -> dict[str, str]:
@@ -451,6 +482,11 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
         raise ValueError('Idioma não suportado pelo Pure C Qwen3 Base.')
     if not is_ready():
         raise RuntimeError('Pure C não está configurado; selecione Original ou Q4 no editor.')
+    if request.emotion_by_example and not supports_emotion_by_example():
+        raise RuntimeError(
+            'Este executável Pure C não anuncia referência de estilo por exemplo '
+            '(`--emo-ref`/`--emo-ref-text` para WAV mono 24 kHz). Atualize o runtime '
+            'ou desative a opção experimental; nenhuma síntese foi iniciada.')
     if control: control.checkpoint()
     emotion_reference_path = None
     emotion_style_fingerprint = ''

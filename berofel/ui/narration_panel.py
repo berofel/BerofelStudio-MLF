@@ -899,11 +899,23 @@ class NarrationPanel(QScrollArea):
         self.reference_text.setVisible(qwen)
         use_emotion_reference = (qwen and engine in
             ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8'))
-        self.use_emotional_reference.setVisible(use_emotion_reference)
+        emotion_reference_supported=False
+        if use_emotion_reference:
+            try:
+                from berofel.services.qwen3_purec_tts import supports_emotion_by_example
+                emotion_reference_supported=supports_emotion_by_example()
+            except (OSError,RuntimeError,ValueError,ImportError):
+                emotion_reference_supported=False
+        self._emotion_reference_supported=emotion_reference_supported
+        self.use_emotional_reference.setVisible(
+            use_emotion_reference and emotion_reference_supported)
+        if use_emotion_reference and not emotion_reference_supported and \
+                self.use_emotional_reference.isChecked():
+            self.use_emotional_reference.setChecked(False)
         self._update_emotional_reference_visibility()
         self.transcribe_reference.setVisible(
             qwen and (self.language.currentData()=='portuguese' or
-                      (use_emotion_reference and
+                      (use_emotion_reference and emotion_reference_supported and
                        self.use_emotional_reference.isChecked())))
         self.update_voice_reference.setVisible(bool(profile_id) and qwen)
         self.install_qwen.setVisible(qwen and engine=='qwen3-tts-local')
@@ -938,11 +950,13 @@ class NarrationPanel(QScrollArea):
                        self.language.currentData()=='portuguese')
         self.reference_text_reviewed.setVisible(
             custom and (original_ptbr or
-                        (purec and self.use_emotional_reference.isChecked())))
+                        (purec and getattr(self,'_emotion_reference_supported',False)
+                         and self.use_emotional_reference.isChecked())))
         if purec:
             self.transcribe_reference.setVisible(
                 custom and (self.language.currentData()=='portuguese' or
-                            self.use_emotional_reference.isChecked()))
+                            (getattr(self,'_emotion_reference_supported',False) and
+                             self.use_emotional_reference.isChecked())))
         self._refresh_clone_guidance()
 
     def _refresh_clone_guidance(self,*args):
@@ -958,6 +972,8 @@ class NarrationPanel(QScrollArea):
             notes.append('Modo rápido Pure C: usa o x-vector extraído da gravação, ignora a transcrição e pode reduzir a fidelidade do sotaque/identidade. O texto ainda aparece aqui para referência, mas não é enviado como condicionamento. Confira a amostra antes de usar.')
             if getattr(self,'use_emotional_reference',None) is not None and self.use_emotional_reference.isChecked():
                 notes.append('Transferência experimental por exemplo ativa: o Pure C recebe a própria gravação e sua transcrição revisada ao iniciar o servidor. O estilo fica aplicado a todas as falas dessa sessão; alternar para outro estilo reinicia o servidor e a saída ainda precisa ser avaliada auditivamente.')
+            elif not getattr(self,'_emotion_reference_supported',False):
+                notes.append('A referência de estilo experimental está indisponível: este executável Pure C não anunciou ou não confirmou `--emo-ref` + `--emo-ref-text` para WAV mono 24 kHz.')
         elif engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced'):
             notes.append('Este backend ainda não foi validado para PT-BR. Use Original para condicionamento completo ou selecione Pure C conscientemente para o modo rápido por x-vector.')
         elif not self.reference_text.text().strip():
