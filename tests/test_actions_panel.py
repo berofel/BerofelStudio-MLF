@@ -1627,10 +1627,13 @@ class ActionsUITests(unittest.TestCase):
                 self.assertEqual(captured['profile_ids'],{profile['id']})
                 expected_root=Path(win.project.path).parent/(Path(win.project.path).stem+'_arquivos')
                 expected_run_root=expected_root/'narracoes'/'roteiros'/script.id/'runs'
-                self.assertEqual(captured['run_checkpoint'].parent,expected_run_root)
+                self.assertTrue(os.path.samefile(captured['run_checkpoint'].parent,expected_run_root))
                 self.assertFalse(captured['run_checkpoint'].exists(),
                     'O checkpoint temporário deve ser removido após salvar o resultado completo.')
-                self.assertEqual(captured['project_path'],win.project.path)
+                captured_project=Path(captured['project_path'])
+                expected_project=Path(win.project.path)
+                self.assertEqual(captured_project.name,expected_project.name)
+                self.assertTrue(os.path.samefile(captured_project.parent,expected_project.parent))
                 saved=MultiVoiceScript.from_dict(win.project.narration_scripts[0])
                 self.assertEqual(saved.lines[0].text,'Texto corrigido.')
                 self.assertEqual(saved.lines[0].audio_path,str(new_audio))

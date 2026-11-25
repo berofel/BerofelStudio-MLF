@@ -178,6 +178,9 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             sample.write_bytes(b'RIFF'+b'a'*300)
             panel=NarrationPanel()
             try:
+                if panel.clone_engine.findData('qwen3-tts-purec-int8') < 0:
+                    panel.clone_engine.addItem('Equilibrado Pure C INT8',
+                                               'qwen3-tts-purec-int8')
                 panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
                 panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
                 self.assertFalse(panel.reference_text_reviewed.isHidden())
@@ -238,7 +241,9 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                       patch.object(QMessageBox,'warning') as warning):
                     panel._choose_sample()
                 self.assertEqual(panel.sample_path.text(),str(source))
-                inspect.assert_called_once_with(str(source),'warning')
+                inspect.assert_called_once()
+                self.assertTrue(os.path.samefile(inspect.call_args.args[0],source))
+                self.assertEqual(inspect.call_args.args[1],'warning')
                 self.assertEqual(warning.call_count,0)
                 self.assertEqual(source.read_bytes(),original)
             finally:
@@ -256,7 +261,9 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                       patch.object(panel,'_start_voice_reference_inspection') as inspect,
                       patch.object(QMessageBox,'warning') as warning):
                     panel._choose_sample()
-                inspect.assert_called_once_with(str(source),'warning')
+                inspect.assert_called_once()
+                self.assertTrue(os.path.samefile(inspect.call_args.args[0],source))
+                self.assertEqual(inspect.call_args.args[1],'warning')
                 self.assertEqual(warning.call_count,0)
             finally:
                 panel.close()
@@ -362,6 +369,9 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                     'audible_signal_seconds':9.6}
             panel=NarrationPanel()
             try:
+                if panel.clone_engine.findData('qwen3-tts-purec-int8') < 0:
+                    panel.clone_engine.addItem('Equilibrado Pure C INT8',
+                                               'qwen3-tts-purec-int8')
                 with patch('berofel.services.audio_reference.inspect_voice_reference',
                            return_value=report):
                     panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))

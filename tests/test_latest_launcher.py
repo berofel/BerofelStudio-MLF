@@ -9,7 +9,10 @@ WORKSPACE=Path(__file__).resolve().parents[3]
 LOCATOR=WORKSPACE/'LOCALIZAR_BEROFELSTUDIO.ps1'
 
 
-@unittest.skipUnless(os.name=='nt','Localizador do launcher usa PowerShell no Windows.')
+@unittest.skipUnless(
+    os.name=='nt' and LOCATOR.is_file(),
+    'O localizador usado pelo workspace externo não pertence a este checkout.',
+)
 class LatestLauncherTests(unittest.TestCase):
     def _install(self,root,name,version,valid=True):
         app=root/name
