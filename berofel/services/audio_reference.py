@@ -13,7 +13,9 @@ import threading
 from bisect import bisect_right
 
 _PROMPT_MAX_SECONDS = 30.0
-REFERENCE_PREPARATION_VERSION = 5
+# Bump whenever candidate selection, trimming, resampling or conditioning
+# preparation changes; cached speaker prompts must not survive a new window.
+REFERENCE_PREPARATION_VERSION = 6
 _SILENCE_THRESHOLD_DB = -38
 _SILENCE_MIN_SECONDS = .35
 _REFERENCE_SCAN_LOCK=threading.RLock()

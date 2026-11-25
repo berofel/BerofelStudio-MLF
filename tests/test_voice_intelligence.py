@@ -92,6 +92,10 @@ class PureCCapabilityTests(TestCase):
 
 
 class ReferenceWindowRankingTests(TestCase):
+    def test_reference_selection_revision_invalidates_conditioning_cache(self):
+        from berofel.services.audio_reference import REFERENCE_PREPARATION_VERSION
+        self.assertEqual(REFERENCE_PREPARATION_VERSION, 6)
+
     def test_clean_shorter_window_can_beat_longer_noisy_window(self):
         candidates = [
             {'start': 0, 'duration': 30, 'active_seconds': 12, 'active_fraction': .4},
