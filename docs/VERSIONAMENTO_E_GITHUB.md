@@ -1,55 +1,65 @@
-# Versionamento e sincronização com GitHub
+# Versionamento, Releases e atualizações do BerofelStudio
 
-Repositório oficial: <https://github.com/berofel/BerofelStudio-MLF>
+Repositório: <https://github.com/berofel/BerofelStudio-MLF>
 
-## Estado desta preparação
+## Estado publicado em 25/11/2026
 
-- Raiz Git: `BerofelStudio 1`.
-- Branch de trabalho: `feat/automatic-cleanup-modules`.
-- Versão declarada pelo aplicativo: `0.10.0-alpha.1` (`berofel/__init__.py`).
-- O remoto `origin` aponta para o repositório oficial.
-- Na auditoria de 2026-11-23, o remoto tinha somente o commit inicial e um README de 19 bytes; seu histórico era independente do histórico local.
-- O histórico local foi integrado ao histórico inicial remoto sem force push. A branch `feat/automatic-cleanup-modules` foi publicada e verificada no remoto.
-- O pull request [#1](https://github.com/berofel/BerofelStudio-MLF/pull/1) foi aberto para `main` e permanece aguardando revisão; não foi mesclado.
-- `gh` não está instalado. O conector GitHub indicava acesso somente de leitura, mas o credential helper Git configurado permitiu testar e efetuar o push autenticado pela linha de comando. A conectividade HTTPS foi restabelecida durante a sessão. Nenhum token foi exibido ou salvo no repositório.
+- Versão: `0.10.0-alpha.3`, declarada em `berofel/__init__.py`.
+- Release de teste: <https://github.com/berofel/BerofelStudio-MLF/releases/tag/v0.10.0-alpha.3>.
+- Download direto para testar esta pré-release: <https://github.com/berofel/BerofelStudio-MLF/releases/download/v0.10.0-alpha.3/BerofelStudio-0.10.0-alpha.3-Setup-x64.exe>.
+- SHA-256 publicado junto do instalador. O digest oficial do EXE nesta Release é `fb68d7770641e7da22280bf42828eb36b86536600b3b5177ead6d4bf11ff341b`.
+- O workflow da tag passou pela suíte Windows, compilação NSIS e instalação limpa core-only: diagnóstico do editor, janela Qt, atalho, preservação de dados do usuário e desinstalação.
+- O instalador core passou no runner limpo; a instalação dos modelos opcionais Parakeet/Qwen ainda exige teste em máquina de usuário com internet, espaço e hardware próprios.
+- `main` e `feat/windows-self-updating-installer` estavam publicados no commit `ccbf29d931b42496bb74d72e560605c7ba2f3ffe` quando a Release foi criada.
 
-## Preparar ambiente e verificar acesso
+## Como a atualização do instalador funciona
 
-No PowerShell, na raiz do repositório:
+O setup consulta as Releases públicas antes de instalar. Um setup alpha acompanha a Release mais nova do canal de pré-lançamento; um setup estável ignora alphas/betas/RCs. Se encontrar uma versão SemVer mais nova com o EXE e manifesto SHA-256 esperados, baixa ambos, valida origem, tamanho e hash, e inicia o setup novo antes de alterar a instalação existente. O setup em uso não instala código arbitrário de branches nem executa conteúdo recebido da API.
+
+Commits enviados para o GitHub atualizam o código-fonte e acionam CI. Eles **não** substituem automaticamente o instalador publicado: uma tag correspondente à versão aciona novamente testes, build e instalação limpa; somente depois do smoke test o workflow cria a Release. Isso impede que uma instalação receba um commit não versionado ou que ainda falhou na validação.
+
+O canal de teste alpha está disponível pelo link versionado acima. Para um site futuro, prefira apontar para a página de Releases e para o asset estável `BerofelStudio-Setup-x64.exe` apenas depois de haver uma Release estável. O link permanente estável é <https://github.com/berofel/BerofelStudio-MLF/releases/latest/download/BerofelStudio-Setup-x64.exe>; o GitHub não trata pré-releases como `latest` estável.
+
+## Publicar uma versão futura
+
+Na raiz do repositório:
 
 ```powershell
-git --version
-gh --version
-gh auth status
 git status --short --branch
-git remote -v
 git fetch origin
-git branch -vv
+# Atualize berofel/__init__.py e CHANGELOG.md; rode os testes pertinentes.
+git add <arquivos-validados>
+git commit -m "fix: resumo da alteração"
+git push origin <branch-de-trabalho>
 ```
 
-`gh auth status` confirma a sessão CLI, mas não prova permissão de escrita no repositório. Confirme também que a conta conectada tem acesso de escrita (por exemplo, na página **Settings → Collaborators and teams** ou com uma operação de push autorizada). Diagnostique rede e autorização separadamente. Nunca exponha tokens e não desative TLS.
+Depois da revisão e integração em `main`, valide que a versão do código, changelog e documentação correspondem. Use `vX.Y.Z` para uma versão estável ou `vX.Y.Z-alpha.N`, `-beta.N` ou `-rc.N` para pré-release. Não reutilize tags existentes.
 
-## Publicar uma alteração validada
+```powershell
+git checkout main
+git pull --ff-only origin main
+git tag -a vX.Y.Z <commit-validado> -m "BerofelStudio X.Y.Z"
+git push origin vX.Y.Z
+```
 
-1. Comece com `git status`; preserve mudanças que não pertencem à tarefa.
-2. Confira o diff e os arquivos staged. Não inclua mídias pessoais, projetos de usuário, credenciais, ambientes virtuais, caches, modelos ou binários pesados.
-3. Execute os testes pertinentes e registre falhas/limitações.
-4. Faça commits locais pequenos e descritivos na branch de trabalho.
-5. Atualize `origin` com `git fetch origin`. Integre mudanças remotas explicitamente e resolva conflitos preservando ambos os trabalhos. Não reescreva histórico compartilhado.
-6. Publique uma branch de funcionalidade com `git push -u origin <branch>`. Não force push e não envie diretamente para `main` sem autorização específica.
-7. Confirme o resultado com `git ls-remote --heads origin <branch>` ou consultando o commit da branch no GitHub. Um commit local não comprova publicação.
-8. Abra um Pull Request para `main` e informe a URL somente depois de confirmar que foi criado.
+O workflow verifica que a tag corresponde a `berofel.__version__`, roda a suíte no Windows, compila o instalador e o instala em runner limpo. A publicação automática da Release só roda se todas as etapas anteriores passarem e se o commit da tag estiver em `main`. A Release recebe o EXE versionado, o alias `BerofelStudio-Setup-x64.exe` e os dois arquivos `.sha256`. Não usar force push nem mover uma tag já publicada.
 
-Se a escrita remota estiver indisponível, mantenha os commits locais, registre a causa exata e compartilhe um bundle/patch por canal autorizado. Não contorne controles de acesso.
+## Para sincronizar continuamente o código
 
-## Releases
+Após validar e criar cada commit, publique a branch autorizada e confira o hash remoto:
 
-Use a versão definida em `berofel/__init__.py` como fonte de verdade. Antes de publicar uma release, atualize o changelog e a documentação, rode os testes e valide os artefatos instaláveis. `vX.Y.Z` publica estável; `vX.Y.Z-alpha.N`, `-beta.N` e `-rc.N` publicam pré-release. A tag precisa apontar para um commit validado e corresponder exatamente à versão do código.
+```powershell
+git push origin <branch>
+git ls-remote --heads origin <branch>
+```
 
-O workflow Windows roda testes em PRs para `main`, pushes em `main`, `feat/*` e `fix/*`, e tags `v*`. Nas branches `main`, `feat/*` e `fix/*`, tags, PRs e execuções manuais, também instala o setup em um runner Windows limpo, abre a janela Qt, valida o atalho e verifica preservação de dados durante a desinstalação. Push em branch gera artefato de CI; somente a tag publica uma Release. Cada Release inclui EXE versionado, `BerofelStudio-Setup-x64.exe` e SHA-256 dos dois. O instalador compara a própria versão com a mais nova publicada em seu canal e encaminha para o setup novo depois de validar o checksum. O canal estável ignora pré-releases; builds alpha acompanham alphas/betas/RCs.
+`git push` atualiza o código no GitHub. A Release/instalador só muda após tag validada. O próprio instalador consulta a Release no momento da instalação, mas não publica commits nem atualiza a si mesmo a partir do código-fonte.
 
-Link permanente para distribuição estável: <https://github.com/berofel/BerofelStudio-MLF/releases/latest/download/BerofelStudio-Setup-x64.exe>. A API pública de Releases fornece metadados/assets do updater. O instalador segue online e não é autossuficiente/offline; checksum não substitui assinatura Authenticode para distribuição profissional.
+## Segurança e limites de distribuição
 
-## Política de arquivos
-
-`.gitignore` exclui artefatos locais, dados de usuário, modelos, ambientes, caches, credenciais e binários. Scripts de instalação, código-fonte e manifestos de dependências permanecem versionáveis. Antes de publicar, revise também o histórico alcançado pela branch: ignorar um arquivo hoje não o remove de commits antigos. Nunca use `git filter-branch` ou force push como limpeza rotineira.
+- O EXE é um bootstrapper online, não um pacote offline completo: baixa Python, dependências, FFmpeg e os motores selecionados.
+- Os pesos do Qwen/Parakeet não são embutidos no Git ou no EXE; são arquivos grandes com licenças e requisitos próprios. Após download, os motores locais funcionam sem API externa conforme cada módulo.
+- O smoke automatizado usa `/COREONLY`; ele não baixa vários gigabytes de modelos nem valida inferência TTS/ASR em cada Release.
+- O instalador ainda não tem assinatura Authenticode própria. SHA-256 detecta corrupção, mas não substitui assinatura de editor verificado nem remove o aviso SmartScreen.
+- Antes de vender amplamente, revisar licenças de dependências/modelos, instalar em PCs de teste distintos, validar downloads opcionais e obter assinatura de código.
+- Não incluir gravações, projetos, perfis vocais, tokens, ambientes virtuais, caches ou pesos de IA nos commits ou assets.

@@ -1,6 +1,6 @@
 # BerofelStudio-MLF
 
-> **Versão de testes local 0.10.0-alpha.3:** o instalador Windows consulta a Release mais recente publicada, valida SHA-256 e encaminha instalações antigas para a versão atual. O instalador continua sendo um bootstrapper online; confira os limites e o passo a passo em [Instalador Windows](installer/README.md). A validação em máquina limpa ainda está pendente.
+> **Versão de testes 0.10.0-alpha.3:** o instalador Windows consulta a Release mais recente publicada, valida SHA-256 e encaminha instalações antigas para a versão atual. O build, a instalação core-only em Windows limpo, a abertura Qt, o atalho e a desinstalação foram validados no GitHub Actions. Os downloads opcionais de modelos de IA ainda dependem de teste separado em outras máquinas. O instalador é um bootstrapper online; veja [Instalador Windows](installer/README.md).
 
 O `ABRIR_BEROFELSTUDIO.bat` dentro desta pasta inicializa o código local, exibe o caminho e a versão detectada, confere os módulos da interface e prioriza esta cópia. No pacote de trabalho, use também o atalho da raiz `C:\Users\Berofel\Desktop\BerofelStudio_codigo_base_alpha\ABRIR_BEROFELSTUDIO.bat`: ele localiza launchers válidos, lê a versão de cada fonte e escolhe a maior, inclusive quando a atualização está em outra pasta de versão. Execute `ABRIR_BEROFELSTUDIO.bat --verificar` para conferir o launcher sem abrir a janela.
 >
