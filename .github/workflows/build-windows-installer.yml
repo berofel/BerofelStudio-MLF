@@ -99,8 +99,8 @@ jobs:
           if ($actual -ine $expected) { throw 'O EXE do instalador diverge do SHA-256.' }
           $installRoot = Join-Path $env:LOCALAPPDATA 'BerofelStudio'
           if (Test-Path -LiteralPath $installRoot) { throw 'Runner de smoke não está limpo: instalação anterior detectada.' }
-          & $installer.FullName /S /NOUPDATECHECK /COREONLY
-          if ($LASTEXITCODE -ne 0) { throw "Setup silencioso falhou com código $LASTEXITCODE." }
+          $setupProcess = Start-Process -FilePath $installer.FullName -ArgumentList @('/S','/NOUPDATECHECK','/COREONLY') -Wait -PassThru -WindowStyle Hidden
+          if ($setupProcess.ExitCode -ne 0) { throw "Setup silencioso falhou com código $($setupProcess.ExitCode)." }
           $python = Join-Path $env:LOCALAPPDATA 'BFS\venv\Scripts\python.exe'
           if (-not (Test-Path -LiteralPath $python)) { throw 'O bootstrap não criou o ambiente Python.' }
           $env:BEROFEL_APP_ROOT = $installRoot
@@ -114,8 +114,8 @@ jobs:
           Set-Content -LiteralPath $marker -Encoding ascii -Value 'keep-user-data'
           $uninstaller = Join-Path $installRoot 'Uninstall.exe'
           if (-not (Test-Path -LiteralPath $uninstaller)) { throw 'O desinstalador não foi instalado.' }
-          & $uninstaller /S
-          if ($LASTEXITCODE -ne 0) { throw "Desinstalação silenciosa falhou com código $LASTEXITCODE." }
+          $uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList @('/S') -Wait -PassThru -WindowStyle Hidden
+          if ($uninstallProcess.ExitCode -ne 0) { throw "Desinstalação silenciosa falhou com código $($uninstallProcess.ExitCode)." }
           if (-not (Test-Path -LiteralPath $marker)) { throw 'Desinstalar removeu dados de usuário fora da pasta do app.' }
           Remove-Item -LiteralPath $marker -Force
           if (Test-Path -LiteralPath $installRoot) { throw 'A pasta do aplicativo permaneceu após a desinstalação.' }
