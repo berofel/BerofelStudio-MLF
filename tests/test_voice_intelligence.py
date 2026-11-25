@@ -164,6 +164,14 @@ class ParakeetQualityInspectionTests(TestCase):
         self.assertEqual(rates['character_error_rate'], 0)
         self.assertEqual(rates['expected_word_count'], 6)
 
+    def test_text_rates_normalize_numeric_rendering_for_comparison_only(self):
+        rates = calculate_text_error_rates(
+            'O total é quarenta e cinco por cento e custa vinte e cinco reais.',
+            'O total é 45% e custa R$ 25,00.')
+        self.assertEqual(rates['word_error_rate'], 0)
+        self.assertEqual(rates['character_error_rate'], 0)
+        self.assertEqual(rates['comparison_normalization'], 'pt-br-deterministic-v2')
+
     def test_inspector_uses_injected_parakeet_path_and_marks_review(self):
         with tempfile.TemporaryDirectory() as folder:
             audio = Path(folder) / 'voice.wav'

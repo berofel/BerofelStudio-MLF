@@ -14,6 +14,8 @@ import unicodedata
 import wave
 from typing import Callable
 
+from .text_normalizer import normalize_pt_br
+
 
 def _normalized_words(text: str) -> list[str]:
     folded = unicodedata.normalize("NFKD", str(text or "").casefold())
@@ -37,8 +39,12 @@ def _edit_distance(left, right) -> int:
 
 def calculate_text_error_rates(expected: str, recognized: str) -> dict:
     """Return WER/CER-like normalized edit rates, unbounded above at 1.0."""
-    expected_words = _normalized_words(expected)
-    recognized_words = _normalized_words(recognized)
+    # Compare numeric forms on the same spoken-text representation, while
+    # leaving both displayed source strings untouched for the user.
+    expected_comparable = normalize_pt_br(str(expected or "")).spoken
+    recognized_comparable = normalize_pt_br(str(recognized or "")).spoken
+    expected_words = _normalized_words(expected_comparable)
+    recognized_words = _normalized_words(recognized_comparable)
     expected_chars = "".join(expected_words)
     recognized_chars = "".join(recognized_words)
     word_errors = _edit_distance(expected_words, recognized_words)
@@ -50,6 +56,7 @@ def calculate_text_error_rates(expected: str, recognized: str) -> dict:
         "recognized_word_count": len(recognized_words),
         "word_edit_count": word_errors,
         "character_edit_count": char_errors,
+        "comparison_normalization": "pt-br-deterministic-v2",
     }
 
 
