@@ -1416,11 +1416,17 @@ class NarrationPanel(QScrollArea):
         wer = float(result.get('word_error_rate', 0.0)) * 100
         cer = float(result.get('character_error_rate', 0.0)) * 100
         recognized = str(result.get('recognized_text') or '').strip()
+        trailing = result.get('trailing_gap_seconds')
+        timing_note = (f'\nFim reconhecido em {result.get("last_recognized_word_end_seconds"):.2f} s; '
+                       f'intervalo restante {float(trailing):.2f} s. Confira o final ouvindo.'
+                       if result.get('review_ending') and trailing is not None and
+                       result.get('last_recognized_word_end_seconds') is not None else '')
         self.status.setText(
             f"Parakeet TDT v3 ONNX INT8/CPU · erro textual estimado: "
             f"WER {wer:.1f}% · CER {cer:.1f}%. Revisão humana recomendada; "
             "isso não mede fidelidade da identidade vocal.\n"
-            f"Reconhecido: {recognized or '(nenhuma fala reconhecida)'}")
+            f"Reconhecido: {recognized or '(nenhuma fala reconhecida)'}"
+            f"{timing_note}")
 
     def _add_last_to_timeline(self):
         if self.last_audio and Path(self.last_audio).is_file() and self.on_add_last_to_timeline:

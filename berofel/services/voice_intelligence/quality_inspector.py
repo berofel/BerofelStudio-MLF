@@ -6,10 +6,12 @@ are diagnostic edit rates, not calibrated perceptual or voice-identity scores.
 from __future__ import annotations
 
 from pathlib import Path
+import math
 import re
 import subprocess
 import tempfile
 import unicodedata
+import wave
 from typing import Callable
 
 
@@ -48,6 +50,40 @@ def calculate_text_error_rates(expected: str, recognized: str) -> dict:
         "recognized_word_count": len(recognized_words),
         "word_edit_count": word_errors,
         "character_edit_count": char_errors,
+    }
+
+
+def calculate_temporal_coverage(words, audio_duration: float | None) -> dict:
+    """Report where Parakeet's last word ends; never label it as truncation.
+
+    Word timestamps can include VAD padding and ASR alignment error. A tail gap
+    is therefore a listening cue, not proof that synthesis omitted speech.
+    """
+    valid_ends = []
+    for word in words or ():
+        try:
+            end = float(word.get("end"))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if end >= 0 and math.isfinite(end):
+            valid_ends.append(end)
+    if audio_duration is None or not audio_duration or float(audio_duration) <= 0:
+        return {"audio_duration_seconds": None,
+                "last_recognized_word_end_seconds": max(valid_ends) if valid_ends else None,
+                "trailing_gap_seconds": None,
+                "review_ending": False,
+                "note": "WAV duration or word timestamps unavailable."}
+    duration = float(audio_duration)
+    last_end = min(duration, max(valid_ends)) if valid_ends else None
+    gap = max(0.0, duration - last_end) if last_end is not None else None
+    return {
+        "audio_duration_seconds": duration,
+        "last_recognized_word_end_seconds": last_end,
+        "trailing_gap_seconds": gap,
+        "review_ending": bool(gap is not None and gap >= 1.5),
+        "note": ("Possible long tail pause or unrecognized ending; listen manually."
+                 if gap is not None and gap >= 1.5 else
+                 "Timing is diagnostic only; it does not prove truncation."),
     }
 
 
@@ -109,9 +145,16 @@ def inspect_generated_wav_with_parakeet(
         segments = result.get("segments") or []
         recognized = str(result.get("text") or " ".join(
             str(segment.get("text") or "") for segment in segments)).strip()
+        try:
+            with wave.open(str(normalized), "rb") as wav:
+                audio_duration = wav.getnframes() / float(wav.getframerate())
+        except (OSError, wave.Error, ZeroDivisionError):
+            audio_duration = None
+        temporal = calculate_temporal_coverage(result.get("words"), audio_duration)
         rates = calculate_text_error_rates(expected_spoken_text, recognized)
         return {
             **rates,
+            **temporal,
             "recognized_text": recognized,
             "asr_model": "Parakeet TDT v3 ONNX INT8",
             "provider": "CPUExecutionProvider",

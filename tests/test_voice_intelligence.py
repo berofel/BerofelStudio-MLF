@@ -13,7 +13,8 @@ from berofel.services.voice_intelligence.text_normalizer import (
 from berofel.services.voice_intelligence.capabilities import inspect_purec_capabilities
 from berofel.services.voice_intelligence.reference_selector import rank_reference_candidates
 from berofel.services.voice_intelligence.quality_inspector import (
-    calculate_text_error_rates, inspect_generated_wav_with_parakeet,
+    calculate_temporal_coverage, calculate_text_error_rates,
+    inspect_generated_wav_with_parakeet,
 )
 from berofel.services.voice_intelligence.acoustic_analyzer import analyze_pcm_f32le
 from berofel.services.narration_service import NarrationRequest, generate_narration
@@ -143,6 +144,19 @@ class AcousticWindowAnalysisTests(TestCase):
 
 
 class ParakeetQualityInspectionTests(TestCase):
+    def test_temporal_coverage_flags_long_tail_for_manual_review_only(self):
+        result = calculate_temporal_coverage([
+            {'start': 2.0, 'end': 3.1}, {'start': 4.0, 'end': 4.8}], 7.0)
+        self.assertAlmostEqual(result['trailing_gap_seconds'], 2.2)
+        self.assertTrue(result['review_ending'])
+        self.assertIn('listen manually', result['note'])
+
+    def test_temporal_coverage_does_not_invent_when_word_times_are_missing(self):
+        result = calculate_temporal_coverage([], 5.0)
+        self.assertIsNone(result['last_recognized_word_end_seconds'])
+        self.assertIsNone(result['trailing_gap_seconds'])
+        self.assertFalse(result['review_ending'])
+
     def test_text_rates_are_deterministic_and_accent_insensitive(self):
         rates = calculate_text_error_rates(
             'Você está falando com a gente.', 'voce esta falando com a gente')
