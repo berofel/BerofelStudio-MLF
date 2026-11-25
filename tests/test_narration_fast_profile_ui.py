@@ -228,6 +228,44 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             finally:
                 panel.close()
 
+    def test_purec_emotional_reference_is_explicit_opt_in_and_uses_reviewed_text(self):
+        from PySide6.QtWidgets import QMessageBox
+        with tempfile.TemporaryDirectory(prefix='bfs_emotion_ui_') as folder:
+            sample=Path(folder)/'authorized.wav'
+            sample.write_bytes(b'RIFF'+b'a'*300)
+            panel=NarrationPanel()
+            try:
+                engine='qwen3-tts-purec-int8'
+                if panel.clone_engine.findData(engine)<0:
+                    panel.clone_engine.addItem('Equilibrado Pure C INT8',engine)
+                panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+                panel.clone_engine.setCurrentIndex(panel.clone_engine.findData(engine))
+                panel.sample_path.setText(str(sample))
+                panel.reference_text.setText('Transcrição revisada pelo Parakeet TDT v3.')
+                panel.reference_text_reviewed.setChecked(True)
+                panel.authorized.setChecked(True)
+                panel.set_text('Uma frase de teste para síntese.')
+                self.assertFalse(panel.use_emotional_reference.isChecked())
+                captured=[]
+                panel.on_generate=lambda request,insert:captured.append((request,insert))
+                with patch.object(QMessageBox,'warning') as warning:
+                    panel._generate(False)
+                self.assertEqual(len(captured),1)
+                self.assertFalse(captured[-1][0].emotion_by_example)
+                panel.use_emotional_reference.setChecked(True)
+                with patch.object(QMessageBox,'warning') as warning:
+                    panel._generate(False)
+                self.assertEqual(len(captured),2)
+                request,insert=captured[-1]
+                self.assertTrue(request.emotion_by_example)
+                self.assertEqual(request.reference_text,
+                                 'Transcrição revisada pelo Parakeet TDT v3.')
+                self.assertTrue(request.reference_text_reviewed)
+                self.assertFalse(insert)
+                warning.assert_not_called()
+            finally:
+                panel.close()
+
     def test_choosing_low_quality_reference_warns_without_editing_the_source(self):
         from PySide6.QtWidgets import QFileDialog,QMessageBox
         report={'warnings':['Mais de 50% do trecho está quase silencioso; escolha uma fala mais contínua.'],

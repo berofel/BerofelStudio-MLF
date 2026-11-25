@@ -19,6 +19,10 @@
 - Suíte no venv completo do aplicativo: 571 aprovados, 5 ignorados. Uma síntese curta real por preset (Mixed e INT8, seis threads) e checagem Parakeet CPU foram registradas como medições exploratórias, sem alegar avaliação perceptiva ou superioridade estatística.
 - A verificação técnica da referência vocal agora exibe F0 descritiva via YIN, com confiança, faixa robusta e exclusão de quadros não vozeados/duvidosos; o dado não altera x-vector, seleção ou síntese. Testes determinísticos e microbenchmark sintético de 30 s documentados em `VOICE_INTELLIGENCE_2_0.md`.
 - Investigada a expressividade do binário Pure C instalado: `--emo-ref` na CLI gera WAV, mas a rota HTTP do servidor produziu o mesmo WAV (hash idêntico com seed fixo) com `emotion: joy` e sem o campo. A documentação agora distingue esse comportamento local dos recursos descritos pelo upstream; nenhum controle foi ativado sem efeito comprovado.
+- BVI 2.0 experimental: Pure C agora pode iniciar o servidor com a gravação de referência como exemplo de estilo (`--emo-ref`/`--emo-ref-text`). Opção manual e desligada por padrão; requer transcrição conferida via Parakeet, usa cache local mono 24 kHz e reinicia o servidor ao trocar estilo. O resultado ainda exige avaliação auditiva e pode demorar mais; sem promessa de emoção ou fidelidade melhor.
+- Teste real via serviço do editor em INT8/6 threads: chamada padrão 8,60 s/3,44 s WAV; referência de estilo 19,927 s/6,48 s WAV. Uma execução por condição, sem avaliação auditiva ou medição de RAM. Ver `docs/VOICE_QUALITY_BENCHMARK.md`.
+- Regressão corrigida na interface: ligar o modo experimental não limpa a confirmação de revisão da transcrição.
+- Regressão geral após a integração: `python -m unittest discover -s tests -q` passou com 577 testes e 6 ignorados (70,494 s); `pytest` não está instalado no venv do app. O teste Qt real da opção experimental passou separadamente em 24,909 s.
 
 # 0.10.0-alpha.4 — instalação sem janela de terminal
 

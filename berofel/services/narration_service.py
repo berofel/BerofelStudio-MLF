@@ -39,6 +39,9 @@ class NarrationRequest:
     reference_text: str = ''
     reference_text_reviewed: bool = False
     thread_count: int | None = None
+    # Experimental Pure C 0.6B voice-style transfer. The reference must be
+    # authorized and its exact transcript reviewed; normal TTS stays unchanged.
+    emotion_by_example: bool = False
 
 
 def persistent_folder(project_path: str = '') -> Path:
@@ -80,9 +83,17 @@ def validate_clone_conditioning(request: NarrationRequest) -> None:
     uses the full audio+transcript conditioning. Native Q4 remains blocked for
     PT-BR until its language/accent behavior is separately validated.
     """
+    purec_engines = ('qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8')
+    if request.emotion_by_example:
+        if request.engine not in purec_engines:
+            raise ValueError('A transferência de estilo por referência exige um perfil Pure C 0.6B.')
+        if not str(request.reference_text or '').strip():
+            raise ValueError('Transcreva a referência de estilo com Parakeet e revise o texto antes de usar este modo experimental.')
+        if not request.reference_text_reviewed:
+            raise ValueError('Confirme que a transcrição corresponde ao áudio da referência de estilo.')
     if request.language != 'portuguese':
         return
-    if request.engine in ('qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8'):
+    if request.engine in purec_engines:
         return
     if request.engine != 'qwen3-tts-local':
         raise ValueError(
@@ -249,6 +260,7 @@ def _generate_long_narration(request: NarrationRequest, chunks: list[str],
         'conditioning_mode': results[0].get('conditioning_mode'),
         'engine': request.engine, 'threads': request.thread_count,
         'title': request.title, 'voice': request.voice, 'language': request.language,
+        'emotion_by_example': bool(request.emotion_by_example),
         'chunk_count': len(chunks), 'continuous_wav': True,
         'generation_seconds': sum(float(item.get('generation_seconds', 0.0)) for item in results)}
 

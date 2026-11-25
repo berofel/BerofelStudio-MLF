@@ -43,6 +43,80 @@ def _stop_purec_worker_on_exit():
 
 
 class PureCTests(unittest.TestCase):
+    @staticmethod
+    def _write_test_wav(path):
+        with __import__('wave').open(str(path), 'wb') as wav:
+            wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(24000)
+            wav.writeframes(np.ones(2400, dtype='<i2').tobytes())
+
+    def test_emotion_reference_is_cached_as_local_mono_24khz_wav(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); source=root/'authorized.wav'; source.write_bytes(b'source')
+            calls=[]
+            def prepare(_source, destination, **kwargs):
+                calls.append((Path(destination), kwargs))
+                self._write_test_wav(destination)
+            with patch.dict(os.environ, {
+                    'BEROFEL_QWEN3_PUREC_PROFILE_CACHE': str(root/'cache')}, clear=False), \
+                 patch.object(audio_reference, '_reference_window', return_value=(1.0, 3.0, .9)), \
+                 patch.object(audio_reference, 'prepare_audio_prompt', side_effect=prepare):
+                first, first_key=purec._prepare_emotion_reference(
+                    str(source), '  Texto   transcrito pelo Parakeet  ')
+                second, second_key=purec._prepare_emotion_reference(
+                    str(source), 'Texto transcrito pelo Parakeet')
+            self.assertEqual(first, second)
+            self.assertEqual(first_key, second_key)
+            self.assertEqual(len(calls),1)
+            self.assertEqual(calls[0][1], {
+                'start_seconds':1.0,'duration_seconds':3.0})
+            with __import__('wave').open(str(first),'rb') as wav:
+                self.assertEqual((wav.getnchannels(),wav.getframerate(),wav.getsampwidth()),
+                                 (1,24000,2))
+
+    def test_server_startup_loads_emotion_reference_and_reuses_only_same_style(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); profile=root/'voice.bin';profile.write_bytes(b'x')
+            reference=root/'style.wav';self._write_test_wav(reference)
+            exe=root/'bin'/'qwen_tts.exe';exe.parent.mkdir()
+            processes=[]
+            def launch(command, **_kwargs):
+                process=unittest.mock.Mock();process.pid=100+len(processes)
+                process.poll.return_value=None;processes.append((process,command))
+                return process
+            response=unittest.mock.Mock(status=200)
+            response.read.return_value=b'{"status":"ok"}'
+            connection=unittest.mock.Mock()
+            connection.getresponse.return_value=response
+            with _stop_purec_worker_on_exit(), patch.object(purec, '_PROCESS', None), \
+                 patch.object(purec, '_layout', return_value=(exe,root/'model',[])), \
+                 patch.object(purec, '_model_key', return_value='model-hash'), \
+                 patch.object(purec, '_free_port', return_value=8765), \
+                 patch.object(purec, '_server_log_destination', return_value=root/'server.log'), \
+                 patch.object(purec, '_environment', return_value={}), \
+                 patch.object(purec.subprocess, 'Popen', side_effect=launch), \
+                 patch.object(purec.http.client, 'HTTPConnection', return_value=connection), \
+                 patch.object(purec.time, 'sleep'):
+                first=purec._start_server(profile, engine=purec.ENGINE_INT8_ID,
+                    thread_count=6,emotion_reference_path=reference,
+                    emotion_reference_text='transcrição conferida')
+                same=purec._start_server(profile, engine=purec.ENGINE_INT8_ID,
+                    thread_count=6,emotion_reference_path=reference,
+                    emotion_reference_text='transcrição conferida')
+                self.assertEqual(first[0],same[0])
+                self.assertEqual(len(processes),1)
+                command=processes[0][1]
+                self.assertIn('--int8',command)
+                self.assertEqual(command[command.index('--emo-ref')+1],str(reference.resolve()))
+                self.assertEqual(command[command.index('--emo-ref-text')+1],
+                                 'transcrição conferida')
+                purec._start_server(profile, engine=purec.ENGINE_INT8_ID,
+                    thread_count=6,emotion_reference_path=reference,
+                    emotion_reference_text='outra transcrição revisada')
+                self.assertEqual(len(processes),2)
+                self.assertEqual(purec._ACTIVE_STYLE_FINGERPRINT,
+                    purec.digest({'wav_sha256':purec.file_sha256(reference),
+                                  'transcript':'outra transcrição revisada'}))
+
     def test_server_status_is_stopped_without_a_worker(self):
         with patch.object(purec, '_PROCESS', None), \
              patch.object(purec, '_SERVER_STATE', 'STOPPED'), \
@@ -300,6 +374,62 @@ class PureCRealIntegrationTests(unittest.TestCase):
 @unittest.skipUnless(os.environ.get('BEROFEL_RUN_PUREC_GUI_INTEGRATION') == '1',
                      'Defina BEROFEL_RUN_PUREC_GUI_INTEGRATION=1 para abrir o editor Qt.')
 class PureCEditorIntegrationTests(unittest.TestCase):
+    def test_emotional_reference_generation_through_real_editor_panel(self):
+        import time
+        os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
+        from PySide6.QtWidgets import QApplication
+        from berofel.ui.window import MainWindow
+        from berofel.services.voice_profiles import VoiceProfileManager
+
+        profile=next(item for item in VoiceProfileManager().list_profiles()
+                     if item.get('authorized') and item.get('reference_text_reviewed')
+                     and item.get('reference_text'))
+        with tempfile.TemporaryDirectory(prefix='bfs_purec_emotion_gui_') as work:
+            with patch.dict(os.environ, {
+                    'BEROFEL_QWEN3_PUREC_PROFILE_CACHE':str(Path(work)/'cache'),
+                    'BEROFEL_QWEN3_PUREC_LOG':str(Path(work)/'purec-server.log'),
+                },clear=False), \
+                 _isolated_qsettings(work), _stop_purec_worker_on_exit():
+                app=QApplication.instance() or QApplication([])
+                window=MainWindow();window.project.path=str(Path(work)/'emotion.bfsproj')
+                try:
+                    window.show();app.processEvents()
+                    panel=window.narration_panel
+                    voice_index=panel.voice.findData(f'voice-profile:{profile["id"]}')
+                    engine_index=panel.clone_engine.findData(purec.ENGINE_INT8_ID)
+                    self.assertGreaterEqual(voice_index,0)
+                    self.assertGreaterEqual(engine_index,0)
+                    panel.voice.setCurrentIndex(voice_index)
+                    panel.clone_engine.setCurrentIndex(engine_index)
+                    panel.use_emotional_reference.setChecked(True)
+                    panel.set_text('Hoje vamos testar o estilo desta voz com o Pure C local.')
+                    panel.name.setText('BVI estilo por exemplo')
+                    self.assertTrue(panel.reference_text_reviewed.isChecked())
+                    self.assertFalse(panel.use_emotional_reference.isHidden())
+                    panel._generate(False)
+                    deadline=time.monotonic()+180
+                    while (window._ai_busy or window.active_task is not None) and time.monotonic()<deadline:
+                        app.processEvents();time.sleep(.03)
+                    app.processEvents()
+                    self.assertFalse(window._ai_busy)
+                    self.assertFalse(window._open_error_dialogs)
+                    self.assertTrue(Path(panel.last_audio).is_file())
+                    self.assertTrue(purec.server_status()['emotion_by_example'])
+                    self.assertEqual(window.player.playbackState(),
+                                     window.player.PlaybackState.StoppedState)
+                    self.assertEqual(panel._player.playbackState(),
+                                     panel._player.PlaybackState.StoppedState)
+                    with __import__('wave').open(panel.last_audio,'rb') as wav:
+                        duration=wav.getnframes()/wav.getframerate()
+                    print('PUREC_STYLE_GUI_RESULT '+json.dumps({
+                        'duration':duration,
+                        'engine':purec.server_status()['engine'],
+                        'threads':purec.server_status()['threads'],
+                        'emotion_by_example':purec.server_status()['emotion_by_example'],
+                    },ensure_ascii=False))
+                finally:
+                    window.close();app.processEvents();purec.stop_purec_worker()
+
     def test_user_selecting_saved_profile_prewarms_server_before_first_generation(self):
         import time
         from PySide6.QtWidgets import QApplication

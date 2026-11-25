@@ -21,6 +21,19 @@ Com a mesma referência local autorizada, mesmo texto-alvo, Qwen 0.6B Base, INT8
 
 Separadamente, duas requisições ao servidor residente usaram seed 42; a segunda incluía `emotion: joy`. Ambas tiveram status HTTP 200, duração 3,76 s e o mesmo SHA-256 (`2fbcd01b5c85a62f…e825f2ed5`). Nesta build instalada o campo não alterou a saída. Não se deve expor emoção neural via API nesta versão como se tivesse efeito. Upstream pode ter evoluído depois da build local; o SHA executável e a incompatibilidade estão registrados em `VOICE_BACKEND_CAPABILITIES.md`.
 
+### Integração experimental do estilo por exemplo — serviço real do editor
+
+Em 25/11/2026, duas chamadas sequenciais ao serviço canônico de narração do editor usaram o perfil vocal autorizado local, o mesmo texto PT-BR, Pure C INT8 e seis threads. A primeira usou a rota padrão; a segunda reiniciou o servidor com `--emo-ref` e `--emo-ref-text`, usando a transcrição já revisada obtida com Parakeet TDT v3 ONNX INT8/CPU. Não houve reprodução automática. Os dois WAVs foram válidos, novos e tiveram hashes diferentes.
+
+| Rota | Tempo de parede | Carga/reinício reportado | Duração WAV | Cache do x-vector |
+|---|---:|---:|---:|---|
+| Padrão | 8,60 s | 3,222 s | 3,44 s | miss |
+| Estilo por exemplo | 19,927 s | 9,670 s | 6,48 s | hit |
+
+É uma única comparação exploratória; o servidor carregado com o exemplo quase dobrou o tempo de parede e gerou WAV mais longo. O hash diferente prova apenas que a configuração alterou a saída. Não prova emoção identificável, naturalidade superior ou identidade preservada. Não houve escuta ou medição de RAM. Por isso, a caixa é opcional, fica desligada por padrão e sua seleção pode tornar a geração substancialmente mais lenta. O encerramento do worker foi feito antes de remover o diretório temporário de cache/log.
+
+O fluxo foi ainda executado pela interface Qt real do editor, em modo offscreen, com um perfil autorizado, INT8 e seis threads. O WAV final tinha 6,64 s; o painel concluiu sem erros, `server_status()` confirmou `emotion_by_example=true`, e os players de timeline e narração permaneceram parados. Este teste comprova integração funcional e silêncio automático, não a qualidade perceptiva do estilo.
+
 O cache padrão de perfil sob `%LOCALAPPDATA%\\BFS` não era gravável pelo processo Codex sandbox nesta sessão. Para concluir a inferência sem alterar ACLs, os testes apontaram `BEROFEL_QWEN3_PUREC_PROFILE_CACHE` e logs para uma pasta temporária gravável. Isso é uma restrição do processo sandbox, não uma falha observada do aplicativo executado normalmente pelo usuário.
 
 ## Procedimento reproduzível para benchmark comparativo
@@ -34,5 +47,5 @@ O cache padrão de perfil sob `%LOCALAPPDATA%\\BFS` não era gravável pelo proc
 5. Para texto, usar Parakeet local para rascunho comparativo, corrigir manualmente a referência e reportar WER/CER. Transcrição automática isolada não é ground truth.
 6. Para identidade e naturalidade, comparar clipes com loudness alinhado em teste auditivo cego. Não substituir avaliação humana por similaridade de x-vector.
 
-Os testes unitários do pacote não comprovam qualidade acústica. A suíte completa foi executada no ambiente virtual instalado do app com `python -m unittest discover -s tests -q`: **571 testes passaram e 5 foram ignorados**, em 66,026 s. Os cinco skips permanecem skips e não são contados como aprovados. A correção do ranqueamento acústico e o estimador YIN passaram também nos testes direcionados.
+Os testes unitários do pacote não comprovam qualidade acústica. Após integrar o modo experimental de referência, a suíte completa foi executada no ambiente virtual instalado do app com `python -m unittest discover -s tests -q`: **577 testes passaram e 6 foram ignorados**, em 70,494 s. Os seis skips permanecem skips e não são contados como aprovados. `pytest` não está instalado no ambiente virtual, então não foi executado nem instalado; o projeto usa a suíte unittest existente. A integração Qt real de estilo foi ativada separadamente via `BEROFEL_RUN_PUREC_GUI_INTEGRATION=1` e passou em 24,909 s.
 

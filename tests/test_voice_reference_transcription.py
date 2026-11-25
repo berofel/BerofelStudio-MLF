@@ -46,6 +46,29 @@ class CloneConditioningTests(unittest.TestCase):
         validate_clone_conditioning(self._request(
             'qwen3-tts-purec-int8', language='english'))
 
+    def test_purec_style_transfer_requires_reviewed_parakeet_transcript(self):
+        request = NarrationRequest(
+            text='fala de teste', voice='voice.wav', engine='qwen3-tts-purec-int8',
+            emotion_by_example=True)
+        with self.assertRaisesRegex(ValueError, 'Parakeet'):
+            validate_clone_conditioning(request)
+        with self.assertRaisesRegex(ValueError, 'Confirme'):
+            validate_clone_conditioning(NarrationRequest(
+                text='fala de teste', voice='voice.wav', engine='qwen3-tts-purec-int8',
+                reference_text='texto transcrito pelo Parakeet',
+                emotion_by_example=True))
+        validate_clone_conditioning(NarrationRequest(
+            text='fala de teste', voice='voice.wav', engine='qwen3-tts-purec-int8',
+            reference_text='texto conferido pelo usuário',
+            reference_text_reviewed=True, emotion_by_example=True))
+
+    def test_emotional_reference_mode_rejects_non_purec_backend(self):
+        with self.assertRaisesRegex(ValueError, 'Pure C'):
+            validate_clone_conditioning(NarrationRequest(
+                text='fala de teste', voice='voice.wav', engine='qwen3-tts-local',
+                language='english', reference_text='reviewed',
+                reference_text_reviewed=True, emotion_by_example=True))
+
 
 class VoiceReferenceTranscriptionTests(unittest.TestCase):
     def test_transcribes_selected_window_offline_and_marks_text_for_review(self):

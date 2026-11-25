@@ -202,6 +202,17 @@ class NarrationPanel(QScrollArea):
             'o texto corresponder ao trecho falado.')
         self.reference_text_reviewed.setVisible(False)
         layout.addWidget(self.reference_text_reviewed)
+        self.use_emotional_reference=QCheckBox(
+            'Transferir o estilo desta gravação (Pure C experimental)')
+        self.use_emotional_reference.setToolTip(
+            'Usa a própria amostra autorizada como referência de interpretação em toda a narração. '
+            'Escolha uma gravação com a emoção desejada, transcreva com Parakeet e revise o texto. '
+            'O servidor precisa recarregar ao ativar/trocar a referência; a síntese pode ficar mais lenta. '
+            'Não troca automaticamente de emoção frase a frase.')
+        self.use_emotional_reference.setVisible(False)
+        self.use_emotional_reference.toggled.connect(
+            self._update_emotional_reference_visibility)
+        layout.addWidget(self.use_emotional_reference)
         self.transcribe_reference=QPushButton('Transcrever referência (Parakeet local)')
         self.transcribe_reference.setToolTip(
             'Transcreve a janela vocal selecionada com o Parakeet TDT v3 ONNX INT8 local. '
@@ -886,10 +897,14 @@ class NarrationPanel(QScrollArea):
         self.purec_thread_label.setVisible(use_thread_choice)
         self.purec_threads.setVisible(use_thread_choice)
         self.reference_text.setVisible(qwen)
-        self.reference_text_reviewed.setVisible(
-            qwen and self.language.currentData()=='portuguese' and
-            engine=='qwen3-tts-local')
-        self.transcribe_reference.setVisible(qwen and self.language.currentData()=='portuguese')
+        use_emotion_reference = (qwen and engine in
+            ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8'))
+        self.use_emotional_reference.setVisible(use_emotion_reference)
+        self._update_emotional_reference_visibility()
+        self.transcribe_reference.setVisible(
+            qwen and (self.language.currentData()=='portuguese' or
+                      (use_emotion_reference and
+                       self.use_emotional_reference.isChecked())))
         self.update_voice_reference.setVisible(bool(profile_id) and qwen)
         self.install_qwen.setVisible(qwen and engine=='qwen3-tts-local')
         self.qwen_status.setVisible(qwen and bool(self.qwen_status.text()))
@@ -913,6 +928,23 @@ class NarrationPanel(QScrollArea):
         self._clone_engine_note=self.license_note.text()
         self._refresh_clone_guidance(engine)
 
+    def _update_emotional_reference_visibility(self, *_args):
+        """Refresh transcript-review visibility without clearing user approval."""
+        selected=self.voice.currentData()
+        custom=(selected=='__custom__' or bool(self._voice_profile_id(selected)))
+        engine=self.clone_engine.currentData()
+        purec=engine in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8')
+        original_ptbr=(engine=='qwen3-tts-local' and
+                       self.language.currentData()=='portuguese')
+        self.reference_text_reviewed.setVisible(
+            custom and (original_ptbr or
+                        (purec and self.use_emotional_reference.isChecked())))
+        if purec:
+            self.transcribe_reference.setVisible(
+                custom and (self.language.currentData()=='portuguese' or
+                            self.use_emotional_reference.isChecked()))
+        self._refresh_clone_guidance()
+
     def _refresh_clone_guidance(self,*args):
         """Keep the selected clone path and its real limitations visible in the UI."""
         if not hasattr(self,'license_note'):
@@ -924,6 +956,8 @@ class NarrationPanel(QScrollArea):
             notes.append('Português brasileiro: o Qwen3 Base recebe o idioma “Portuguese”, sem token separado de sotaque. A clonagem usa a voz e a pronúncia da gravação; uma referência em PT-BR é necessária e o resultado ainda deve ser conferido.')
         if engine in ('qwen3-tts-purec-int8','qwen3-tts-purec-mixed'):
             notes.append('Modo rápido Pure C: usa o x-vector extraído da gravação, ignora a transcrição e pode reduzir a fidelidade do sotaque/identidade. O texto ainda aparece aqui para referência, mas não é enviado como condicionamento. Confira a amostra antes de usar.')
+            if getattr(self,'use_emotional_reference',None) is not None and self.use_emotional_reference.isChecked():
+                notes.append('Transferência experimental por exemplo ativa: o Pure C recebe a própria gravação e sua transcrição revisada ao iniciar o servidor. O estilo fica aplicado a todas as falas dessa sessão; alternar para outro estilo reinicia o servidor e a saída ainda precisa ser avaliada auditivamente.')
         elif engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced'):
             notes.append('Este backend ainda não foi validado para PT-BR. Use Original para condicionamento completo ou selecione Pure C conscientemente para o modo rápido por x-vector.')
         elif not self.reference_text.text().strip():
@@ -1300,6 +1334,8 @@ class NarrationPanel(QScrollArea):
             QMessageBox.warning(self,'Amostra de voz','Escolha uma gravação de referência válida antes de gerar.')
             return
         engine=self.clone_engine.currentData() or 'qwen3-tts-local'
+        emotion_by_example=(engine in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8')
+                            and self.use_emotional_reference.isChecked())
         req = NarrationRequest(text=self.text.toPlainText(), voice=voice,
                                language=self.language.currentData(),
                                consent=custom and (profile_authorized or self.authorized.isChecked()),
@@ -1307,13 +1343,15 @@ class NarrationPanel(QScrollArea):
                                title=self.name.text().strip() or 'Narração',
                                engine=engine,
                                reference_text=(self.reference_text.text().strip()
-                                   if custom and engine not in (
-                                       'qwen3-tts-purec-mixed','qwen3-tts-purec-int8') else ''),
+                                   if custom and (engine not in (
+                                       'qwen3-tts-purec-mixed','qwen3-tts-purec-int8')
+                                       or emotion_by_example) else ''),
                                reference_text_reviewed=(
                                    self._reference_transcript_is_reviewed()
-                                   if engine=='qwen3-tts-local' else False),
+                                   if engine=='qwen3-tts-local' or emotion_by_example else False),
                                thread_count=(self.purec_threads.currentData()
-                                             if engine=='qwen3-tts-purec-mixed' else None))
+                                             if engine=='qwen3-tts-purec-mixed' else None),
+                               emotion_by_example=emotion_by_example)
         try:
             validate_clone_conditioning(req)
         except ValueError as exc:

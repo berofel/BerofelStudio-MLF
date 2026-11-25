@@ -42,6 +42,7 @@ _MODEL_LOAD_SECONDS = 0.0
 _PROFILE_SECONDS = 0.0
 _SERVER_STATE = 'STOPPED'
 _ACTIVE_PROFILE_FINGERPRINT = ''
+_ACTIVE_STYLE_FINGERPRINT = ''
 _ACTIVE_ENGINE = ''
 _ACTIVE_THREADS = 0
 _SERVER_LOG_HANDLE = None
@@ -107,6 +108,51 @@ def _profile_cache_root() -> Path:
     return runtime_root() / 'cache' / 'profiles'
 
 
+def _prepare_emotion_reference(reference: str, reference_text: str) -> tuple[Path, str]:
+    """Prepare and cache the opt-in Pure C 0.6B emotion-by-example WAV.
+
+    Pure C's installed CLI expects a mono 24 kHz WAV and its exact transcript.
+    The user's source remains untouched; only the best reference window is
+    converted and stored in the private local profile cache.
+    """
+    source = Path(reference).expanduser().resolve()
+    transcript = ' '.join(str(reference_text or '').split())
+    if not transcript:
+        raise ValueError('A transferência de estilo exige a transcrição revisada da referência.')
+    from .audio_reference import _reference_window, REFERENCE_PREPARATION_VERSION
+    start, duration, _ = _reference_window(source)
+    source_hash = file_sha256(source)
+    cache_key = digest({'schema': 1, 'kind': 'purec-emotion-reference',
+                        'source_sha256': source_hash, 'transcript': transcript,
+                        'window_start': round(start, 3), 'window_duration': round(duration, 3),
+                        'reference_preparation': REFERENCE_PREPARATION_VERSION})
+    destination = _profile_cache_root() / 'emotion_refs' / f'{cache_key}.wav'
+    if destination.is_file():
+        try:
+            with wave.open(str(destination), 'rb') as wav:
+                if (wav.getnchannels() == 1 and wav.getframerate() == 24000 and
+                        wav.getsampwidth() == 2 and wav.getnframes() > 0):
+                    return destination, cache_key
+        except (OSError, wave.Error):
+            pass
+        destination.unlink(missing_ok=True)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    pending = destination.with_name(destination.stem + f'.{uuid.uuid4().hex}.pending.wav')
+    try:
+        from .audio_reference import prepare_audio_prompt
+        prepare_audio_prompt(str(source), pending, start_seconds=start,
+                             duration_seconds=duration)
+        with wave.open(str(pending), 'rb') as wav:
+            if (wav.getnchannels() != 1 or wav.getframerate() != 24000 or
+                    wav.getsampwidth() != 2 or wav.getnframes() <= 0):
+                raise RuntimeError('A referência de estilo não está em WAV mono 24 kHz válido.')
+        os.replace(pending, destination)
+    except Exception:
+        pending.unlink(missing_ok=True)
+        raise
+    return destination, cache_key
+
+
 def _server_log_destination() -> Path:
     override = os.environ.get('BEROFEL_QWEN3_PUREC_LOG', '').strip()
     if override:
@@ -138,6 +184,7 @@ def server_status() -> dict:
                 'pid': _PROCESS.pid if _PROCESS is not None else None,
                 'engine': _ACTIVE_ENGINE,
                 'threads': _ACTIVE_THREADS,
+                'emotion_by_example': bool(_ACTIVE_STYLE_FINGERPRINT),
                 'profile_fingerprint': _ACTIVE_PROFILE_FINGERPRINT,
                 'log_path': _SERVER_LOG_PATH}
 
@@ -170,7 +217,9 @@ def _quantization_flag(engine: str) -> list[str]:
 def prepare_voice_profile(reference: str, reference_text: str = '',
                           consent: bool = False, control=None,
                           stage=None, engine: str = ENGINE_ID,
-                          thread_count: int | None = None) -> dict:
+                          thread_count: int | None = None,
+                          emotion_reference_path: str | Path | None = None,
+                          emotion_reference_text: str = '') -> dict:
     """Prepare and securely cache a reusable Pure C x-vector for local TTS."""
     source = Path(reference).expanduser().resolve()
     validate_request('preparar voz', str(source), 'portuguese', consent)
@@ -178,6 +227,14 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
         raise RuntimeError('Pure C não está instalado. Configure o executável, o runtime MSYS2 e o modelo Qwen3 Base local.')
     _quantization_flag(engine)
     exe, model, paths = _layout()
+    emotion_path = Path(emotion_reference_path).expanduser().resolve() if emotion_reference_path else None
+    if emotion_path is not None:
+        if not emotion_path.is_file() or not str(emotion_reference_text or '').strip():
+            raise ValueError('A referência de estilo Pure C precisa de WAV e transcrição revisada.')
+        with wave.open(str(emotion_path), 'rb') as emotion_wav:
+            if (emotion_wav.getnchannels() != 1 or emotion_wav.getframerate() != 24000 or
+                    emotion_wav.getsampwidth() != 2 or emotion_wav.getnframes() <= 0):
+                raise ValueError('A referência de estilo Pure C deve ser WAV mono PCM16 de 24 kHz.')
     source_hash = file_sha256(source)
     from .audio_reference import REFERENCE_PREPARATION_VERSION
     key = digest({'schema': 2, 'reference_preparation': REFERENCE_PREPARATION_VERSION,
@@ -191,10 +248,13 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
     # so a cache miss never has two 0.6B copies consuming RAM simultaneously.
     with _LOCK:
         if _valid_profile(destination):
-            _, model_load = _start_server(destination, control, engine, thread_count)
+            _, model_load = _start_server(destination, control, engine, thread_count,
+                emotion_reference_path=emotion_path,
+                emotion_reference_text=emotion_reference_text)
             return {'path': str(destination), 'cache_hit': True,
                     'profile_prepare_seconds': 0.0, 'model_load_seconds': model_load,
-                    'engine': engine}
+                    'engine': engine,
+                    'emotion_by_example': emotion_path is not None}
         if stage:
             stage('Pure C • preparando perfil vocal local reutilizável')
         started = time.perf_counter()
@@ -232,15 +292,19 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
         elapsed = time.perf_counter() - started
         # Keep the expensive model resident so the next voice generation can stream
         # immediately. The server holds the selected profile until a profile switch.
-        _, model_load = _start_server(destination, control, engine, thread_count)
+        _, model_load = _start_server(destination, control, engine, thread_count,
+            emotion_reference_path=emotion_path,
+            emotion_reference_text=emotion_reference_text)
     return {'path': str(destination), 'cache_hit': False,
             'profile_prepare_seconds': elapsed, 'model_load_seconds': model_load,
-            'engine': engine}
+            'engine': engine,
+            'emotion_by_example': emotion_path is not None}
 
 
 def _stop_server_locked() -> None:
     global _PROCESS, _PROCESS_KEY, _PORT, _MODEL_LOAD_SECONDS, _PROFILE_SECONDS
-    global _SERVER_STATE, _ACTIVE_PROFILE_FINGERPRINT, _ACTIVE_ENGINE, _ACTIVE_THREADS
+    global _SERVER_STATE, _ACTIVE_PROFILE_FINGERPRINT, _ACTIVE_STYLE_FINGERPRINT
+    global _ACTIVE_ENGINE, _ACTIVE_THREADS
     global _SERVER_LOG_HANDLE, _SERVER_LOG_PATH
     process = _PROCESS
     if process is not None:
@@ -253,7 +317,8 @@ def _stop_server_locked() -> None:
                 process.kill(); process.wait(timeout=5)
     _PROCESS = None; _PROCESS_KEY = ''; _PORT = 0
     _MODEL_LOAD_SECONDS = 0.0; _PROFILE_SECONDS = 0.0
-    _ACTIVE_PROFILE_FINGERPRINT = ''; _ACTIVE_ENGINE = ''; _ACTIVE_THREADS = 0
+    _ACTIVE_PROFILE_FINGERPRINT = ''; _ACTIVE_STYLE_FINGERPRINT = ''
+    _ACTIVE_ENGINE = ''; _ACTIVE_THREADS = 0
     log_handle = _SERVER_LOG_HANDLE
     _SERVER_LOG_HANDLE = None; _SERVER_LOG_PATH = ''
     if log_handle is not None:
@@ -278,15 +343,34 @@ def _free_port() -> int:
 
 def _start_server(profile: Path, control=None,
                   engine: str = ENGINE_ID,
-                  thread_count: int | None = None) -> tuple[int, float]:
+                  thread_count: int | None = None,
+                  emotion_reference_path: Path | None = None,
+                  emotion_reference_text: str = '') -> tuple[int, float]:
     global _PROCESS, _PROCESS_KEY, _PORT, _MODEL_LOAD_SECONDS, _PROFILE_SECONDS
-    global _SERVER_STATE, _ACTIVE_PROFILE_FINGERPRINT, _ACTIVE_ENGINE, _ACTIVE_THREADS
+    global _SERVER_STATE, _ACTIVE_PROFILE_FINGERPRINT, _ACTIVE_STYLE_FINGERPRINT
+    global _ACTIVE_ENGINE, _ACTIVE_THREADS
     global _SERVER_LOG_HANDLE, _SERVER_LOG_PATH
     exe, model, paths = _layout()
     quantization = _quantization_flag(engine)
     profile_fingerprint = file_sha256(profile)
+    style_fingerprint = ''
+    emotion_args: list[str] = []
+    if emotion_reference_path is not None:
+        emotion_reference_path = Path(emotion_reference_path).expanduser().resolve()
+        transcript = ' '.join(str(emotion_reference_text or '').split())
+        if not emotion_reference_path.is_file() or not transcript:
+            raise ValueError('A configuração Pure C exige uma referência de estilo e sua transcrição.')
+        with wave.open(str(emotion_reference_path), 'rb') as emotion_wav:
+            if (emotion_wav.getnchannels() != 1 or emotion_wav.getframerate() != 24000 or
+                    emotion_wav.getsampwidth() != 2 or emotion_wav.getnframes() <= 0):
+                raise ValueError('A referência de estilo Pure C deve ser WAV mono PCM16 de 24 kHz.')
+        style_fingerprint = digest({'wav_sha256': file_sha256(emotion_reference_path),
+                                    'transcript': transcript})
+        emotion_args = ['--emo-ref', str(emotion_reference_path),
+                        '--emo-ref-text', transcript]
     key = digest({'model': _model_key(exe, model), 'profile': profile_fingerprint,
-                  'threads': threads_for_engine(thread_count), 'precision': engine})
+                  'threads': threads_for_engine(thread_count), 'precision': engine,
+                  'style': style_fingerprint})
     if _PROCESS is not None and _PROCESS.poll() is None and _PROCESS_KEY == key:
         # This value is per request: a resident server incurs no new model load.
         _SERVER_STATE = 'READY'
@@ -296,7 +380,7 @@ def _start_server(profile: Path, control=None,
     port = _free_port()
     command = [str(exe), '-d', str(model), '--load-voice', str(profile),
                '--xvector-only', *quantization, '-j', str(threads_for_engine(thread_count)),
-               '--max-request-seconds', '600', '--serve', str(port)]
+               '--max-request-seconds', '600', *emotion_args, '--serve', str(port)]
     started = time.perf_counter()
     log_path = _server_log_destination()
     log_handle = log_path.open('ab', buffering=0)
@@ -328,6 +412,7 @@ def _start_server(profile: Path, control=None,
                 if response.status == 200 and json.loads(body).get('status') == 'ok':
                     _PROCESS_KEY = key; _PORT = port
                     _ACTIVE_PROFILE_FINGERPRINT = profile_fingerprint
+                    _ACTIVE_STYLE_FINGERPRINT = style_fingerprint
                     _ACTIVE_ENGINE = engine
                     _ACTIVE_THREADS = threads_for_engine(thread_count)
                     _SERVER_STATE = 'READY'
@@ -367,10 +452,18 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
     if not is_ready():
         raise RuntimeError('Pure C não está configurado; selecione Original ou Q4 no editor.')
     if control: control.checkpoint()
+    emotion_reference_path = None
+    emotion_style_fingerprint = ''
+    if request.emotion_by_example:
+        emotion_reference_path, emotion_style_fingerprint = _prepare_emotion_reference(
+            request.voice, request.reference_text)
     profile = prepare_voice_profile(request.voice, request.reference_text,
                                     request.consent, control, stage,
                                     engine=request.engine,
-                                    thread_count=request.thread_count)
+                                    thread_count=request.thread_count,
+                                    emotion_reference_path=emotion_reference_path,
+                                    emotion_reference_text=(request.reference_text
+                                        if request.emotion_by_example else ''))
     folder = persistent_folder(request.project_path)
     folder.mkdir(parents=True, exist_ok=True)
     base = (''.join(ch if ch.isalnum() or ch in '-_ ' else '_' for ch in request.title).strip() or 'Narração')[:80]
@@ -390,13 +483,21 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
     }
     with _LOCK:
         port, model_load = _start_server(Path(profile['path']), control,
-                                         request.engine, request.thread_count)
+                                         request.engine, request.thread_count,
+                                         emotion_reference_path=emotion_reference_path,
+                                         emotion_reference_text=(request.reference_text
+                                             if request.emotion_by_example else ''))
         expected_profile_fingerprint = file_sha256(Path(profile['path']))
+        expected_style_fingerprint = (digest({
+            'wav_sha256': file_sha256(emotion_reference_path),
+            'transcript': ' '.join(request.reference_text.split())})
+            if emotion_reference_path is not None else '')
         if (_ACTIVE_PROFILE_FINGERPRINT != expected_profile_fingerprint or
+                _ACTIVE_STYLE_FINGERPRINT != expected_style_fingerprint or
                 _ACTIVE_ENGINE != request.engine or
                 _ACTIVE_THREADS != threads_for_engine(request.thread_count) or
                 _PROCESS is None or _PROCESS.poll() is not None):
-            raise RuntimeError('O servidor Pure C pronto não corresponde ao perfil vocal, backend ou threads solicitados; nenhuma síntese foi enviada.')
+            raise RuntimeError('O servidor Pure C pronto não corresponde ao perfil vocal, estilo de referência, backend ou threads solicitados; nenhuma síntese foi enviada.')
         # A cache miss starts the resident model while preparing its profile;
         # preserve that measured cost in this request's telemetry. Cache hits
         # on an already running server correctly report zero incremental load.
@@ -490,6 +591,8 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
             'engine': request.engine, 'threads': threads_for_engine(request.thread_count),
             'execution_profile': execution_profile,
             'precision': quantization,
+            'emotion_by_example': bool(request.emotion_by_example),
+            'emotion_style_cache_key': emotion_style_fingerprint,
             'cache_hit': False, 'profile_cache_hit': bool(profile['cache_hit']),
             'conditioning_mode': 'speaker-embedding-only',
             'profile_prepare_seconds': float(profile['profile_prepare_seconds']),
