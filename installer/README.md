@@ -3,8 +3,8 @@
 ## Baixar para outro computador
 
 Para testar a versão atual, baixe o instalador da pré-release
-[BerofelStudio 0.10.0-alpha.3](https://github.com/berofel/BerofelStudio-MLF/releases/download/v0.10.0-alpha.3/BerofelStudio-0.10.0-alpha.3-Setup-x64.exe)
-ou abra a [página da Release](https://github.com/berofel/BerofelStudio-MLF/releases/tag/v0.10.0-alpha.3).
+[BerofelStudio 0.10.0-alpha.4](https://github.com/berofel/BerofelStudio-MLF/releases/download/v0.10.0-alpha.4/BerofelStudio-0.10.0-alpha.4-Setup-x64.exe)
+ou abra a [página da Release](https://github.com/berofel/BerofelStudio-MLF/releases/tag/v0.10.0-alpha.4).
 Baixe também o `.sha256` exibido na mesma página para conferir manualmente:
 
 ```powershell
@@ -17,6 +17,11 @@ os componentes Parakeet TDT v3 ONNX INT8/CPU e Qwen3-TTS para instalar os motore
 com o editor. A opção de atalho da Área de Trabalho fica selecionada por padrão.
 O setup instala por usuário, sem copiar projetos, mídias ou perfis vocais do
 computador que produziu o instalador.
+
+O bootstrap roda oculto dentro do setup: não abre CMD/PowerShell separado.
+As etapas reais e a saída dos instaladores aparecem no painel de detalhes do
+assistente. A barra nativa acompanha o andamento geral; não exibe porcentagens
+inventadas para downloads externos sem progresso confiável.
 
 **Aviso:** o endereço `/releases/latest/download/` só funciona depois que
 houver uma Release estável. O GitHub não considera pré-releases alpha como

@@ -74,9 +74,12 @@ Section "BerofelStudio (obrigatório)" SEC_EDITOR
   CreateShortCut "$SMPROGRAMS\BerofelStudio\BerofelStudio.lnk" "$INSTDIR\ABRIR_BEROFELSTUDIO.vbs" "" "$INSTDIR\assets\brand\berofel_studio.ico" 0
   CreateShortCut "$SMPROGRAMS\BerofelStudio\Desinstalar BerofelStudio.lnk" "$INSTDIR\Uninstall.exe" "" "$INSTDIR\assets\brand\berofel_studio.ico" 0
 
-  DetailPrint "Preparando Python, bibliotecas, FFmpeg e testes locais..."
-  ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\scripts\instalar_windows.ps1" -SkipQwenPrompt$InstallParakeetTdt$InstallQwen3' $0
-  ${If} $0 != 0
+  DetailPrint "Preparando Python, bibliotecas, FFmpeg e testes locais em segundo plano..."
+  nsExec::ExecToLog /TIMEOUT=0 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\scripts\instalar_windows.ps1" -SkipQwenPrompt$InstallParakeetTdt$InstallQwen3'
+  Pop $0
+  ${If} $0 == "error"
+  ${OrIf} $0 == "timeout"
+  ${OrIf} $0 != 0
     ${If} ${Silent}
       SetErrorLevel 1
       Abort

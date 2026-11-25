@@ -13,7 +13,22 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check_latest_release.ps1"
+NSIS_SCRIPT = ROOT / "installer" / "BerofelStudio.nsi"
 POWERSHELL = shutil.which("powershell.exe") or shutil.which("powershell")
+
+
+class InstallerWindowContractTests(unittest.TestCase):
+    def test_bootstrap_runs_hidden_and_streams_status_into_installer_log(self):
+        source = NSIS_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("nsExec::ExecToLog", source)
+        self.assertIn("-NonInteractive", source)
+        self.assertIn("Preparando Python, bibliotecas, FFmpeg e testes locais em segundo plano", source)
+        self.assertNotIn('ExecWait \'"$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\\scripts\\instalar_windows.ps1"', source)
+
+    def test_optional_powerShell_bootstraps_are_hidden(self):
+        source = (ROOT / "scripts" / "instalar_windows.ps1").read_text(encoding="utf-8")
+        self.assertIn("-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'instalar_ia.ps1')", source)
+        self.assertIn("-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'instalar_qwen3_tts_local.ps1')", source)
 
 
 def release(version: str, *, draft: bool = False, include_assets: bool = True) -> dict:

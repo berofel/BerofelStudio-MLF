@@ -156,7 +156,7 @@ try {
     if ($InstallParakeetTdt) {
         Step '7/9 - Parakeet TDT v3 INT8/CPU, Silero ONNX e dicionário pt-BR offline'
         $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'instalar_ia.ps1')
+        & $powershell -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'instalar_ia.ps1')
         if ($LASTEXITCODE -ne 0) { throw 'A instalação de Parakeet TDT/Silero falhou. Consulte o log próprio.' }
     } else {
         Write-Host 'Parakeet TDT v3 foi adiado. Instale por INSTALAR_TODAS_AS_IAS.bat.' -ForegroundColor Yellow
@@ -170,7 +170,7 @@ try {
     }
     if ($prepareQwen3) {
         $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'instalar_qwen3_tts_local.ps1')
+        & $powershell -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'instalar_qwen3_tts_local.ps1')
         if ($LASTEXITCODE -ne 0) { throw 'A instalacao local do Qwen3-TTS falhou. Consulte o log proprio do Qwen3.' }
     } else {
         Write-Host 'Qwen3-TTS foi adiado. Use Narração > Preparar Qwen3 local quando desejar.' -ForegroundColor Yellow

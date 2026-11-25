@@ -1,3 +1,10 @@
+# 0.10.0-alpha.4 — instalação sem janela de terminal
+
+- O setup executa o bootstrap PowerShell oculto com `nsExec` do NSIS e encaminha as mensagens de etapa para o painel de detalhes do próprio instalador; não abre uma janela de CMD/PowerShell durante a preparação do editor.
+- As rotinas opcionais de Parakeet e Qwen também iniciam PowerShell em modo oculto e não interativo.
+- Adicionados testes de contrato para o modo oculto e o encaminhamento de status; os textos de distribuição passam a indicar alpha.4.
+- A barra nativa representa o progresso geral do setup; não é mostrada porcentagem falsa para downloads externos sem progresso confiável.
+
 # 0.10.0-alpha.3 — instalador atualizável
 
 - A instalação limpa no Windows encontrou um falso negativo ao validar FFmpeg: o pipeline PowerShell fechava a saída nativa cedo e deixava um exit code vazio. A validação agora captura a saída completa e exige banners/exit codes válidos para FFmpeg e FFprobe; o fallback BtbN pode concluir a instalação.
