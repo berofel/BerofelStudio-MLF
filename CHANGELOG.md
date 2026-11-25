@@ -4,7 +4,7 @@
 - Criado instalador NSIS por usuário, bootstrap idempotente do editor, dependências fixadas, FFmpeg validado por SHA-256 e seleção de Whisper Base/Silero e Qwen3-TTS Base.
 - Criado workflow GitHub para compilar no Windows, publicar EXE+SHA-256 em Releases via tag e anexar artefato em execução manual. NSIS usa o compressor zlib para manter uma licença compatível com distribuição comercial.
 - Limite documentado: o EXE baixa Python, bibliotecas e modelos na instalação; não é offline. Qwen 0.6B (~2,5 GB) e modelos privados não entram em Git/GitHub.
-- A compilação NSIS e a instalação em uma máquina Windows limpa ainda precisam ser executadas antes de publicar uma Release. O workflow está preparado, mas nenhum instalador foi publicado nesta etapa.
+- A compilação NSIS passou no runner Windows do GitHub Actions e o EXE+SHA-256 foi gerado como artefato de build. A instalação completa em uma máquina limpa ainda não foi validada; a primeira publicação será prerelease para testes.
 
 # Limpeza automática modular local
 
