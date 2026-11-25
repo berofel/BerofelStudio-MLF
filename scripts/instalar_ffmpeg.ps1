@@ -136,10 +136,26 @@ function Valid-Tools() {
     $ffmpeg = Join-Path $targetDir 'ffmpeg.exe'
     $ffprobe = Join-Path $targetDir 'ffprobe.exe'
     if (-not (Test-Path -LiteralPath $ffmpeg) -or -not (Test-Path -LiteralPath $ffprobe)) { return $false }
-    & $ffmpeg -hide_banner -version | Select-Object -First 1 | Out-Host
-    if ($LASTEXITCODE -ne 0) { return $false }
-    & $ffprobe -hide_banner -version | Select-Object -First 1 | Out-Host
-    return ($LASTEXITCODE -eq 0)
+    # Do not pipe a native executable into Select-Object -First 1: PowerShell
+    # closes the pipe early, which can make FFmpeg exit nonzero while writing
+    # the rest of its version banner. Capture the complete output first, then
+    # check the native process exit code and expected banner independently.
+    $ffmpegOutput = @(& $ffmpeg -hide_banner -version 2>&1)
+    $ffmpegExitCode = $LASTEXITCODE
+    if ($ffmpegExitCode -ne 0 -or -not ($ffmpegOutput -match '^ffmpeg version\s+\S+')) {
+        Write-Warning "FFmpeg nao passou na verificacao (exit=$ffmpegExitCode)."
+        return $false
+    }
+    Write-Host ([string]$ffmpegOutput[0])
+
+    $ffprobeOutput = @(& $ffprobe -hide_banner -version 2>&1)
+    $ffprobeExitCode = $LASTEXITCODE
+    if ($ffprobeExitCode -ne 0 -or -not ($ffprobeOutput -match '^ffprobe version\s+\S+')) {
+        Write-Warning "FFprobe nao passou na verificacao (exit=$ffprobeExitCode)."
+        return $false
+    }
+    Write-Host ([string]$ffprobeOutput[0])
+    return $true
 }
 
 if (Valid-Tools) {

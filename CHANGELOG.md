@@ -1,5 +1,7 @@
 # 0.10.0-alpha.3 — instalador atualizável
 
+- A instalação limpa no Windows encontrou um falso negativo ao validar FFmpeg: o pipeline PowerShell fechava a saída nativa cedo e deixava um exit code vazio. A validação agora captura a saída completa e exige banners/exit codes válidos para FFmpeg e FFprobe; o fallback BtbN pode concluir a instalação.
+- O smoke test do setup prepara o Visual C++ assinado no runner sem UAC interativo, limita a espera do instalador e preserva logs de falha como artefato de CI.
 - O manifesto principal inclui NumPy e SciPy, usados diretamente pelos serviços de áudio, clipe e preparo de referências do Qwen; a ausência foi detectada na coleta da suíte em Windows limpo.
 - O instalador Windows consulta as Releases públicas do GitHub antes de instalar. Se existir uma versão SemVer mais nova com EXE e checksum, baixa ambos, valida o SHA-256 e inicia o setup atualizado antes de alterar a instalação existente.
 - Falha de rede ou de validação oferece uma escolha explícita para continuar com o setup já baixado; `/NOUPDATECHECK` permite instalação manual/rollback.
