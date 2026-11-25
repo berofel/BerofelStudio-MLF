@@ -13,6 +13,7 @@
 - Testes de regressão para textos acima de 1.700 caracteres, divisão sem perda de palavras e consolidação dos trechos em WAV contínuo.
 - Adicionado dicionário de pronúncia PT-BR editável por referência vocal. Regras privadas em JSON local alteram somente a cópia falada enviada ao Qwen; roteiro, transcrição e legendas permanecem intactos. Correspondência contextual é local à ocorrência, substituições não encadeiam e textos longos aplicam o dicionário uma única vez antes de dividir em trechos.
 - O manifesto de capacidades Pure C agora identifica `--emo-ref` e seus requisitos como opções da CLI, sem inferir suporte HTTP. O binário instalado anuncia esses argumentos, mas o adaptador de narração ainda não os envia; controles neurais de emoção continuam indisponíveis até validação da API e da saída real.
+- A geração Pure C e o backend nativo calculam hashes de gravações por blocos de 1 MiB, evitando materializar referências vocais longas integralmente na RAM durante a preparação das chaves de cache.
 
 # 0.10.0-alpha.4 — instalação sem janela de terminal
 

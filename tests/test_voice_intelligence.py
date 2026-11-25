@@ -21,6 +21,7 @@ from berofel.services.voice_intelligence.pronunciation_dictionary import (
     PronunciationDictionary, apply_pronunciations,
 )
 from berofel.services.narration_service import NarrationRequest, generate_narration
+from berofel.services.ai_cache import file_sha256
 
 
 class PortugueseSpeechNormalizerTests(TestCase):
@@ -66,6 +67,21 @@ class PortugueseSpeechNormalizerTests(TestCase):
         result = normalize_pt_br(text)
         self.assertEqual(result.spoken, text)
         self.assertEqual(normalize_pt_br(result.spoken).spoken, result.spoken)
+
+
+class StreamingFileHashTests(TestCase):
+    def test_incremental_sha256_matches_standard_hash(self):
+        import hashlib
+        content = bytes(range(256)) * 9000
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'long-reference.wav'
+            path.write_bytes(content)
+            self.assertEqual(file_sha256(path, chunk_bytes=8192),
+                             hashlib.sha256(content).hexdigest())
+
+    def test_nonpositive_chunk_size_is_rejected(self):
+        with self.assertRaises(ValueError):
+            file_sha256('unused.wav', chunk_bytes=0)
 
 
 class PronunciationDictionaryTests(TestCase):

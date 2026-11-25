@@ -23,7 +23,7 @@ import wave
 
 import numpy as np
 
-from .ai_cache import digest
+from .ai_cache import digest, file_sha256
 from .narration_service import (LANGUAGES, NarrationRequest, persistent_folder,
                                 _process_flags, validate_request,
                                 validate_clone_conditioning)
@@ -178,7 +178,7 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
         raise RuntimeError('Pure C não está instalado. Configure o executável, o runtime MSYS2 e o modelo Qwen3 Base local.')
     _quantization_flag(engine)
     exe, model, paths = _layout()
-    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    source_hash = file_sha256(source)
     from .audio_reference import REFERENCE_PREPARATION_VERSION
     key = digest({'schema': 2, 'reference_preparation': REFERENCE_PREPARATION_VERSION,
                   'voice_sha256': source_hash,
@@ -284,7 +284,7 @@ def _start_server(profile: Path, control=None,
     global _SERVER_LOG_HANDLE, _SERVER_LOG_PATH
     exe, model, paths = _layout()
     quantization = _quantization_flag(engine)
-    profile_fingerprint = hashlib.sha256(profile.read_bytes()).hexdigest()
+    profile_fingerprint = file_sha256(profile)
     key = digest({'model': _model_key(exe, model), 'profile': profile_fingerprint,
                   'threads': threads_for_engine(thread_count), 'precision': engine})
     if _PROCESS is not None and _PROCESS.poll() is None and _PROCESS_KEY == key:
@@ -391,8 +391,7 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
     with _LOCK:
         port, model_load = _start_server(Path(profile['path']), control,
                                          request.engine, request.thread_count)
-        expected_profile_fingerprint = hashlib.sha256(
-            Path(profile['path']).read_bytes()).hexdigest()
+        expected_profile_fingerprint = file_sha256(Path(profile['path']))
         if (_ACTIVE_PROFILE_FINGERPRINT != expected_profile_fingerprint or
                 _ACTIVE_ENGINE != request.engine or
                 _ACTIVE_THREADS != threads_for_engine(request.thread_count) or

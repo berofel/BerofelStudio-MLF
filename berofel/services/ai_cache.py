@@ -31,6 +31,17 @@ def digest(obj: object) -> str:
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()[:32]
 
 
+def file_sha256(path: str | Path, *, chunk_bytes: int = 1024 * 1024) -> str:
+    """Hash a file incrementally so long references never become a RAM copy."""
+    if chunk_bytes <= 0:
+        raise ValueError('chunk_bytes precisa ser positivo.')
+    value = hashlib.sha256()
+    with Path(path).expanduser().open('rb') as source:
+        for chunk in iter(lambda: source.read(chunk_bytes), b''):
+            value.update(chunk)
+    return value.hexdigest()
+
+
 def write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + f'.{os.getpid()}.tmp')
