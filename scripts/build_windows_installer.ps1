@@ -55,14 +55,23 @@ try {
     Get-ChildItem -LiteralPath $stageFull -File -Recurse -Include '*.zip','*.7z','*.rar','*.bundle','*.gguf','*.safetensors','*.pt','*.pth','*.ckpt','*.onnx','*.tflite','*.engine','*.model','*.bin','*.exe','*.dll','*.pyd','*.so','*.dylib','*.lib','*.wav','*.mp3','*.flac','*.ogg','*.m4a','*.aac','*.wma','*.mp4','*.mov','*.mkv','*.avi','*.webm','*.bfs','*.bfsproject','*.bfsproj','*.sqlite','*.sqlite3','*.db' | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
 
     $script = Join-Path $stageFull 'installer\BerofelStudio.nsi'
+    if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
+        throw "O script NSIS não está no staging limpo: $script"
+    }
     $compilerArgs = @(
         "/DAPP_SOURCE=`"$stageFull`"",
         "/DOUTPUT_DIR=`"$OutputDirectory`"",
         "/DAPP_VERSION=$version",
-        $script
+        'installer\BerofelStudio.nsi'
     )
-    & $CompilerPath @compilerArgs
-    if ($LASTEXITCODE -ne 0) { throw "NSIS encerrou com código $LASTEXITCODE." }
+    Push-Location -LiteralPath $stageFull
+    try {
+        & $CompilerPath @compilerArgs
+        $compilerExitCode = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    if ($compilerExitCode -ne 0) { throw "NSIS encerrou com código $compilerExitCode." }
     $installer = Join-Path $OutputDirectory "BerofelStudio-$version-Setup-x64.exe"
     if (-not (Test-Path -LiteralPath $installer)) { throw 'O executável do instalador não foi criado.' }
     $hash = Get-FileHash -LiteralPath $installer -Algorithm SHA256
