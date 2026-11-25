@@ -2,6 +2,10 @@
 
 O ASR usado no fluxo BVI é **Parakeet TDT v3 ONNX INT8 em CPU**, junto ao Silero VAD local. Faster-Whisper não faz parte desta rota e não foi usado nos resultados abaixo.
 
+## Microbenchmark do sumarizador PCM
+
+Em 25/11/2026, no ambiente virtual do aplicativo (Python 3.12, NumPy 2.5.4; identificação física de CPU indisponível), comparei a implementação padrão e a rota NumPy com o mesmo buffer sintético: seno de 145 Hz, 16 kHz, 30 s/480.000 amostras, 20 ms por quadro. Após uma chamada de aquecimento, foram feitas nove medições por rota, alternadas. Medianas: Python puro 0,155741 s; NumPy 0,006898 s; aceleração observada de 22,58×. Ambos calculam os mesmos campos e o teste de regressão compara a saída numérica. É microbenchmark do resumo de PCM apenas: não inclui leitura/decodificação, FFmpeg, Silero, seleção de janela, não mede RAM/CPU do host e não representa ganho equivalente no tempo total de preparação da voz. NumPy continua opcional; a rota Python é mantida como fallback.
+
 ## Execução exploratória real — 25/11/2026
 
 Ambiente Windows do aplicativo, Ryzen 7 5700G (8C/16T), 16 GB RAM, execução CPU local; referência vocal autorizada local de 3 s; síntese Pure C 0.6B, seis threads; um único texto PT-BR curto por backend. Foram usadas saídas WAV novas, sem cache de áudio. A checagem textual dos WAVs foi feita pelo Parakeet TDT v3 ONNX INT8/CPU já instalado. Os arquivos temporários foram removidos após a análise.

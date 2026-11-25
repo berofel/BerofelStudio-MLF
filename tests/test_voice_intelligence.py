@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import math
 import subprocess
 import tempfile
 import wave
@@ -342,6 +343,25 @@ class AcousticWindowAnalysisTests(TestCase):
         self.assertGreater(features['zero_crossing_rate'], .4)
         self.assertIsNone(features['snr_db'])
         self.assertEqual(features['snr_confidence'], 'unavailable_without_noise_reference')
+
+    def test_numpy_pcm_summary_matches_dependency_free_reference(self):
+        from array import array
+        from berofel.services.voice_intelligence.acoustic_analyzer import (
+            _analyze_pcm_f32le_python,
+        )
+        samples = array('f')
+        samples.extend([0.0] * 173)
+        samples.extend([.2 * math.sin(index * .17) for index in range(16003)])
+        samples.extend([1.0, -1.0, .001])
+        raw = samples.tobytes()
+        expected = _analyze_pcm_f32le_python(raw, sample_rate=16000, frame_ms=20)
+        actual = analyze_pcm_f32le(raw, sample_rate=16000, frame_ms=20)
+        self.assertEqual(actual.keys(), expected.keys())
+        for key, value in expected.items():
+            if isinstance(value, float):
+                self.assertAlmostEqual(actual[key], value, places=8, msg=key)
+            else:
+                self.assertEqual(actual[key], value, key)
 
     def test_rejects_invalid_pcm_and_parameters(self):
         with self.assertRaises(ValueError):

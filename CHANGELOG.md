@@ -1,5 +1,7 @@
 ## Próxima atualização (ainda não publicada)
 
+- O resumo PCM do seletor de referência agora usa vetorização NumPy quando disponível, preservando a implementação padrão sem dependências como fallback. Em microbenchmark sintético pareado (30 s, 480.000 amostras, 9 execuções por caminho), mediana passou de 0,155741 s para 0,006898 s (22,58×); isso mede somente o sumarizador, não FFmpeg/VAD nem preparação end-to-end. Cache acústico avança para versão 2.
+- Validação após a vetorização: `python -m unittest discover -s tests -q` no venv completo, 592 testes aprovados e 6 ignorados em 66,112 s; o teste de paridade da rota NumPy com o fallback também passou.
 - Roteiros longos agora calculam o plano narrativo PT-BR uma única vez para o texto completo; as chamadas sequenciais por trecho não repetem a análise determinística nem substituem o plano global. Regressão coberta por teste de contagem de chamadas.
 - Regressão validada no ambiente virtual completo do app: `python -m unittest discover -s tests -q` — 591 testes aprovados, 6 ignorados, 66,290 s. O Python reduzido da sessão não foi usado para o resultado por não incluir NumPy/Pillow/PySide6.
 - A verificação de referência agora inclui descritores de espectro/MFCC e periodicidade ACF limitados a 120 quadros, com atualização de cache `SPECTRAL_FEATURE_VERSION=2`. O diálogo Qt os identifica como diagnósticos, não como identidade, qualidade MOS ou gatilho de DSP; continuam fora do ranking até existir calibração com referências rotuladas.

@@ -10,7 +10,7 @@ from array import array
 import math
 import sys
 
-ACOUSTIC_FEATURE_VERSION = 1
+ACOUSTIC_FEATURE_VERSION = 2
 PITCH_FEATURE_VERSION = 1
 SPECTRAL_FEATURE_VERSION = 2
 
@@ -23,9 +23,9 @@ def _percentile(values: list[float], fraction: float) -> float | None:
     return ordered[index]
 
 
-def analyze_pcm_f32le(pcm: bytes, *, sample_rate: int = 16000,
-                      frame_ms: int = 20) -> dict:
-    """Summarize mono little-endian float PCM in bounded short frames."""
+def _analyze_pcm_f32le_python(pcm: bytes, *, sample_rate: int,
+                              frame_ms: int) -> dict:
+    """Dependency-free reference implementation and reduced-install fallback."""
     if sample_rate <= 0 or frame_ms <= 0:
         raise ValueError("sample_rate e frame_ms precisam ser positivos")
     usable = len(pcm) - len(pcm) % 4
@@ -105,6 +105,91 @@ def analyze_pcm_f32le(pcm: bytes, *, sample_rate: int = 16000,
         "snr_db": None,
         "snr_confidence": "unavailable_without_noise_reference",
     }
+
+
+def _analyze_pcm_f32le_numpy(pcm: bytes, *, sample_rate: int,
+                             frame_ms: int) -> dict:
+    """Vectorized equivalent of the standard-library PCM summary."""
+    import numpy as np
+    if sample_rate <= 0 or frame_ms <= 0:
+        raise ValueError("sample_rate e frame_ms precisam ser positivos")
+    usable = len(pcm) - len(pcm) % 4
+    if usable == 0:
+        raise ValueError("PCM vazio")
+    signal = np.frombuffer(pcm[:usable], dtype="<f4")
+    if not bool(np.isfinite(signal).all()):
+        raise ValueError("PCM contém NaN ou infinito")
+    count = int(signal.size)
+    frame_size = max(1, round(sample_rate * frame_ms / 1000))
+    frame_count = (count + frame_size - 1) // frame_size
+    # Only the last frame is padded; denominators exclude padding, matching
+    # the reference loop and keeping memory bounded to the input window.
+    frames = np.zeros((frame_count, frame_size), dtype=np.float64)
+    frames.reshape(-1)[:count] = signal
+    valid = np.minimum(frame_size, count - np.arange(frame_count) * frame_size)
+    square = frames * frames
+    frame_rms_array = np.sqrt(square.sum(axis=1) / valid)
+    frame_sign = frames >= 0
+    pair_valid = np.arange(frame_size - 1)[None, :] < np.maximum(0, valid - 1)[:, None]
+    frame_crossings = np.count_nonzero(
+        (frame_sign[:, 1:] != frame_sign[:, :-1]) & pair_valid, axis=1)
+    frame_zcr_array = frame_crossings / np.maximum(1, valid - 1)
+    signs = signal >= 0
+    crossings = int(np.count_nonzero(signs[1:] != signs[:-1]))
+    peak = float(np.max(np.abs(signal)))
+    rms = float(np.sqrt(np.mean(np.square(signal, dtype=np.float64))))
+    clipped = int(np.count_nonzero(np.abs(signal) >= .999))
+    quiet = int(np.count_nonzero(np.abs(signal) < .005))
+    frame_rms = frame_rms_array.tolist()
+    frame_zcr = frame_zcr_array.tolist()
+    quiet_frames = [value for value in frame_rms if value < .00316]
+    active_frames = [value for value in frame_rms if value >= .01778]
+    proxy = None
+    proxy_confidence = "unavailable"
+    if len(quiet_frames) >= 5 and len(active_frames) >= 5:
+        quiet_level = _percentile(quiet_frames, .5) or 0.0
+        active_level = _percentile(active_frames, .5) or 0.0
+        if quiet_level > 0 and active_level > quiet_level:
+            proxy = 20 * math.log10(active_level / quiet_level)
+            proxy_confidence = "rough_quiet_frame_contrast"
+    rms_dbfs = 20 * math.log10(max(rms, 1e-12))
+    peak_dbfs = 20 * math.log10(max(peak, 1e-12))
+    return {
+        "feature_version": ACOUSTIC_FEATURE_VERSION,
+        "sample_rate": sample_rate,
+        "sample_count": count,
+        "duration_seconds": count / sample_rate,
+        "rms_dbfs": rms_dbfs,
+        "peak_dbfs": peak_dbfs,
+        "crest_factor_db": peak_dbfs - rms_dbfs,
+        "clipped_fraction": clipped / count,
+        "near_silence_fraction": quiet / count,
+        "zero_crossing_rate": crossings / max(1, count - 1),
+        "frame_rms_dbfs_p10": 20 * math.log10(max(_percentile(frame_rms, .1) or 0.0, 1e-12)),
+        "frame_rms_dbfs_p50": 20 * math.log10(max(_percentile(frame_rms, .5) or 0.0, 1e-12)),
+        "frame_rms_dbfs_p90": 20 * math.log10(max(_percentile(frame_rms, .9) or 0.0, 1e-12)),
+        "frame_zcr_p50": _percentile(frame_zcr, .5),
+        "speech_to_quiet_level_db_proxy": proxy,
+        "level_contrast_confidence": proxy_confidence,
+        "snr_db": None,
+        "snr_confidence": "unavailable_without_noise_reference",
+    }
+
+
+def analyze_pcm_f32le(pcm: bytes, *, sample_rate: int = 16000,
+                      frame_ms: int = 20) -> dict:
+    """Summarize mono PCM; use NumPy vectorization when already installed.
+
+    NumPy remains optional. The standard-library path defines behavior for
+    reduced installs; the accelerated path is regression-tested against it.
+    """
+    try:
+        import numpy  # noqa: F401 - capability probe; actual arrays are local
+    except ImportError:
+        return _analyze_pcm_f32le_python(pcm, sample_rate=sample_rate,
+                                         frame_ms=frame_ms)
+    return _analyze_pcm_f32le_numpy(pcm, sample_rate=sample_rate,
+                                    frame_ms=frame_ms)
 
 
 def analyze_pitch_yin_f32le(pcm: bytes, *, sample_rate: int = 16000,
