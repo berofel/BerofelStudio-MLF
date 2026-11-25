@@ -424,6 +424,8 @@ class QwenLocalCloneTests(unittest.TestCase):
             self.assertAlmostEqual(report['duration'],3.0,places=2)
             self.assertAlmostEqual(report['audible_signal_seconds'],3.0,delta=.05)
             self.assertGreater(report['rms_dbfs'],-15)
+            self.assertEqual(report['spectral_features']['status'],'measured')
+            self.assertEqual(len(report['spectral_features']['mfcc_median']),13)
             self.assertEqual(source.read_bytes(),original)
 
     def test_reference_quality_warns_when_more_than_half_is_silent(self):

@@ -44,6 +44,32 @@ class FastNarrationProfileUiTests(unittest.TestCase):
         self.assertTrue(Path(settings.fileName()).is_relative_to(
             Path(self.settings_dir.name)))
 
+    def test_reference_report_shows_spectral_metrics_as_non_identity_diagnostics(self):
+        from PySide6.QtWidgets import QMessageBox
+        with patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
+             patch('berofel.services.qwen3_purec_tts.is_ready',return_value=False), \
+             patch.object(QMessageBox,'information') as show:
+            panel=NarrationPanel()
+            try:
+                panel._show_voice_reference_report({
+                    'duration':4.0,'source_duration':4.0,'selected_start':0.0,
+                    'audible_signal_seconds':3.8,'sample_rate':24000,'rms_dbfs':-20.0,
+                    'peak_dbfs':-2.0,'silence_fraction':.05,'clipped_fraction':0.0,
+                    'warnings':[],'acoustic_features':{},'pitch_features':{},
+                    'spectral_features':{'status':'measured',
+                        'spectral_centroid_hz_p50':1400.0,
+                        'spectral_rolloff85_hz_p50':6200.0,
+                        'spectral_flatness_p50':.08,
+                        'mfcc_median':[1.0,2.0,3.0,4.0,5.0],
+                        'hnr_acf_proxy_db_p50':8.0},
+                })
+                message=show.call_args.args[2]
+                self.assertIn('centroide 1400 Hz',message)
+                self.assertIn('MFCCs medianos C0–C4',message)
+                self.assertIn('não identificam locutor',message)
+            finally:
+                panel.close()
+
     def test_purec_turbo_thread_budget_persists_between_panels(self):
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
              patch('berofel.services.qwen3_purec_tts.is_ready',return_value=True):

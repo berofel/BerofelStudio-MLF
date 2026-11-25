@@ -12,6 +12,7 @@ import sys
 
 ACOUSTIC_FEATURE_VERSION = 1
 PITCH_FEATURE_VERSION = 1
+SPECTRAL_FEATURE_VERSION = 2
 
 
 def _percentile(values: list[float], fraction: float) -> float | None:
@@ -228,4 +229,124 @@ def analyze_pitch_yin_f32le(pcm: bytes, *, sample_rate: int = 16000,
         "sampled_frame_count": len(starts),
         "confidence_threshold": .70,
         "identity_score": None,
+    }
+
+
+def analyze_spectral_f32le(pcm: bytes, *, sample_rate: int = 16000,
+                           frame_ms: int = 30, hop_ms: int = 10,
+                           max_frames: int = 120, mel_bands: int = 26,
+                           mfcc_count: int = 13) -> dict:
+    """Return bounded descriptive spectrum/MFCC statistics for mono float PCM.
+
+    At most ``max_frames`` evenly spaced frames are analyzed. The ACF HNR
+    field is explicitly a rough periodicity proxy and is not used as a quality
+    gate. MFCCs and spectral measures are not speaker embeddings or identity
+    scores. NumPy is imported lazily; missing NumPy only disables this report.
+    """
+    if sample_rate <= 0 or frame_ms <= 0 or hop_ms <= 0 or max_frames <= 0:
+        raise ValueError("taxa, duração de quadro, salto e limite devem ser positivos")
+    if (frame_ms>100 or hop_ms>100 or max_frames>512 or mel_bands<4 or
+            mel_bands>80 or mfcc_count<2 or mfcc_count>40 or mfcc_count>mel_bands):
+        raise ValueError("configuração de análise espectral inválida ou excede os limites de memória")
+    usable=len(pcm)-len(pcm)%4
+    if usable==0:
+        raise ValueError("PCM vazio")
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError("NumPy é necessário para a análise espectral") from exc
+    signal=np.frombuffer(pcm[:usable],dtype="<f4")
+    if signal.size==0 or not bool(np.isfinite(signal).all()):
+        raise ValueError("PCM vazio ou contém NaN/infinito")
+    frame_size=max(16,round(sample_rate*frame_ms/1000))
+    hop=max(1,round(sample_rate*hop_ms/1000))
+    if signal.size<frame_size:
+        return {"feature_version":SPECTRAL_FEATURE_VERSION,
+                "status":"too_short","sampled_frame_count":0,
+                "spectral_centroid_hz_p50":None,"spectral_rolloff85_hz_p50":None,
+                "spectral_flatness_p50":None,"mfcc_median":None,
+                "hnr_acf_proxy_db_p50":None,
+                "hnr_note":"Unavailable: fewer than one analysis frame."}
+    starts=np.arange(0,signal.size-frame_size+1,hop,dtype=np.int64)
+    if starts.size>max_frames:
+        starts=starts[np.linspace(0,starts.size-1,max_frames,dtype=np.int64)]
+    frames=np.asarray(signal[starts[:,None]+np.arange(frame_size)[None,:]],dtype=np.float64)
+    frames-=frames.mean(axis=1,keepdims=True)
+    rms=np.sqrt(np.mean(frames*frames,axis=1))
+    voiced=rms>=1e-4
+    if not bool(voiced.any()):
+        return {"feature_version":SPECTRAL_FEATURE_VERSION,
+                "status":"unvoiced_or_low_energy","sampled_frame_count":int(starts.size),
+                "spectral_centroid_hz_p50":None,"spectral_rolloff85_hz_p50":None,
+                "spectral_flatness_p50":None,"mfcc_median":None,
+                "hnr_acf_proxy_db_p50":None,
+                "hnr_note":"Unavailable for silent or near-silent frames."}
+    frames=frames[voiced]
+    window=np.hanning(frame_size)
+    n_fft=1 << (frame_size-1).bit_length()
+    spectrum=np.fft.rfft(frames*window[None,:],n=n_fft,axis=1)
+    power=np.square(np.abs(spectrum))
+    magnitude=np.sqrt(power)
+    frequencies=np.fft.rfftfreq(n_fft,1.0/sample_rate)
+    magnitude_sum=np.maximum(magnitude.sum(axis=1),1e-20)
+    centroid=(magnitude@frequencies)/magnitude_sum
+    cumulative=np.cumsum(power,axis=1)
+    thresholds=.85*cumulative[:,-1:]
+    bins=np.argmax(cumulative>=thresholds,axis=1)
+    rolloff=frequencies[bins]
+    safe_power=np.maximum(power,1e-20)
+    flatness=np.exp(np.mean(np.log(safe_power),axis=1))/np.maximum(np.mean(safe_power,axis=1),1e-20)
+
+    mel_low=2595.0*np.log10(1.0+30.0/700.0)
+    mel_high=2595.0*np.log10(1.0+(sample_rate/2.0)/700.0)
+    mel_points=np.linspace(mel_low,mel_high,mel_bands+2)
+    hz_points=700.0*(np.power(10.0,mel_points/2595.0)-1.0)
+    filters=np.zeros((mel_bands,frequencies.size),dtype=np.float64)
+    for band in range(mel_bands):
+        left,center,right=hz_points[band:band+3]
+        filters[band]=np.maximum(0.0,np.minimum(
+            (frequencies-left)/max(center-left,1e-12),
+            (right-frequencies)/max(right-center,1e-12)))
+    log_mel=np.log(np.maximum(power@filters.T,1e-10))
+    sample_index=np.arange(mel_bands,dtype=np.float64)+.5
+    coefficient_index=np.arange(mfcc_count,dtype=np.float64)[:,None]
+    dct=np.cos(np.pi/mel_bands*coefficient_index*sample_index[None,:])
+    dct[0]*=math.sqrt(1.0/mel_bands)
+    if mfcc_count>1:
+        dct[1:]*=math.sqrt(2.0/mel_bands)
+    mfcc=log_mel@dct.T
+
+    # HNR proxy via normalized autocorrelation in a broad voiced-pitch band.
+    # It is descriptive only: room noise and phonetic content affect it.
+    # Zero-pad far enough to obtain the linear (not circular) autocorrelation;
+    # the feature-spectrum FFT is too short for reliable period lags.
+    acf_fft_size=1 << (2*frame_size-2).bit_length()
+    acf_spectrum=np.fft.rfft(frames*window[None,:],n=acf_fft_size,axis=1)
+    acf_power=np.square(np.abs(acf_spectrum))
+    acf=np.fft.irfft(acf_power,n=acf_fft_size,axis=1)
+    acf_zero=np.maximum(acf[:,0],1e-20)
+    min_lag=max(1,int(sample_rate/400.0))
+    max_lag=min(acf.shape[1]-1,int(sample_rate/65.0))
+    periodicity=np.max(acf[:,min_lag:max_lag+1],axis=1)/acf_zero if max_lag>=min_lag else np.array([])
+    periodicity=np.clip(periodicity,1e-6,1.0-1e-6)
+    hnr=10.0*np.log10(periodicity/(1.0-periodicity)) if periodicity.size else np.array([])
+
+    def stats(values):
+        return {"p10":float(np.percentile(values,10)),
+                "p50":float(np.percentile(values,50)),
+                "p90":float(np.percentile(values,90))}
+    hnr_stats=stats(hnr) if hnr.size else {"p10":None,"p50":None,"p90":None}
+    return {
+        "feature_version":SPECTRAL_FEATURE_VERSION,"status":"measured",
+        "method":"hann-windowed rFFT, triangular Mel bank and orthonormal DCT-II",
+        "sampled_frame_count":int(starts.size),"voiced_frame_count":int(len(frames)),
+        "spectral_centroid_hz":stats(centroid),
+        "spectral_centroid_hz_p50":stats(centroid)["p50"],
+        "spectral_rolloff85_hz":stats(rolloff),
+        "spectral_rolloff85_hz_p50":stats(rolloff)["p50"],
+        "spectral_flatness":stats(flatness),
+        "spectral_flatness_p50":stats(flatness)["p50"],
+        "mfcc_median":[float(value) for value in np.median(mfcc,axis=0)],
+        "hnr_acf_proxy_db":hnr_stats,"hnr_acf_proxy_db_p50":hnr_stats["p50"],
+        "hnr_note":"Rough autocorrelation periodicity proxy; not calibrated HNR or a quality gate.",
     }

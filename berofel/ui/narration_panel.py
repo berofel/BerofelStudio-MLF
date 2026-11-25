@@ -1083,6 +1083,7 @@ class NarrationPanel(QScrollArea):
     def _show_voice_reference_report(self,report):
         features=report.get('acoustic_features') or {}
         pitch=report.get('pitch_features') or {}
+        spectral=report.get('spectral_features') or {}
         lines=[f'Duração do arquivo: {report.get("source_duration",report["duration"]):.2f} s',
                f'Trecho usado para condicionar a voz: {report["duration"]:.2f} s',
                f'Início do trecho escolhido: {report.get("selected_start",0):.2f} s',
@@ -1115,6 +1116,20 @@ class NarrationPanel(QScrollArea):
                 f'F0 não resumida: somente {pitch.get("voiced_frame_count",0)} quadros '
                 f'vozeados confiáveis de {pitch.get("sampled_frame_count",0)}; '
                 'grave uma referência com fala mais contínua para obter essa medida.')
+        if spectral.get('status')=='measured':
+            lines.append(
+                f'Espectro mediano: centroide {spectral["spectral_centroid_hz_p50"]:.0f} Hz; '
+                f'rolloff 85% {spectral["spectral_rolloff85_hz_p50"]:.0f} Hz; '
+                f'flatness {spectral["spectral_flatness_p50"]:.3f}')
+            mfcc=spectral.get('mfcc_median') or []
+            if mfcc:
+                lines.append('MFCCs medianos C0–C4: '+', '.join(f'{value:.1f}' for value in mfcc[:5]))
+            hnr=spectral.get('hnr_acf_proxy_db_p50')
+            if hnr is not None:
+                lines.append(f'Periodicidade ACF (proxy HNR não calibrado): {hnr:.1f} dB')
+            lines.append('Espectro/MFCC/periodicidade descrevem o sinal; não identificam locutor nem comprovam fidelidade do clone.')
+        elif spectral.get('status')=='unvoiced_or_low_energy':
+            lines.append('Análise espectral indisponível: trecho sem energia vocal suficiente.')
         if report['warnings']:
             lines.extend(['','Recomendações:',*('• '+item for item in report['warnings'])])
         else:

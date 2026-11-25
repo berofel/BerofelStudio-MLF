@@ -34,7 +34,8 @@ def _voice_report_cache_root() -> Path:
 def _voice_report_dependencies() -> dict:
     """Return lightweight file identities for tools that affect the report."""
     from .voice_intelligence.acoustic_analyzer import (
-        ACOUSTIC_FEATURE_VERSION, PITCH_FEATURE_VERSION)
+        ACOUSTIC_FEATURE_VERSION, PITCH_FEATURE_VERSION,
+        SPECTRAL_FEATURE_VERSION)
     from .ffmpeg import ffmpeg_path
     ffmpeg=Path(ffmpeg_path())
     try:
@@ -56,6 +57,7 @@ def _voice_report_dependencies() -> dict:
             'reference_preparation_version':REFERENCE_PREPARATION_VERSION,
             'acoustic_feature_version':ACOUSTIC_FEATURE_VERSION,
             'pitch_feature_version':PITCH_FEATURE_VERSION,
+            'spectral_feature_version':SPECTRAL_FEATURE_VERSION,
             'ffmpeg':ffmpeg_identity,'vad_models':vad_files}
 
 
@@ -374,10 +376,11 @@ def _inspect_voice_reference_uncached(voice: str | Path) -> dict:
         acoustic_features = analyze_pcm_f32le(
             np.asarray(signal, dtype=np.float32).tobytes(),
             sample_rate=int(rate), frame_ms=20)
+        pcm_f32le=np.asarray(signal,dtype='<f4').tobytes()
         from .voice_intelligence.acoustic_analyzer import analyze_pitch_yin_f32le
         try:
             pitch_features = analyze_pitch_yin_f32le(
-                np.asarray(signal, dtype='<f4').tobytes(), sample_rate=int(rate))
+                pcm_f32le, sample_rate=int(rate))
         except (RuntimeError, ValueError, OverflowError):
             # Pitch is diagnostic only. A missing/unsupported optional
             # measurement must not prevent inspection or voice preparation.
@@ -385,6 +388,16 @@ def _inspect_voice_reference_uncached(voice: str | Path) -> dict:
                               'confidence_median': None,
                               'voiced_frame_count': 0, 'sampled_frame_count': 0,
                               'identity_score': None}
+        from .voice_intelligence.acoustic_analyzer import analyze_spectral_f32le
+        try:
+            spectral_features = analyze_spectral_f32le(
+                pcm_f32le, sample_rate=int(rate))
+        except (RuntimeError, ValueError, OverflowError):
+            spectral_features = {'status': 'unavailable', 'sampled_frame_count': 0,
+                'spectral_centroid_hz_p50': None, 'spectral_rolloff85_hz_p50': None,
+                'spectral_flatness_p50': None, 'mfcc_median': None,
+                'hnr_acf_proxy_db_p50': None,
+                'hnr_note': 'Optional spectral analysis unavailable.'}
         warnings=[]
         if duration<3: warnings.append('Amostra curta; grave ao menos 3 segundos de fala contínua.')
         selected_start, _window_length, active_fraction = _reference_window(source)
@@ -413,6 +426,7 @@ def _inspect_voice_reference_uncached(voice: str | Path) -> dict:
                 'reference_quality_components':quality.components,
                 'acoustic_features':acoustic_features,
                 'pitch_features':pitch_features,
+                'spectral_features':spectral_features,
                 'warnings':warnings}
 
 

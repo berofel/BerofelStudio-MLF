@@ -17,7 +17,7 @@ from berofel.services.voice_intelligence.quality_inspector import (
     inspect_generated_wav_with_parakeet,
 )
 from berofel.services.voice_intelligence.acoustic_analyzer import (
-    analyze_pcm_f32le, analyze_pitch_yin_f32le,
+    analyze_pcm_f32le, analyze_pitch_yin_f32le, analyze_spectral_f32le,
 )
 from berofel.services.voice_intelligence.pronunciation_dictionary import (
     PronunciationDictionary, apply_pronunciations,
@@ -383,6 +383,33 @@ class AcousticWindowAnalysisTests(TestCase):
         self.assertEqual(result['status'], 'insufficient_voiced_coverage')
         self.assertIsNone(result['f0_median_hz'])
         self.assertLess(result['voiced_frame_count'], 3)
+
+
+class SpectralAcousticAnalysisTests(TestCase):
+    def test_tone_and_noise_have_distinct_spectral_diagnostics(self):
+        import numpy as np
+        rate=16000
+        time=np.arange(rate*2,dtype=np.float32)/rate
+        tone=(.2*np.sin(2*np.pi*220*time)).astype('<f4')
+        noise=np.random.default_rng(19).normal(0,.2,rate*2).astype('<f4')
+        voiced=analyze_spectral_f32le(tone.tobytes(),sample_rate=rate,max_frames=30)
+        noisy=analyze_spectral_f32le(noise.tobytes(),sample_rate=rate,max_frames=30)
+        self.assertEqual(voiced['status'],'measured')
+        self.assertEqual(voiced['sampled_frame_count'],30)
+        self.assertEqual(len(voiced['mfcc_median']),13)
+        self.assertAlmostEqual(voiced['spectral_centroid_hz_p50'],220,delta=20)
+        self.assertLess(voiced['spectral_flatness_p50'],noisy['spectral_flatness_p50'])
+        self.assertIsNotNone(voiced['hnr_acf_proxy_db_p50'])
+        self.assertGreater(voiced['hnr_acf_proxy_db_p50'],noisy['hnr_acf_proxy_db_p50'])
+        self.assertIn('not calibrated',voiced['hnr_note'])
+
+    def test_silence_is_unvoiced_and_invalid_pcm_is_rejected(self):
+        import numpy as np
+        silent=analyze_spectral_f32le(np.zeros(16000,dtype='<f4').tobytes())
+        self.assertEqual(silent['status'],'unvoiced_or_low_energy')
+        self.assertIsNone(silent['mfcc_median'])
+        with self.assertRaises(ValueError):
+            analyze_spectral_f32le(np.array([np.nan]*16000,dtype='<f4').tobytes())
 
 
 class ParakeetQualityInspectionTests(TestCase):
