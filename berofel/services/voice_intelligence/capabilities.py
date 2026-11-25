@@ -7,8 +7,10 @@ keeps CLI and currently-used HTTP capabilities separate.
 from __future__ import annotations
 
 from hashlib import sha256
+import math
 from pathlib import Path
 import re
+import struct
 import subprocess
 from typing import Callable
 
@@ -19,6 +21,25 @@ def _hash_file(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             value.update(block)
     return value.hexdigest()
+
+
+def _valid_emotion_direction(path: Path) -> bool:
+    """Validate the upstream 1024-float raw direction format without NumPy."""
+    if path.stem.removeprefix("dir_").casefold() not in {
+            "ang", "disgust", "fear", "joy", "sad", "surprise"}:
+        return False
+    try:
+        if path.stat().st_size != 1024 * 4:
+            return False
+        values = struct.iter_unpack("<f", path.read_bytes())
+        norm_squared = 0.0
+        for (value,) in values:
+            if not math.isfinite(value):
+                return False
+            norm_squared += value * value
+        return norm_squared > 1e-12
+    except (OSError, struct.error):
+        return False
 
 
 def inspect_purec_capabilities(executable: str | Path, *,
@@ -51,8 +72,14 @@ def inspect_purec_capabilities(executable: str | Path, *,
                      if re.match(r"^\s*--emo-ref\s", line, re.IGNORECASE)]
     emo_ref_text_lines = [line.casefold() for line in help_text.splitlines()
                           if re.match(r"^\s*--emo-ref-text\s", line, re.IGNORECASE)]
-    asset_dir = Path(emotion_asset_dir).expanduser() if emotion_asset_dir else None
-    emotion_assets = sorted(asset_dir.glob("dir_*.bin")) if asset_dir and asset_dir.is_dir() else []
+    # The binary is launched with cwd=its own directory by the app. Upstream
+    # resolves shared 0.6B directions relative to presets/emovoice there.
+    asset_dir = (Path(emotion_asset_dir).expanduser() if emotion_asset_dir else
+                 binary.parent / "presets" / "emovoice")
+    candidates = sorted(asset_dir.glob("dir_*.bin")) if asset_dir.is_dir() else []
+    emotion_assets = [item for item in candidates if _valid_emotion_direction(item)]
+    invalid_emotion_assets = [item.name for item in candidates
+                              if not _valid_emotion_direction(item)]
     build_match = re.search(r"^\s*build:\s*(.+)$", caps_text, re.MULTILINE | re.IGNORECASE)
     build_id = build_match.group(1).strip() if build_match else "unknown"
     model_hint = "0.6B" if "0.6b" in help_text.casefold() else "unspecified"
@@ -85,6 +112,7 @@ def inspect_purec_capabilities(executable: str | Path, *,
             "int8_precision": ("Talker INT8 + Code Predictor INT8"
                                if "--int8" in flags else None),
             "emotion_direction_files": [item.name for item in emotion_assets],
+            "emotion_direction_files_invalid": invalid_emotion_assets,
         },
         "http_adapter": {
             "profile_is_loaded_at_server_start": True,

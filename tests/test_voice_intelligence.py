@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import math
+import struct
 import subprocess
 import tempfile
 import wave
@@ -240,6 +241,31 @@ class PureCCapabilityTests(TestCase):
             self.assertFalse(manifest['http_adapter']['emotion_by_example_per_request_validated'])
             self.assertFalse(manifest['http_adapter']['emotion_vectors_available'])
             self.assertEqual(manifest['build_id'], 'unknown · AVX2')
+
+    def test_emotion_vectors_are_discovered_and_checked_in_runtime_directory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            executable = Path(folder) / 'qwen_tts.exe'
+            executable.write_bytes(b'fixture executable')
+            directory = Path(folder) / 'presets' / 'emovoice'
+            directory.mkdir(parents=True)
+            (directory / 'dir_joy.bin').write_bytes(
+                struct.pack('<1024f', *([.03125] * 1024)))
+            (directory / 'dir_sad.bin').write_bytes(bytes(4096))
+            (directory / 'dir_unknown.bin').write_bytes(
+                struct.pack('<1024f', *([.03125] * 1024)))
+            (directory / 'dir_fear.bin').write_bytes(b'bad size')
+
+            def runner(command, **_kwargs):
+                if command[-1] == '--help':
+                    return Mock(returncode=0, stdout='--load-voice --emotion-strength',
+                                stderr='')
+                return Mock(returncode=0, stdout='build: local fixture', stderr='')
+
+            manifest = inspect_purec_capabilities(executable, runner=runner)
+            self.assertTrue(manifest['http_adapter']['emotion_vectors_available'])
+            self.assertEqual(manifest['cli']['emotion_direction_files'], ['dir_joy.bin'])
+            self.assertEqual(set(manifest['cli']['emotion_direction_files_invalid']),
+                             {'dir_sad.bin', 'dir_unknown.bin', 'dir_fear.bin'})
 
 
 class ReferenceWindowRankingTests(TestCase):
