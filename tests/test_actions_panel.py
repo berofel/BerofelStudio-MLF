@@ -641,11 +641,17 @@ class ActionsUITests(unittest.TestCase):
             self.assertEqual(panel._eq_clip_id,clip.id)
             slider=panel.eq_sliders['bass_db']
             self.assertTrue(slider.isEnabled())
+            def wait_for_eq_transaction():
+                deadline=time.monotonic()+3.0
+                while panel._eq_transaction and time.monotonic()<deadline:
+                    QTest.qWait(20)
+                self.assertFalse(panel._eq_transaction,
+                    'O debounce do ajuste de voz não concluiu a transação.')
             with patch('berofel.ui.window.generate_narration') as tts:
                 slider.setValue(40)  # controle interno usa décimos de dB
-                QTest.qWait(500)  # margem para o timer de debounce também sob carga da suíte
+                wait_for_eq_transaction()
                 panel.pitch_slider.setValue(30)
-                QTest.qWait(500)
+                wait_for_eq_transaction()
                 panel.speed_slider.setValue(111)
                 self.assertEqual(panel.speed_slider.value(),110)
                 panel.speed_readout.setValue(1.10)
