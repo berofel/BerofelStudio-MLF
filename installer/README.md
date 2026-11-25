@@ -2,10 +2,10 @@
 
 ## Baixar para outro computador
 
-O instalador mais recente fica na página de [Releases do GitHub](https://github.com/berofel/BerofelStudio-MLF/releases).
-O link permanente para o EXE da release estável mais recente é
-[BerofelStudio-Setup-x64.exe](https://github.com/berofel/BerofelStudio-MLF/releases/latest/download/BerofelStudio-Setup-x64.exe).
-Para conferir manualmente, baixe também o `.sha256` correspondente:
+Para testar a versão atual, baixe o instalador da pré-release
+[BerofelStudio 0.10.0-alpha.3](https://github.com/berofel/BerofelStudio-MLF/releases/download/v0.10.0-alpha.3/BerofelStudio-0.10.0-alpha.3-Setup-x64.exe)
+ou abra a [página da Release](https://github.com/berofel/BerofelStudio-MLF/releases/tag/v0.10.0-alpha.3).
+Baixe também o `.sha256` exibido na mesma página para conferir manualmente:
 
 ```powershell
 Get-FileHash .\BerofelStudio-<versão>-Setup-x64.exe -Algorithm SHA256
@@ -17,6 +17,12 @@ os componentes Parakeet TDT v3 ONNX INT8/CPU e Qwen3-TTS para instalar os motore
 com o editor. A opção de atalho da Área de Trabalho fica selecionada por padrão.
 O setup instala por usuário, sem copiar projetos, mídias ou perfis vocais do
 computador que produziu o instalador.
+
+**Aviso:** o endereço `/releases/latest/download/` só funciona depois que
+houver uma Release estável. O GitHub não considera pré-releases alpha como
+`latest`; por isso esse endereço retorna HTTP 404 durante esta fase de testes.
+Quando publicarmos uma versão estável, o link permanente será
+[BerofelStudio-Setup-x64.exe](https://github.com/berofel/BerofelStudio-MLF/releases/latest/download/BerofelStudio-Setup-x64.exe).
 
 Todo setup versionado consulta as Releases públicas antes de alterar o editor.
 Se houver uma versão SemVer mais nova no canal daquele setup, ele baixa o EXE e
