@@ -94,6 +94,75 @@ def calculate_temporal_coverage(words, audio_duration: float | None) -> dict:
     }
 
 
+def inspect_pcm16_wav(path: str | Path, *, block_seconds: float = 1.0) -> dict:
+    """Measure normalized mono PCM16 in bounded blocks (no whole-file load)."""
+    if block_seconds <= 0:
+        raise ValueError("block_seconds precisa ser positivo")
+    square_sum = 0.0
+    peak = clipped = near_silence = count = 0
+    with wave.open(str(path), "rb") as wav:
+        channels, width, rate = wav.getnchannels(), wav.getsampwidth(), wav.getframerate()
+        if channels != 1 or width != 2 or rate <= 0 or wav.getcomptype() != "NONE":
+            raise ValueError("O WAV temporário precisa ser PCM16 mono válido.")
+        frame_block = max(1, int(rate * block_seconds))
+        while True:
+            raw = wav.readframes(frame_block)
+            if not raw:
+                break
+            usable = len(raw) - len(raw) % 2
+            if not usable:
+                continue
+            try:
+                import numpy as np
+            except ImportError:
+                from array import array
+                values = array("h")
+                values.frombytes(raw[:usable])
+                if __import__("sys").byteorder != "little":
+                    values.byteswap()
+                for sample in values:
+                    magnitude = abs(sample)
+                    square_sum += sample * sample
+                    peak = max(peak, magnitude)
+                    clipped += magnitude >= 32760
+                    near_silence += magnitude <= 16
+                count += len(values)
+            else:
+                values = np.frombuffer(raw[:usable], dtype="<i2").astype(np.int32)
+                magnitude = np.abs(values)
+                square_sum += float(np.dot(values.astype(np.float64), values))
+                peak = max(peak, int(magnitude.max(initial=0)))
+                clipped += int(np.count_nonzero(magnitude >= 32760))
+                near_silence += int(np.count_nonzero(magnitude <= 16))
+                count += int(values.size)
+        if not count:
+            raise ValueError("O WAV temporário não contém amostras PCM.")
+        duration = count / rate
+    rms = math.sqrt(square_sum / count) / 32768.0
+    peak_norm = peak / 32768.0
+    rms_dbfs = 20 * math.log10(max(rms, 1e-12))
+    peak_dbfs = 20 * math.log10(max(peak_norm, 1e-12))
+    digitally_silent = peak <= 32  # abaixo de aproximadamente -60 dBFS
+    warnings = []
+    if digitally_silent:
+        warnings.append("O WAV está digitalmente silencioso ou quase silencioso.")
+    if clipped / count >= .001:
+        warnings.append("Há amostras próximas do clipping; confira o áudio manualmente.")
+    if rms_dbfs < -45 and not digitally_silent:
+        warnings.append("O nível médio está baixo; confira o áudio manualmente.")
+    return {
+        "audio_duration_seconds": duration,
+        "audio_rms_dbfs": rms_dbfs,
+        "audio_peak_dbfs": peak_dbfs,
+        "audio_clipped_fraction": clipped / count,
+        "audio_near_silence_fraction": near_silence / count,
+        "audio_sample_count": count,
+        "audio_integrity_method": "bounded_pcm16_rms_peak_clip_v1",
+        "audio_digitally_silent": digitally_silent,
+        "audio_warnings": warnings,
+    }
+
+
 def inspect_generated_wav_with_parakeet(
     audio_path: str | Path, expected_spoken_text: str, *,
     transcriber: Callable | None = None, control=None, stage=None,
@@ -140,29 +209,34 @@ def inspect_generated_wav_with_parakeet(
                                (f" Detalhe: {detail}" if detail else ""))
         if control:
             control.checkpoint()
-        if stage:
-            stage("Parakeet TDT v3 ONNX INT8 · verificando o texto sintetizado")
-        if transcriber is None:
-            from ..parakeet_asr import transcribe_file
-            result = transcribe_file(normalized, threads=threads)
+        audio_metrics = inspect_pcm16_wav(normalized)
+        if audio_metrics["audio_digitally_silent"]:
+            recognized = ""
+            result = {"words": []}
+            verification_skipped_reason = "Parakeet não foi iniciado porque o WAV está silencioso."
         else:
-            result = transcriber(normalized)
-        if control:
-            control.checkpoint()
-        segments = result.get("segments") or []
-        recognized = str(result.get("text") or " ".join(
-            str(segment.get("text") or "") for segment in segments)).strip()
-        try:
-            with wave.open(str(normalized), "rb") as wav:
-                audio_duration = wav.getnframes() / float(wav.getframerate())
-        except (OSError, wave.Error, ZeroDivisionError):
-            audio_duration = None
+            if stage:
+                stage("Parakeet TDT v3 ONNX INT8 · verificando o texto sintetizado")
+            if transcriber is None:
+                from ..parakeet_asr import transcribe_file
+                result = transcribe_file(normalized, threads=threads)
+            else:
+                result = transcriber(normalized)
+            if control:
+                control.checkpoint()
+            segments = result.get("segments") or []
+            recognized = str(result.get("text") or " ".join(
+                str(segment.get("text") or "") for segment in segments)).strip()
+            verification_skipped_reason = None
+        audio_duration = audio_metrics["audio_duration_seconds"]
         temporal = calculate_temporal_coverage(result.get("words"), audio_duration)
         rates = calculate_text_error_rates(expected_spoken_text, recognized)
         return {
             **rates,
             **temporal,
+            **audio_metrics,
             "recognized_text": recognized,
+            "verification_skipped_reason": verification_skipped_reason,
             "asr_model": "Parakeet TDT v3 ONNX INT8",
             "provider": "CPUExecutionProvider",
             "backend": str(result.get("backend") or "onnxruntime-cpu"),

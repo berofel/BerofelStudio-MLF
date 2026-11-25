@@ -1608,16 +1608,26 @@ class NarrationPanel(QScrollArea):
         cer = float(result.get('character_error_rate', 0.0)) * 100
         recognized = str(result.get('recognized_text') or '').strip()
         trailing = result.get('trailing_gap_seconds')
+        audio_warnings = result.get('audio_warnings') or []
+        audio_note = (f"\nÁudio: RMS {float(result.get('audio_rms_dbfs', 0)):.1f} dBFS · "
+                      f"pico {float(result.get('audio_peak_dbfs', 0)):.1f} dBFS · "
+                      f"clipping {float(result.get('audio_clipped_fraction', 0))*100:.2f}%.")
+        if result.get('verification_skipped_reason'):
+            audio_note += f"\n{result['verification_skipped_reason']}"
+        if audio_warnings:
+            audio_note += "\n" + " ".join(str(warning) for warning in audio_warnings)
         timing_note = (f'\nFim reconhecido em {result.get("last_recognized_word_end_seconds"):.2f} s; '
                        f'intervalo restante {float(trailing):.2f} s. Confira o final ouvindo.'
                        if result.get('review_ending') and trailing is not None and
                        result.get('last_recognized_word_end_seconds') is not None else '')
-        self.status.setText(
-            f"Parakeet TDT v3 ONNX INT8/CPU · erro textual estimado: "
-            f"WER {wer:.1f}% · CER {cer:.1f}%. Revisão humana recomendada; "
-            "isso não mede fidelidade da identidade vocal.\n"
-            f"Reconhecido: {recognized or '(nenhuma fala reconhecida)'}"
-            f"{timing_note}")
+        if result.get('verification_skipped_reason'):
+            summary = "Integridade do WAV verificada; comparação textual não executada."
+        else:
+            summary = (f"Parakeet TDT v3 ONNX INT8/CPU · erro textual estimado: "
+                       f"WER {wer:.1f}% · CER {cer:.1f}%. Revisão humana recomendada; "
+                       "isso não mede fidelidade da identidade vocal.\n"
+                       f"Reconhecido: {recognized or '(nenhuma fala reconhecida)'}")
+        self.status.setText(f"{summary}{audio_note}{timing_note}")
 
     def _add_last_to_timeline(self):
         if self.last_audio and Path(self.last_audio).is_file() and self.on_add_last_to_timeline:

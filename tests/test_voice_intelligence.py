@@ -16,7 +16,7 @@ from berofel.services.voice_intelligence.capabilities import inspect_purec_capab
 from berofel.services.voice_intelligence.reference_selector import rank_reference_candidates
 from berofel.services.voice_intelligence.quality_inspector import (
     calculate_temporal_coverage, calculate_text_error_rates,
-    inspect_generated_wav_with_parakeet,
+    inspect_generated_wav_with_parakeet, inspect_pcm16_wav,
 )
 from berofel.services.voice_intelligence.acoustic_analyzer import (
     analyze_pcm_f32le, analyze_pitch_yin_f32le, analyze_spectral_f32le,
@@ -493,7 +493,9 @@ class ParakeetQualityInspectionTests(TestCase):
             audio.write_bytes(b'RIFF' + b'0' * 64)
             seen = {}
             def ffmpeg_runner(command, **_kwargs):
-                Path(command[-1]).write_bytes(b'RIFF' + b'0' * 64)
+                with wave.open(command[-1], 'wb') as wav:
+                    wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(16000)
+                    wav.writeframes(struct.pack('<h', 4000) * 16000)
                 return Mock(returncode=0, stdout='', stderr='')
             def parakeet(path):
                 seen['path'] = Path(path)
@@ -508,8 +510,44 @@ class ParakeetQualityInspectionTests(TestCase):
             self.assertEqual(result['provider'], 'CPUExecutionProvider')
             self.assertEqual(result['asr_model'], 'Parakeet TDT v3 ONNX INT8')
             self.assertTrue(result['review_required'])
+            self.assertAlmostEqual(result['audio_duration_seconds'], 1.0)
+            self.assertLess(result['audio_rms_dbfs'], 0)
+            self.assertFalse(result['audio_digitally_silent'])
+            self.assertIsNone(result['verification_skipped_reason'])
             self.assertFalse(seen['path'].exists())
             self.assertEqual(len(stages), 2)
+
+    def test_silent_output_is_reported_and_skips_parakeet(self):
+        with tempfile.TemporaryDirectory() as folder:
+            audio = Path(folder) / 'voice.wav'
+            audio.write_bytes(b'RIFF' + b'0' * 64)
+            calls = []
+            def ffmpeg_runner(command, **_kwargs):
+                with wave.open(command[-1], 'wb') as wav:
+                    wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(16000)
+                    wav.writeframes(b'\x00\x00' * 3200)
+                return Mock(returncode=0, stdout='', stderr='')
+            result = inspect_generated_wav_with_parakeet(audio, 'fala esperada',
+                ffmpeg='ffmpeg', runner=ffmpeg_runner,
+                transcriber=lambda path: calls.append(path))
+            self.assertEqual(calls, [])
+            self.assertTrue(result['audio_digitally_silent'])
+            self.assertIn('Parakeet não foi iniciado', result['verification_skipped_reason'])
+            self.assertEqual(result['recognized_text'], '')
+
+    def test_pcm16_inspector_reports_clipping_and_uses_bounded_reads(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'clip.wav'
+            samples = [0, 1000, 32767, -32768, 16]
+            with wave.open(str(path), 'wb') as wav:
+                wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(10)
+                wav.writeframes(struct.pack('<5h', *samples))
+            result = inspect_pcm16_wav(path, block_seconds=.2)
+            self.assertEqual(result['audio_sample_count'], 5)
+            self.assertEqual(result['audio_duration_seconds'], .5)
+            self.assertAlmostEqual(result['audio_clipped_fraction'], .4)
+            self.assertFalse(result['audio_digitally_silent'])
+            self.assertTrue(any('clipping' in warning for warning in result['audio_warnings']))
 
 
 class NarrationNormalizationIntegrationTests(TestCase):
