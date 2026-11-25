@@ -1,5 +1,46 @@
 # Instalador único do BerofelStudio para Windows
 
+## Baixar para outro computador
+
+O instalador de teste fica na página de [Releases do GitHub](https://github.com/berofel/BerofelStudio-MLF/releases).
+Baixe `BerofelStudio-<versão>-Setup-x64.exe` e o arquivo `.sha256` da mesma
+versão. No PowerShell, confira o download antes de abrir:
+
+```powershell
+Get-FileHash .\BerofelStudio-<versão>-Setup-x64.exe -Algorithm SHA256
+Get-Content .\BerofelStudio-<versão>-Setup-x64.exe.sha256
+```
+
+Os valores SHA-256 precisam ser iguais. Execute o EXE e mantenha selecionados
+os componentes Faster-Whisper e Qwen3-TTS para instalar os motores de IA junto
+com o editor. A opção de atalho da Área de Trabalho fica selecionada por padrão.
+O setup instala por usuário, sem copiar projetos, mídias ou perfis vocais do
+computador que produziu o instalador.
+
+## O que significa “instalador único”
+
+É um único EXE que instala o aplicativo e automatiza a preparação das
+dependências. A instalação inicial precisa de internet para obter Python,
+pacotes, FFmpeg e os componentes de IA selecionados; o usuário não precisa
+executar scripts separados. Depois do download dos modelos, os motores locais
+funcionam offline. Este artefato **não é um instalador offline autocontido**.
+
+Os pesos do Qwen e outros modelos não estão embutidos. Além de serem grandes e
+terem licenças próprias, o Qwen/Torch local ocupa vários GiB; o computador de
+desenvolvimento mediu 6,30 GiB na pasta isolada de Qwen e 1,88 GiB nos modelos
+locais de análise. Esses números são uma referência desta máquina, não uma
+garantia de tamanho para outras versões. GitHub limita cada arquivo de Release
+a menos de 2 GiB, por isso o EXE busca os componentes diretamente das fontes
+configuradas e verifica os arquivos conforme os instaladores do projeto. O
+build também falha se pesos de modelos aparecerem no pacote ou se o EXE chegar
+ao limite de tamanho do GitHub.
+
+O setup ainda não é assinado digitalmente pelo Berofel Studio; o Windows pode
+mostrar avisos de SmartScreen. Antes de vender ou divulgar como versão pronta
+para produção, validar a instalação limpa em outra máquina, revisar as
+licenças de Qt/PySide, FFmpeg, bibliotecas e pesos dos modelos, e providenciar
+assinatura de código própria.
+
 O artefato publicado será `BerofelStudio-<versão>-Setup-x64.exe`. Ele instala
 o código e os recursos da versão, cria atalhos no Menu Iniciar e (marcado por
 padrão) na Área de Trabalho, registra a desinstalação por usuário e prepara o

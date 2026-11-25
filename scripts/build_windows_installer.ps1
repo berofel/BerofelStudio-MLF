@@ -55,6 +55,36 @@ try {
         Remove-Item -LiteralPath $testsDirectory -Recurse -Force
     }
 
+    $requiredPayload = @(
+        'main.py',
+        'ABRIR_BEROFELSTUDIO.vbs',
+        'assets\brand\berofel_studio_mark.svg',
+        'assets\brand\berofel_studio.ico',
+        'requirements.txt',
+        'requirements-core.txt',
+        'scripts\instalar_windows.ps1',
+        'scripts\instalar_ffmpeg.ps1',
+        'scripts\instalar_ia.ps1',
+        'scripts\instalar_qwen3_tts_local.ps1',
+        'scripts\diagnostico_motor.py',
+        'scripts\verificar.py'
+    )
+    foreach ($relativePath in $requiredPayload) {
+        $payloadPath = Join-Path $stageFull $relativePath
+        if (-not (Test-Path -LiteralPath $payloadPath -PathType Leaf)) {
+            throw "O pacote Git não contém um arquivo necessário à instalação: $relativePath"
+        }
+    }
+
+    $forbiddenWeights = Get-ChildItem -LiteralPath $stageFull -Recurse -File |
+        Where-Object { $_.Extension.ToLowerInvariant() -in @(
+            '.gguf', '.safetensors', '.pt', '.pth', '.ckpt', '.onnx', '.tflite'
+        ) }
+    if ($forbiddenWeights) {
+        $names = ($forbiddenWeights | Select-Object -First 5 -ExpandProperty Name) -join ', '
+        throw "O snapshot contém pesos de modelo que não podem ser distribuídos no instalador: $names"
+    }
+
     $script = Join-Path $stageFull 'installer\BerofelStudio.nsi'
     if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
         throw "O script NSIS não está no staging limpo: $script"
@@ -75,6 +105,10 @@ try {
     if ($compilerExitCode -ne 0) { throw "NSIS encerrou com código $compilerExitCode." }
     $installer = Join-Path $OutputDirectory "BerofelStudio-$version-Setup-x64.exe"
     if (-not (Test-Path -LiteralPath $installer)) { throw 'O executável do instalador não foi criado.' }
+    $installerSize = (Get-Item -LiteralPath $installer).Length
+    if ($installerSize -ge 2GB) {
+        throw 'O instalador ultrapassa o limite de arquivo do GitHub Releases. Pesos grandes devem ser baixados pelo bootstrapper.'
+    }
     $hash = Get-FileHash -LiteralPath $installer -Algorithm SHA256
     Set-Content -LiteralPath ($installer + '.sha256') -Encoding ascii -Value ("{0}  {1}" -f $hash.Hash.ToLowerInvariant(), (Split-Path -Leaf $installer))
     Write-Host "Instalador: $installer"

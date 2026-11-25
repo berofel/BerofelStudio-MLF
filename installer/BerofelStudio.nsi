@@ -62,7 +62,7 @@ Section "Faster-Whisper Base, Silero e corretor pt-BR (~150 MB)" SEC_WHISPER
   StrCpy $InstallWhisperBase " -InstallWhisperBase"
 SectionEnd
 
-Section "Qwen3-TTS Base 0.6B (~2,5 GB; requer internet e espaço em disco)" SEC_QWEN3
+Section "Qwen3-TTS Base 0.6B (modelo ~2,5 GB + runtime; requer internet e vários GB livres)" SEC_QWEN3
   StrCpy $InstallQwen3 " -InstallQwen3"
 SectionEnd
 

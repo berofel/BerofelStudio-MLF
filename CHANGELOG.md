@@ -1,5 +1,8 @@
 # Preparação do instalador Windows único — 24/11/2026
 
+- Preparação da prévia `0.10.0-alpha.2`: a janela Qt agora prefere o mesmo ICO multirresolução que identifica o instalador e os atalhos do Windows; o cabeçalho continua renderizando o SVG-fonte.
+- O build do instalador verifica se os scripts/dependências essenciais estão no snapshot e recusa empacotar pesos de IA ou gerar um EXE acima do limite de publicação do GitHub Releases.
+- Documentado o fluxo para baixar e conferir o SHA-256, os requisitos de internet/modelos e o estado ainda não assinado do instalador.
 - Fonte do ícone segue o vetor existente `berofel_studio_mark.svg`, igual ao símbolo da referência do usuário; adicionado ícone Windows multi-resolução, ícone da janela Qt e atalhos de desktop/Menu Iniciar no instalador.
 - Criado instalador NSIS por usuário, bootstrap idempotente do editor, dependências fixadas, FFmpeg validado por SHA-256 e seleção de Whisper Base/Silero e Qwen3-TTS Base.
 - Criado workflow GitHub para compilar no Windows, publicar EXE+SHA-256 em Releases via tag e anexar artefato em execução manual. NSIS usa o compressor zlib para manter uma licença compatível com distribuição comercial.
