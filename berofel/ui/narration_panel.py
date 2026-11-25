@@ -46,7 +46,9 @@ class NarrationPanel(QScrollArea):
         self.on_use_transcript = None
         self.on_prepare_voice = None
         self.on_transcribe_reference = None
+        self.on_verify_last = None
         self.last_audio = ''
+        self.last_spoken_text = ''
         self.audio_history=[]
         self._voice_reference_quality_cache={}
         self._voice_reference_inspections={}
@@ -380,6 +382,13 @@ class NarrationPanel(QScrollArea):
         self.listen.setEnabled(False)
         self.listen.clicked.connect(self._listen)
         layout.addWidget(self.listen)
+        self.verify_last=QPushButton('✓ Verificar texto com Parakeet local')
+        self.verify_last.setEnabled(False)
+        self.verify_last.setToolTip(
+            'Transcreve o WAV gerado com Parakeet TDT v3 ONNX INT8/CPU e compara '
+            'o texto falado. É opcional e não avalia identidade vocal.')
+        self.verify_last.clicked.connect(self._verify_last)
+        layout.addWidget(self.verify_last)
         self.listen_previous=QPushButton('♫ Ouvir geração anterior')
         self.listen_previous.setEnabled(False)
         self.listen_previous.clicked.connect(self._listen_previous)
@@ -393,6 +402,7 @@ class NarrationPanel(QScrollArea):
             (self.generate_file,'♬ Gerar somente o WAV','♬ Gerar WAV'),
             (self.add_last,'＋ Adicionar última narração à timeline','＋ Adicionar WAV'),
             (self.listen,'♫ Ouvir a última narração','♫ Ouvir narração'),
+            (self.verify_last,'✓ Verificar texto com Parakeet local','✓ Verificar com Parakeet'),
             (self.listen_previous,'♫ Ouvir geração anterior','♫ Ouvir anterior'),
         ])
         self.status = QLabel('O Qwen3 Base é carregado uma vez e mantido aquecido durante a sessão do editor.')
@@ -1348,13 +1358,16 @@ class NarrationPanel(QScrollArea):
     def busy(self, busy: bool):
         self.insert.setDisabled(busy)
         self.generate_file.setDisabled(busy)
+        self.verify_last.setDisabled(bool(busy) or not bool(self.last_spoken_text))
         if busy:
             self.status.setText('Qwen3-TTS em processo local isolado; o modelo é reutilizado durante esta sessão.')
 
     def set_result(self, path: str, duration: float, cache_hit: bool, engine: str='',
                    threads: int | None = None, title: str='',
-                   reference_window: dict | None=None, conditioning_mode: str=''):
+                   reference_window: dict | None=None, conditioning_mode: str='',
+                   source_text: str='', spoken_text: str=''):
         self.last_audio = path
+        self.last_spoken_text = str(spoken_text or source_text or '')
         self.last_duration = float(duration)
         self.last_title = str(title or Path(path).stem)
         mode={'qwen3-tts-local':'Original','qwen3-tts-native-q4':'Turbo · Q4 · 6 threads',
@@ -1366,6 +1379,7 @@ class NarrationPanel(QScrollArea):
             self.audio_history=self.audio_history[-8:]
         self.listen_previous.setEnabled(len(self.audio_history)>1)
         self.listen.setEnabled(True)
+        self.verify_last.setEnabled(bool(self.last_spoken_text))
         self.add_last.setEnabled(True)
         reference_note=''
         if engine=='qwen3-tts-local' and reference_window:
@@ -1378,6 +1392,26 @@ class NarrationPanel(QScrollArea):
         self.status.setText(f'WAV pronto · {mode} ({duration:.1f}s). ' +
                             ('Reaproveitado do cache.' if cache_hit else 'Salvo no cache.') +
                             reference_note+'\n' + str(Path(path)))
+
+    def _verify_last(self):
+        if (self.last_audio and Path(self.last_audio).is_file() and
+                self.last_spoken_text and self.on_verify_last):
+            self.verify_last.setDisabled(True)
+            self.status.setText('Verificando o texto do WAV com Parakeet TDT v3 ONNX INT8/CPU…')
+            self.on_verify_last(self.last_audio, self.last_spoken_text)
+
+    def set_quality_check_busy(self, busy: bool):
+        self.verify_last.setDisabled(bool(busy) or not bool(self.last_spoken_text))
+
+    def set_quality_result(self, result: dict):
+        wer = float(result.get('word_error_rate', 0.0)) * 100
+        cer = float(result.get('character_error_rate', 0.0)) * 100
+        recognized = str(result.get('recognized_text') or '').strip()
+        self.status.setText(
+            f"Parakeet TDT v3 ONNX INT8/CPU · erro textual estimado: "
+            f"WER {wer:.1f}% · CER {cer:.1f}%. Revisão humana recomendada; "
+            "isso não mede fidelidade da identidade vocal.\n"
+            f"Reconhecido: {recognized or '(nenhuma fala reconhecida)'}")
 
     def _add_last_to_timeline(self):
         if self.last_audio and Path(self.last_audio).is_file() and self.on_add_last_to_timeline:

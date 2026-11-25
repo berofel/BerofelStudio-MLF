@@ -476,7 +476,9 @@ class QwenLocalCloneTests(unittest.TestCase):
         self.assertGreaterEqual(start,40.0)
         self.assertAlmostEqual(start,40.0)
         self.assertEqual(active,1.0)
-        self.assertTrue(any('silencedetect' in arg for arg in run.call_args.args[0]))
+        self.assertTrue(any('silencedetect' in arg
+                            for call in run.call_args_list
+                            for arg in call.args[0]))
 
     def test_real_ffmpeg_scan_selects_later_voice_activity_without_changing_source(self):
         import numpy as np

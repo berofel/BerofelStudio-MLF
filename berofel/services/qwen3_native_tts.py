@@ -25,6 +25,7 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 
 from .ai_cache import cache_root, digest, write_json
+from .voice_intelligence.text_normalizer import NORMALIZER_VERSION
 from .narration_service import (LANGUAGES, NarrationRequest, persistent_folder,
                                 _process_flags, qwen_output_token_budget, validate_request,
                                 validate_clone_conditioning)
@@ -411,7 +412,8 @@ def generate_native_clone(request: NarrationRequest,progress=None,runner=None,
             request.reference_text.strip(),model,control,stage,threads)
     if stage:stage('Qwen Turbo Q4 • usando modelo nativo já carregado')
     voice_hash=hashlib.sha256(reference.read_bytes()).hexdigest()
-    key=digest({'engine':request.engine,'voice_sha256':voice_hash,'text':request.text.strip(),
+    key=digest({'engine':request.engine,'text_normalizer_version':NORMALIZER_VERSION,
+        'voice_sha256':voice_hash,'text':request.text.strip(),
         'language':request.language,'model':_fingerprint(exe,model,tokenizer),
         'threads':threads,
         'embedding':embedding.name})

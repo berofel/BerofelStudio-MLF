@@ -13,6 +13,7 @@ import threading
 import time
 
 from .ai_cache import cache_root, source_identity, digest, write_json
+from .voice_intelligence.text_normalizer import NORMALIZER_VERSION
 from .narration_service import (NarrationRequest, persistent_folder,
                                 _process_flags, validate_clone_conditioning)
 
@@ -314,7 +315,8 @@ def generate_local_clone(request: NarrationRequest, progress=None, runner=None,
     if request.reference_text.strip():
         from .audio_reference import validate_reference_transcript
         validate_reference_transcript(request.reference_text,window_duration)
-    key=digest({'engine':'qwen3-tts-local','reference_preparation':REFERENCE_PREPARATION_VERSION,
+    key=digest({'engine':'qwen3-tts-local','text_normalizer_version':NORMALIZER_VERSION,
+        'reference_preparation':REFERENCE_PREPARATION_VERSION,
         'reference_window':(window_start,window_duration),
         'voice':_voice_fingerprint(reference),
         'model':_model_fingerprint(model),'text':request.text.strip(),

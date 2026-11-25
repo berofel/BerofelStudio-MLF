@@ -1,5 +1,6 @@
 ## Próxima atualização (ainda não publicada)
 
+- Voice Intelligence 2.0 (etapa inicial): normalização de fala PT-BR sem alterar o texto de origem/legendas, seleção de referência vocal com ranking VAD e análise PCM limitada aos melhores candidatos, chaves de cache versionadas e inspeção de texto da narração opcional usando exclusivamente Parakeet TDT v3 ONNX INT8/CPU. A validação real de áudio e GUI segue pendente neste ambiente sem ONNX Runtime/onnx-asr, NumPy/SciPy e PySide6.
 - Narração longa: removido o teto de 2.048 tokens por solicitação do Qwen Original; textos extensos são divididos em limites de frase/palavra e unidos em um WAV único, sem impor limite de caracteres no campo. A rota Pure C usa trechos sequenciais por não expor orçamento de tokens na API empacotada.
 - A tela de narração explica que Qwen3-TTS Base não inclui locutores pré-gravados; perfis autorizados são locais e não são distribuídos pelo instalador.
 - O cronômetro da limpeza automática agora encerra quando a análise retorna, antes da janela de revisão. A aplicação posterior das sugestões continua sendo uma tarefa cronometrada separadamente.

@@ -3,20 +3,65 @@ from __future__ import annotations
 
 from pathlib import Path
 from functools import lru_cache
+from array import array
+import math
 import re
+import sys
 import tempfile
 import subprocess
 import threading
 from bisect import bisect_right
-
-import numpy as np
-from scipy.io import wavfile
 
 _PROMPT_MAX_SECONDS = 30.0
 REFERENCE_PREPARATION_VERSION = 5
 _SILENCE_THRESHOLD_DB = -38
 _SILENCE_MIN_SECONDS = .35
 _REFERENCE_SCAN_LOCK=threading.RLock()
+
+
+def _candidate_acoustic_metrics(source: Path, binary: str,
+                                start: float, duration: float) -> dict | None:
+    """Measure a bounded candidate window without retaining the whole source."""
+    command = [binary, '-hide_banner', '-loglevel', 'error', '-nostdin',
+        '-ss', f'{start:.3f}', '-i', str(source), '-map', '0:a:0', '-vn',
+        '-t', f'{duration:.3f}', '-ac', '1', '-ar', '16000', '-f', 'f32le',
+        '-acodec', 'pcm_f32le', 'pipe:1']
+    try:
+        result = subprocess.run(command, capture_output=True, timeout=max(30, int(duration * 3)),
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    # A few test/platform runners may not expose captured stdout. Acoustic
+    # ranking is an optional refinement, so missing PCM must fall back to the
+    # VAD ordering rather than fail voice preparation.
+    pcm = getattr(result, 'stdout', b'') or b''
+    if result.returncode or len(pcm) < 16000 * 4:
+        return None
+    usable = len(pcm) - len(pcm) % 4
+    samples = array('f')
+    samples.frombytes(pcm[:usable])
+    if not samples:
+        return None
+    if sys.byteorder != 'little':
+        samples.byteswap()
+    square_sum = 0.0
+    peak = 0.0
+    quiet = clipped = 0
+    for sample in samples:
+        value = float(sample)
+        if not math.isfinite(value):
+            return None
+        absolute = abs(value)
+        square_sum += value * value
+        peak = max(peak, absolute)
+        quiet += absolute < .005
+        clipped += absolute >= .999
+    rms = math.sqrt(square_sum / len(samples))
+    return {'rms_dbfs': 20 * math.log10(max(rms, 1e-12)),
+            'peak_dbfs': 20 * math.log10(max(peak, 1e-12)),
+            'near_silence_fraction': quiet / len(samples),
+            'clipped_fraction': clipped / len(samples),
+            'sample_count': len(samples)}
 
 
 @lru_cache(maxsize=32)
@@ -95,9 +140,27 @@ def _best_reference_window(path: str, size: int, mtime_ns: int) -> tuple[float, 
             index+=1
         return min(length,total)
 
-    chosen, length = max(candidates, key=lambda item: (
-        active_seconds(*item), active_seconds(*item) / item[1], item[1], -item[0]))
-    return chosen, length, active_seconds(chosen, length) / length
+    candidate_records = [{'start': start, 'duration': length,
+        'active_seconds': active_seconds(start, length),
+        'active_fraction': active_seconds(start, length) / length}
+        for start, length in candidates]
+    # Cheap VAD-only rank narrows acoustic scans to a few locations in a long
+    # file. The final rank uses RMS, clipping and near-silence as well, so a
+    # noisy 30-second window cannot win merely by being long.
+    from .voice_intelligence.reference_selector import rank_reference_candidates
+    preliminary = rank_reference_candidates(candidate_records)
+    shortlist = preliminary[:8]
+    acoustics = {}
+    for item in shortlist:
+        metrics = _candidate_acoustic_metrics(source, binary, item.start, item.duration)
+        if metrics is not None:
+            acoustics[(item.start, item.duration)] = metrics
+    # Only compare acoustic scores on candidates actually measured; otherwise
+    # unmeasured windows would receive an artificial advantage from absent
+    # penalty terms. If every PCM scan failed, retain the VAD-only ranking.
+    ranked = rank_reference_candidates(shortlist, acoustics) if acoustics else preliminary
+    selected = ranked[0]
+    return selected.start, selected.duration, selected.active_fraction
 
 
 def _reference_window(source: Path) -> tuple[float, float, float]:
@@ -121,6 +184,7 @@ def validate_reference_transcript(text: str, duration_seconds: float) -> None:
 def _silero_speech_regions(source: Path, binary: str, duration: float):
     """Use the already-installed Silero VAD in bounded chunks when available."""
     try:
+        import numpy as np
         from .parakeet_asr import detect_speech, load_vad
         vad=load_vad(threads=1)
     except (ImportError,FileNotFoundError,RuntimeError):
@@ -232,6 +296,8 @@ def inspect_voice_reference(voice: str | Path) -> dict:
         raise FileNotFoundError('A gravação de referência não foi encontrada.')
     with tempfile.TemporaryDirectory(prefix='bfs_voice_check_') as folder:
         normalized,_=prepare_audio_prompt(source,Path(folder)/'reference.wav')
+        import numpy as np
+        from scipy.io import wavfile
         rate,pcm=wavfile.read(normalized)
         data=np.asarray(pcm,dtype=np.float64).reshape(-1)
         if data.size==0 or not np.isfinite(data).all():
@@ -259,10 +325,20 @@ def inspect_voice_reference(voice: str | Path) -> dict:
         if rms_dbfs<-35: warnings.append('Nível muito baixo; aumente o volume da gravação antes de clonar.')
         if clipped>.01: warnings.append('Há clipping perceptível; reduza o ganho e grave novamente se possível.')
         if silence>.50: warnings.append('Mais de 50% do trecho está quase silencioso; escolha uma fala mais contínua ou grave uma amostra com menos pausas.')
+        from .voice_intelligence.reference_selector import score_reference_candidate
+        quality = score_reference_candidate({
+            'start': float(selected_start), 'duration': duration,
+            'active_fraction': float(active_fraction),
+            'active_seconds': duration * float(active_fraction)}, {
+                'rms_dbfs': rms_dbfs, 'clipped_fraction': clipped,
+                'near_silence_fraction': silence})
         return {'duration':duration,'source_duration':source_duration,
                 'selected_start':float(selected_start),'active_fraction':float(active_fraction),
                 'sample_rate':int(rate),'rms_dbfs':float(rms_dbfs),
                 'audible_signal_seconds':audible_signal_seconds,
                 'peak_dbfs':float(20*np.log10(max(peak,1e-12))),
                 'clipped_fraction':clipped,'silence_fraction':silence,
+                'reference_quality_score':round(quality.score,4),
+                'reference_quality_confidence':quality.confidence,
+                'reference_quality_components':quality.components,
                 'warnings':warnings}

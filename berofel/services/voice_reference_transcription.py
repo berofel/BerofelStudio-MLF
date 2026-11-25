@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from . import audio_reference, ffmpeg
 
 def transcribe_voice_reference(reference: str, *, runner=None, progress=None,
                                control=None, stage=None) -> dict:
@@ -24,12 +25,10 @@ def transcribe_voice_reference(reference: str, *, runner=None, progress=None,
     if stage:
         stage('Analisando a gravação inteira para localizar a janela vocal')
 
-    from .audio_reference import _reference_window
-    start, duration, active_fraction = _reference_window(source)
+    start, duration, active_fraction = audio_reference._reference_window(source)
     if duration <= 0:
         raise ValueError('Não foi possível encontrar uma janela de áudio para transcrever.')
 
-    from .ffmpeg import ffmpeg_path
     from .model_paths import parakeet_tdt_model_dir
     model_dir = parakeet_tdt_model_dir()
     if not model_dir.is_dir() or not any(model_dir.glob('*.onnx')):
@@ -40,7 +39,7 @@ def transcribe_voice_reference(reference: str, *, runner=None, progress=None,
 
     with tempfile.TemporaryDirectory(prefix='bfs_voice_ref_asr_') as temp:
         wav_path = Path(temp) / 'reference_window.wav'
-        command = [ffmpeg_path(), '-hide_banner', '-loglevel', 'error',
+        command = [ffmpeg.ffmpeg_path(), '-hide_banner', '-loglevel', 'error',
                    '-nostdin', '-y', '-ss', f'{start:.4f}', '-i', str(source),
                    '-map', '0:a:0', '-vn', '-t', f'{duration:.4f}',
                    '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', str(wav_path)]

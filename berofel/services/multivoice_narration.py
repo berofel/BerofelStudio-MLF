@@ -19,6 +19,7 @@ import uuid
 import wave
 
 from .ai_cache import digest
+from .voice_intelligence.text_normalizer import NORMALIZER_VERSION
 from .narration_service import NarrationRequest, persistent_folder, generate_narration
 from .process_control import ProcessCancelled
 
@@ -27,7 +28,7 @@ SCRIPT_SCHEMA_VERSION = 1
 MAX_VOICES = 10
 DEFAULT_PAUSE_MS = 200
 MODEL_ID = 'Qwen/Qwen3-TTS-12Hz-0.6B-Base'
-GENERATION_CACHE_SCHEMA = 1
+GENERATION_CACHE_SCHEMA = 2
 _VOICE_IDS = tuple(f'V{i}' for i in range(1, MAX_VOICES + 1))
 _HEADER = re.compile(
     r'^\[(?P<number>\d+)\s*\|\s*(?P<voice>V(?:10|[1-9]))'
@@ -330,6 +331,7 @@ def script_generation_fingerprint(script: MultiVoiceScript) -> str:
     return digest({
         'id': script.id,
         'engine': script.engine_id,
+        'text_normalizer_version': NORMALIZER_VERSION,
         'pause_ms': script.pause_ms,
         'voices': {key: dict(script.voices[key])
                    for key in sorted(used_voice_ids) if key in script.voices},
@@ -342,7 +344,8 @@ def script_generation_fingerprint(script: MultiVoiceScript) -> str:
 def synthesis_cache_key(line: DialogueLine, profile: Mapping, engine_id: str,
                         thread_count: int, engine_fingerprint: str = '',
                         voice_fingerprint: str = '') -> str:
-    return digest({'schema': GENERATION_CACHE_SCHEMA, 'model': MODEL_ID,
+    return digest({'schema': GENERATION_CACHE_SCHEMA,
+                   'text_normalizer_version': NORMALIZER_VERSION, 'model': MODEL_ID,
                    'text': line.text, 'voice': voice_fingerprint or profile_fingerprint(profile),
                    'engine': engine_id,
                    'threads': int(thread_count), 'engine_fingerprint': engine_fingerprint,

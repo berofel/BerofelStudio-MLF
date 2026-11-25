@@ -894,6 +894,7 @@ class MainWindow(QMainWindow):
         self.narration_panel.multivoice_panel.on_export=self.export_multivoice_script
         self.narration_panel.on_prepare_voice=self.prepare_narration_voice
         self.narration_panel.on_transcribe_reference=self.transcribe_narration_reference
+        self.narration_panel.on_verify_last=self.verify_last_narration
         self.narration_panel.on_use_transcript=self.use_selected_transcript
         self.narration_panel.on_voice_eq_begin=self.begin_voice_eq_edit
         self.narration_panel.on_voice_eq_change=self.apply_voice_eq_edit
@@ -1503,7 +1504,8 @@ class MainWindow(QMainWindow):
                 conditioning_mode='speaker-embedding-only'
             self.narration_panel.set_result(path,duration,result['cache_hit'],
                 result.get('engine',''),result.get('threads'),result.get('title',''),
-                result.get('reference_window'),conditioning_mode)
+                result.get('reference_window'),conditioning_mode,
+                result.get('source_text',''),result.get('spoken_text',''))
             self._register_narration_media(path)
             if add_to_timeline:
                 self.add_last_narration_to_timeline(path,duration,result['title'],position)
@@ -1518,6 +1520,33 @@ class MainWindow(QMainWindow):
             self._ai_busy=False
             self.narration_panel.busy(False)
         task.signals.finished.connect(finish)
+
+    def verify_last_narration(self, audio_path: str, expected_text: str):
+        """Explicitly verify a completed narration with local Parakeet TDT."""
+        panel=self.narration_panel
+        if self._ai_busy or self.active_task is not None:
+            QMessageBox.information(self,'Verificar narração',
+                'Aguarde a tarefa atual terminar antes de verificar o áudio com Parakeet.')
+            panel.set_quality_check_busy(False)
+            return
+        from berofel.services.voice_intelligence.quality_inspector import (
+            inspect_generated_wav_with_parakeet,
+        )
+        def inspect(path,text,control=None,stage=None):
+            return inspect_generated_wav_with_parakeet(
+                path,text,control=control,stage=stage,threads=4)
+        def ready(result):
+            panel.set_quality_result(result)
+            self.statusBar().showMessage(
+                f"Verificação Parakeet concluída · WER {result['word_error_rate']:.1%} · "
+                f"CER {result['character_error_rate']:.1%}; revise a transcrição e o áudio.")
+        task=self._task(inspect,ready,audio_path,expected_text,
+            label='Verificar texto da narração · Parakeet TDT v3 ONNX INT8/CPU',
+            finish_before_success=True)
+        if task is None:
+            panel.set_quality_check_busy(False)
+            return
+        task.signals.finished.connect(lambda:panel.set_quality_check_busy(False))
 
     def _refresh_media_library(self):
         """Refresh visible media references without stopping the transport."""

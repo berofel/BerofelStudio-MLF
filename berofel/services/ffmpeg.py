@@ -5,14 +5,21 @@ import subprocess
 import tempfile
 from functools import lru_cache
 from pathlib import Path
-import imageio_ffmpeg
 
 
 def ffmpeg_path():
     bundled = Path(__file__).resolve().parents[2] / 'tools' / 'ffmpeg' / 'ffmpeg.exe'
     if os.name == 'nt' and bundled.is_file():
         return str(bundled)
-    return imageio_ffmpeg.get_ffmpeg_exe()
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        from shutil import which
+        binary = which('ffmpeg')
+        if binary:
+            return binary
+        raise RuntimeError('FFmpeg não foi encontrado no pacote, no PATH nem em imageio-ffmpeg.')
 
 
 @lru_cache(maxsize=24)

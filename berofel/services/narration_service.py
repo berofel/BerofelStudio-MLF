@@ -12,6 +12,7 @@ import wave
 from typing import Callable
 
 from .ai_cache import digest
+from .voice_intelligence.text_normalizer import NORMALIZER_VERSION, normalize_pt_br
 
 LANGUAGES = (
     # Qwen3-TTS exposes the language token Portuguese (no dialect-specific
@@ -254,24 +255,37 @@ def generate_narration(request: NarrationRequest, progress: Callable | None = No
     """Generate a non-destructive, local WAV using the sole supported TTS engine."""
     if request.engine not in _TEXT_CHUNK_CHARS:
         raise ValueError('O BerofelStudio usa exclusivamente Qwen3-TTS Base para narração.')
+    source_text = request.text
+    speech_text = (normalize_pt_br(source_text).spoken
+                   if request.language == 'portuguese' else source_text.strip())
+    if speech_text != request.text:
+        from dataclasses import replace
+        request = replace(request, text=speech_text)
     chunks = _split_narration_text(request.text, _TEXT_CHUNK_CHARS[request.engine])
     if len(chunks) > 1:
         validate_clone_conditioning(request)
         validate_request(request.text, request.voice, request.language, request.consent)
-        return _generate_long_narration(request, chunks, progress, runner,
-                                        control, stage, audio_chunk)
+        result = _generate_long_narration(request, chunks, progress, runner,
+                                          control, stage, audio_chunk)
+        result.update({'source_text': source_text, 'spoken_text': speech_text,
+                       'text_normalizer_version': NORMALIZER_VERSION})
+        return result
     if request.engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced'):
         from .qwen3_native_tts import generate_native_clone
-        return generate_native_clone(request,progress=progress,runner=runner,
-                                     control=control,stage=stage,
-                                     audio_chunk=audio_chunk)
-    if request.engine in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8'):
+        result = generate_native_clone(request,progress=progress,runner=runner,
+                                       control=control,stage=stage,
+                                       audio_chunk=audio_chunk)
+    elif request.engine in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8'):
         from .qwen3_purec_tts import generate_purec_clone
-        return generate_purec_clone(request,progress=progress,runner=runner,
-                                    control=control,stage=stage,
-                                    audio_chunk=audio_chunk)
-    validate_clone_conditioning(request)
-    validate_request(request.text,request.voice,request.language,request.consent)
-    from .qwen3_tts_local import generate_local_clone
-    return generate_local_clone(request,progress=progress,runner=runner,
-                                control=control,stage=stage)
+        result = generate_purec_clone(request,progress=progress,runner=runner,
+                                      control=control,stage=stage,
+                                      audio_chunk=audio_chunk)
+    else:
+        validate_clone_conditioning(request)
+        validate_request(request.text,request.voice,request.language,request.consent)
+        from .qwen3_tts_local import generate_local_clone
+        result = generate_local_clone(request,progress=progress,runner=runner,
+                                      control=control,stage=stage)
+    result.update({'source_text': source_text, 'spoken_text': speech_text,
+                   'text_normalizer_version': NORMALIZER_VERSION})
+    return result
