@@ -220,3 +220,170 @@ def apply_reviewed_cuts(project, targets, findings, on_progress=None, control=No
             end=piece.timeline_start+(b-piece.start)/piece.speed
             remapped.append(ScopeTarget(piece.id,a,b,start,end,piece.track_id))
     return remapped
+
+
+def _split_timeline_and_remap_targets(project, ids, at, targets):
+    """Split clips at one timeline boundary and keep selected scopes current."""
+    from .action_scope import ScopeTarget
+    before={clip.id:clip for clip in project.clips}
+    changed=set(project.split_at_timeline(set(ids),float(at)))
+    if not changed:return
+    new_ids={clip.id for clip in project.clips}-set(before)
+    replacements={}
+    for old_id in changed:
+        old=before.get(old_id)
+        if old is None:continue
+        pieces=[project.clip(cid) for cid in new_ids]
+        pieces=[piece for piece in pieces if piece is not None and
+                piece.source==old.source and piece.track_id==old.track_id and
+                piece.kind==old.kind]
+        parents=[target for target in targets if target.original_id==old_id]
+        for parent in parents:
+            children=[]
+            for piece in pieces:
+                # Uma mídia pode aparecer várias vezes na mesma faixa. Exija
+                # sobreposição temporal e de fonte para não remapear um escopo
+                # para outra instância do mesmo arquivo.
+                if (piece.timeline_end<=parent.timeline_start+.001 or
+                        piece.timeline_start>=parent.timeline_end-.001):
+                    continue
+                start=max(float(parent.source_start),float(piece.start))
+                end=min(float(parent.source_end),float(piece.end))
+                if end-start<.045:continue
+                left=piece.timeline_start+(start-piece.start)/piece.speed
+                right=piece.timeline_start+(end-piece.start)/piece.speed
+                children.append(ScopeTarget(piece.id,start,end,left,right,piece.track_id))
+            if children:replacements[old_id,parent]=children
+    if replacements:
+        rebuilt=[]
+        for target in targets:
+            children=replacements.get((target.original_id,target))
+            rebuilt.extend(children if children is not None else [target])
+        targets[:]=rebuilt
+
+
+def apply_reviewed_speedups(project, originals, targets, findings, *, default_speed=2.0,
+                            control=None):
+    """Time-compress reviewed voice-free gameplay spans non-destructively.
+
+    Each accepted source interval is isolated with timeline splits, sped up,
+    then downstream clips ripple left by exactly the duration saved. The full
+    operation mutates only the supplied project copy and is one UI undo step.
+    A locked or ambiguous timeline scope is skipped rather than partially
+    desynchronizing tracks.
+    """
+    from math import isfinite
+    import copy
+    from .action_scope import ScopeTarget
+    applied=[];skipped=[]
+    def original_for(finding):
+        return originals.get(str(finding.get('clip_id','')))
+    def map_order(finding):
+        original=original_for(finding)
+        if original is None:return -1.0
+        try:return original.timeline_start+float(finding['a'])/max(.0001,original.speed)
+        except (KeyError,TypeError,ValueError):return -1.0
+    speed_findings=sorted((item for item in findings if item.get('type')=='speedup'),
+                          key=map_order,reverse=True)
+    for finding in speed_findings:
+        if control:control.checkpoint()
+        original=original_for(finding)
+        try:
+            relative_start=float(finding['a']);relative_end=float(finding['b'])
+            speed=float(finding.get('speed',default_speed))
+        except (KeyError,TypeError,ValueError):
+            skipped.append('Intervalo ou velocidade inválidos.');continue
+        if (original is None or not isfinite(relative_start) or not isfinite(relative_end)
+                or not isfinite(speed) or relative_start<0 or relative_end<=relative_start
+                or speed<=1.0 or speed>10.0):
+            skipped.append('Intervalo ou velocidade fora dos limites.');continue
+        source_start=original.start+relative_start
+        source_end=min(original.end,original.start+relative_end)
+        if source_end-source_start<.15:
+            skipped.append('Trecho curto demais para acelerar com segurança.');continue
+
+        candidates=[]
+        for target in targets:
+            if target.track_id!=original.track_id or target.source_start>source_start+.001 or target.source_end<source_end-.001:
+                continue
+            clip=project.clip(target.original_id)
+            if (clip is not None and clip.source==original.source and clip.kind==original.kind
+                    and clip.start<=source_start+.001 and clip.end>=source_end-.001):
+                candidates.append((target,clip))
+        if len(candidates)!=1:
+            skipped.append('O trecho não corresponde a um único bloco selecionado e editável.')
+            continue
+        target,clip=candidates[0]
+        if clip.kind not in ('video','audio') or not project.can_edit_linked_av(clip.id):
+            skipped.append('A faixa do trecho ou seu áudio vinculado está bloqueado.')
+            continue
+        end_time=clip.timeline_start+(source_end-clip.start)/clip.speed
+        locked=[item for item in project.clips if not project.track_is_editable(item.track_id) and
+                (item.timeline_start>=end_time-.00001 or
+                 item.timeline_start+.05<end_time<item.timeline_end-.05)]
+        if locked:
+            skipped.append('Aceleração ignorada porque o ripple afetaria clipes em faixas bloqueadas.')
+            continue
+
+        # A failed boundary split must never leave half an edit in the project.
+        project_state=copy.deepcopy(project.__dict__)
+        target_state=copy.deepcopy(targets)
+        def rollback(reason):
+            project.__dict__.clear()
+            project.__dict__.update(project_state)
+            targets[:]=target_state
+            skipped.append(reason)
+
+        # Isolate the target interval, keeping separated A/V linked at each edge.
+        linked={item.id for item in project.linked_av_members(clip.id)}
+        _split_timeline_and_remap_targets(project,linked,end_time,targets)
+        middle_candidates=[item for item in project.clips if item.track_id==clip.track_id and
+            item.source==clip.source and item.kind==clip.kind and
+            item.start<=source_start+.001 and item.end>=source_end-.001]
+        if len(middle_candidates)!=1:
+            rollback('Não foi possível isolar o trecho de gameplay na timeline.')
+            continue
+        middle=middle_candidates[0]
+        linked={item.id for item in project.linked_av_members(middle.id)}
+        middle_start=middle.timeline_start+(source_start-middle.start)/middle.speed
+        _split_timeline_and_remap_targets(project,linked,middle_start,targets)
+        middle_candidates=[item for item in project.clips if item.track_id==clip.track_id and
+            item.source==clip.source and item.kind==clip.kind and
+            abs(item.start-source_start)<=.002 and abs(item.end-source_end)<=.002]
+        if len(middle_candidates)!=1:
+            rollback('A divisão não produziu um bloco único para a aceleração.')
+            continue
+        middle=middle_candidates[0]
+        old_end=middle.timeline_end
+        old_duration=middle.duration
+        if speed<=middle.speed+.001 or not project.set_speed(middle.id,speed):
+            rollback('O trecho já está nessa velocidade ou não pode ser alterado.')
+            continue
+        saved=old_duration-middle.duration
+        if saved<=.001:
+            rollback('A alteração não reduziria a duração do trecho.')
+            continue
+
+        # Split every editable crossing clip at the old boundary before the
+        # ripple, so overlays and separate audio move in sync with the picture.
+        crossing=[item.id for item in project.clips if item.timeline_start+.05<old_end<item.timeline_end-.05]
+        _split_timeline_and_remap_targets(project,crossing,old_end,targets)
+        moved=[]
+        for item in project.clips:
+            if item.timeline_start>=old_end-.00001 and item.generated_by!='auto_caption':
+                item.timeline_start=max(0.,round(item.timeline_start-saved,5))
+                project._sync_auto_captions(item)
+                moved.append(item.id)
+        # Keep the supplied review scopes aligned to the new timeline.
+        for index,current in enumerate(targets):
+            updated=project.clip(current.original_id)
+            if updated is not None:
+                targets[index]=ScopeTarget(current.original_id,current.source_start,
+                    current.source_end,updated.timeline_start+
+                    (current.source_start-updated.start)/updated.speed,
+                    updated.timeline_start+(current.source_end-updated.start)/updated.speed,
+                    current.track_id)
+        applied.append({'clip_id':original.id,'a':relative_start,'b':relative_end,
+                        'speed':speed,'saved_seconds':round(saved,5),
+                        'changed_ids':list(linked)+moved})
+    return {'applied':applied,'skipped':skipped}

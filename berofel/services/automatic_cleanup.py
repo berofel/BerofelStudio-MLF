@@ -70,17 +70,21 @@ class CutCandidate:
     id: str
     risk_flags: tuple[str, ...] = ()
     requires_individual_review: bool = False
+    speed: float | None = None
 
     def as_finding(self, title: str) -> dict:
         modules=set(self.source_module.split('+'))
-        kind = ('silencio' if modules=={'silence'} else 'filler' if modules=={'filler'}
+        kind = ('speedup' if modules=={'speedup'} else
+                'silencio' if modules=={'silence'} else 'filler' if modules=={'filler'}
                 else 'contexto' if modules=={'context'} else 'misto')
-        return {'clip_id': self.clip_id, 'title': title, 'a': self.start, 'b': self.end,
+        finding={'clip_id': self.clip_id, 'title': title, 'a': self.start, 'b': self.end,
                 'type': kind, 'score': round(self.score), 'note': self.reason,
                 'evidence': list(self.evidence), 'source_module': self.source_module,
                 'candidate_id': self.id, 'checked': False,
                 'risk_flags': list(self.risk_flags),
                 'requires_individual_review': self.requires_individual_review}
+        if self.speed is not None: finding['speed']=self.speed
+        return finding
 
 
 @dataclass
@@ -854,11 +858,13 @@ def analyze_automatic_cleanup(clips, options: EditOptions, *, known_words=None,
         if options.remove_silences:
             for finding in vad_data.get('suggestions',[]):
                 if finding.get('clip_id')==clip.id:
+                    source_module=('speedup' if finding.get('type')=='speedup' else 'silence')
                     plan.candidates.append(CutCandidate(clip.id,max(0,float(finding['a'])),
                         min(clip.end-clip.start,float(finding['b'])),
                         str(finding.get('note') or 'Silero detectou ausência de fala; margens aplicadas.'),
-                        ('região sem fala detectada por Silero',),95,'silence',
-                        f'sil:{clip.id}:{round(float(finding["a"])*1000)}:{round(float(finding["b"])*1000)}'))
+                        ('região sem fala detectada por Silero',),95,source_module,
+                        f'sil:{clip.id}:{round(float(finding["a"])*1000)}:{round(float(finding["b"])*1000)}',
+                        speed=float(finding.get('speed',2.0)) if source_module=='speedup' else None))
         if options.remove_fillers:
             lexical_started=time.perf_counter()
             plan.candidates.extend(_filler_candidates(clip,report))
@@ -896,6 +902,7 @@ def analyze_automatic_cleanup(clips, options: EditOptions, *, known_words=None,
                        'candidate_count':len(plan.candidates),'overlap_merges':0,
                        'overlap_conflicts':overlaps,
                        'silence_candidates':sum('silence' in c.source_module for c in plan.candidates),
+                       'speedup_candidates':sum('speedup' in c.source_module for c in plan.candidates),
                        'filler_candidates':sum('filler' in c.source_module for c in plan.candidates),
                        'context_candidates':sum('context' in c.source_module for c in plan.candidates)})
     feature_cache_after=(_token_cache.cache_info(),_lemma.cache_info(),_phrase_signature.cache_info())

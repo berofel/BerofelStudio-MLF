@@ -9,7 +9,7 @@ três opções inicia Qwen, LLM, API ou download de modelos.
 
 | Seleção | Serviços usados | Resultado |
 | --- | --- | --- |
-| Silêncios | Silero VAD | Sugestões de pausas; sem transcrição |
+| Silêncios | Silero VAD + medição RMS local | Pausas sem áudio sugerem corte; lacunas longas com som e sem fala sugerem aceleração revisável a 2×; sem transcrição obrigatória |
 | Vícios | Transcrição persistida ou Faster-Whisper se faltar | Hesitações e repetições adjacentes confirmadas |
 | Contexto | Silero para âncoras de pausa + transcrição persistida/Whisper | Sugestões conservadoras de reformulação; pausas não são cortadas |
 | Combinações | Reutiliza VAD/transcrição da execução e os caches existentes | Plano consolidado; sobreposições ficam separadas e conflitantes não podem ser aplicadas juntas |
@@ -75,9 +75,17 @@ O refino de borda por energia RMS do pacote V2 não foi conectado: os relatório
 do pipeline atual não entregam um buffer PCM original em memória ao planejador.
 O código não reabre nem renderiza o áudio apenas para refinar um corte; os
 limites atuais continuam usando timestamps de palavra e as margens já presentes
-na aplicação da timeline. A remoção de silêncio considera intervalos sem fala
-marcados pelo Silero. Música e efeitos de jogo dentro desses intervalos não são
-uma proteção automática contra corte; revise a sugestão antes de aplicá-la.
+na aplicação da timeline. Na opção **Remover silêncios**, o Silero continua
+marcando as lacunas sem fala. Uma medição RMS barata sobre o PCM que já foi
+extraído separa lacunas praticamente silenciosas (candidatas a corte) das
+lacunas mais longas com áudio de jogo (sugestão de aceleração 2×). A energia não
+é tratada como fala nem como classificação semântica: todo trecho com som que o
+VAD não reconheceu continua sujeito a revisão, e a transcrição existente, quando
+disponível, também protege as palavras. A sugestão de aceleração mantém os
+blocos de fala intactos, altera somente a velocidade do trecho sem fala e fecha
+a duração economizada na timeline em uma única operação reversível. Áudio alto,
+sozinho, não prova que o conteúdo do jogo é repetitivo; a decisão continua sendo
+do usuário na revisão.
 
 ## Reconhecimento de fala e comandos de voz
 

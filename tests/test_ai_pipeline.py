@@ -15,7 +15,8 @@ from berofel.services.ai_pipeline import (AIOptions, Pipeline, StageRunner,
                                           qwen_stage_timeout, qwen_removal_interval,
                                           transcript_model_identity)
 from berofel.services.subtitles import export_srt, merge_reports, build_cues, timeline_words
-from berofel.services.ai_worker import (_parse_model_json, _qwen, _qwen_prompt_batches,
+from berofel.services.ai_worker import (_audio_activity_spans, _parse_model_json,
+                                        _qwen, _qwen_prompt_batches,
                                         _qwen_temp_directory, _qwen_server_completion)
 
 
@@ -281,7 +282,7 @@ class AITest(unittest.TestCase):
         ],duration=4.,minimum=.65,padding=.12)
         self.assertEqual(overlapped,[(.12,.88),(2.92,3.88)])
 
-    def test_long_voice_free_gameplay_gap_remains_cut_candidate_when_sounds_are_present(self):
+    def test_long_voice_free_gameplay_gap_becomes_speedup_when_game_audio_is_present(self):
         import math
         from array import array
         class GameStages:
@@ -301,6 +302,7 @@ class AITest(unittest.TestCase):
                     result={'audio_path':payload['audio_path'],'duration':15.}
                 elif stage=='vad':
                     result={'speech':[{'start':0.,'end':5.},{'start':7.,'end':15.}],
+                            'audio_activity':[{'start':5.4,'end':6.6}],
                             'duration':15.,'engine':'test-silero-spans'}
                 else:raise AssertionError(stage)
                 write_json(Path(output),{'schema':CACHE_SCHEMA,'stage':stage,'result':result})
@@ -312,8 +314,33 @@ class AITest(unittest.TestCase):
         self.assertEqual(runner.calls,['extract','vad'])
         self.assertEqual(report['speech'],[
             {'start':0.,'end':5.}, {'start':7.,'end':15.}])
-        silence=[item for item in report['suggestions'] if item['type']=='silencio']
-        self.assertEqual([(item['a'],item['b']) for item in silence],[(5.12,6.88)])
+        speed=[item for item in report['suggestions'] if item['type']=='speedup']
+        self.assertEqual([(item['a'],item['b']) for item in speed],[(5.12,6.88)])
+        self.assertEqual(speed[0]['speed'],2.0)
+
+    def test_voice_free_long_gap_with_no_audio_remains_a_cut_candidate(self):
+        findings=Pipeline._classify_voice_free_gaps(
+            [{'start':0.,'end':2.},{'start':8.,'end':10.}],[],[],10.,.65,.12)
+        self.assertEqual([(item['a'],item['b'],item['type']) for item in findings],
+                         [(2.12,7.88,'silencio')])
+
+    def test_transcript_word_protects_speech_even_when_vad_misses_it(self):
+        findings=Pipeline._classify_voice_free_gaps(
+            [{'start':0.,'end':2.},{'start':4.,'end':10.}],
+            [{'start':2.8,'end':3.1}], [{'start':2.1,'end':3.9}],
+            10.,.65,.12)
+        self.assertFalse(any(item['type']=='speedup' for item in findings))
+        self.assertFalse(any(item['a'] < 3.1 and item['b'] > 2.8 for item in findings))
+
+    def test_audio_activity_spans_distinguish_sound_from_digital_silence(self):
+        import numpy as np
+        pcm=np.zeros(16000*3,dtype=np.float32)
+        t=np.arange(16000,dtype=np.float32)/16000
+        pcm[16000:32000]=.2*np.sin(2*np.pi*440*t)
+        spans=_audio_activity_spans(pcm)
+        self.assertEqual(len(spans),1)
+        self.assertAlmostEqual(spans[0]['start'],1.0,delta=.1)
+        self.assertAlmostEqual(spans[0]['end'],2.0,delta=.1)
 
     def test_qwen_cache_invalidates_when_adaptive_context_changes(self):
         cli=Path(self.temp.name)/'llama-cli.exe';cli.write_bytes(b'fake')

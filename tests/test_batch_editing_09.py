@@ -6,7 +6,8 @@ from pathlib import Path
 from berofel.core.project import Project,Clip
 from berofel.services.action_scope import ScopeSpec,resolve_scope
 from berofel.services.batch_editing import (
-    plan_actions,spoken_clips,run_edit_queue,apply_reviewed_cuts)
+    plan_actions,spoken_clips,run_edit_queue,apply_reviewed_cuts,
+    apply_reviewed_speedups)
 from berofel.services.subtitles import merge_reports
 from berofel.services.caption_actions import create_auto_captions,scoped_cues
 
@@ -210,5 +211,74 @@ class QueueTests(unittest.TestCase):
         remapped=apply_reviewed_cuts(self.project,self.targets,[])
         self.assertEqual([t.original_id for t in remapped],[self.original.id])
         self.assertEqual(len(self.project.clips),1)
+
+
+class VoiceFreeGameplaySpeedTests(unittest.TestCase):
+    def setUp(self):
+        self.project=Project()
+        self.video=self.project.add_clip(Clip(source='game.mp4',start=0,end=20,
+            kind='video',track_id=self.project.tracks[0].id,timeline_start=0,
+            source_length=20,group_id='game-av'))
+        self.audio=self.project.add_clip(Clip(source='game.mp4',start=0,end=20,
+            kind='audio',track_id=self.project.tracks[1].id,timeline_start=0,
+            source_length=20,group_id='game-av'))
+        self.next_clip=self.project.add_clip(Clip(source='next.mp4',start=0,end=5,
+            kind='video',track_id=self.project.tracks[0].id,timeline_start=20,
+            source_length=5))
+        self.originals={self.video.id:copy.deepcopy(self.video)}
+        _,self.targets=resolve_scope(self.project,ScopeSpec(
+            mode='one',selected_ids=(self.video.id,)))
+
+    def test_speedup_splits_av_and_ripples_later_clips(self):
+        result=apply_reviewed_speedups(self.project,self.originals,self.targets,[{
+            'clip_id':self.video.id,'a':5.,'b':9.,'type':'speedup','speed':2.}])
+        self.assertEqual(len(result['applied']),1)
+        self.assertFalse(result['skipped'])
+        videos=sorted((c for c in self.project.clips if c.source=='game.mp4' and c.kind=='video'),
+                      key=lambda c:c.start)
+        audios=sorted((c for c in self.project.clips if c.source=='game.mp4' and c.kind=='audio'),
+                      key=lambda c:c.start)
+        self.assertEqual([(c.start,c.end,c.speed) for c in videos],
+                         [(0,5,1),(5,9,2),(9,20,1)])
+        self.assertEqual([(c.start,c.end,c.speed) for c in audios],
+                         [(0,5,1),(5,9,2),(9,20,1)])
+        self.assertAlmostEqual(self.next_clip.timeline_start,18.)
+        middle=videos[1]
+        middle_audio=audios[1]
+        self.assertEqual((middle.timeline_start,middle.duration),
+                         (middle_audio.timeline_start,middle_audio.duration))
+        self.assertAlmostEqual(result['applied'][0]['saved_seconds'],2.)
+        self.assertEqual(len(self.targets),3)
+        self.assertEqual(self.video.start,0)  # arquivo/clipe base original não mutado
+        for target in self.targets:
+            current=self.project.clip(target.original_id)
+            self.assertIsNotNone(current)
+            self.assertAlmostEqual(target.timeline_start,current.timeline_start)
+        with tempfile.TemporaryDirectory(prefix='bfs_speedup_roundtrip_') as folder:
+            saved=Path(folder)/'speed.berofel.json'
+            self.project.save(str(saved))
+            reopened=Project.load(str(saved))
+        restored=sorted((item for item in reopened.clips
+                         if item.source=='game.mp4' and item.kind=='video'),
+                        key=lambda item:item.start)
+        self.assertEqual([item.speed for item in restored],[1,2,1])
+
+    def test_locked_downstream_clip_prevents_partial_speedup(self):
+        self.project.track(self.next_clip.track_id).locked=True
+        before=copy.deepcopy(self.project.clips)
+        result=apply_reviewed_speedups(self.project,self.originals,self.targets,[{
+            'clip_id':self.video.id,'a':5.,'b':9.,'type':'speedup','speed':2.}])
+        self.assertFalse(result['applied'])
+        self.assertTrue(result['skipped'])
+        self.assertEqual(self.project.clips,before)
+
+    def test_unisolatable_edge_interval_rolls_back_partial_splits(self):
+        before=copy.deepcopy(self.project.clips)
+        result=apply_reviewed_speedups(self.project,self.originals,self.targets,[{
+            'clip_id':self.video.id,'a':.02,'b':9.,'type':'speedup','speed':2.}])
+        self.assertFalse(result['applied'])
+        self.assertTrue(result['skipped'])
+        self.assertEqual(self.project.clips,before)
+        self.assertEqual(len(self.targets),1)
 
 if __name__=='__main__': unittest.main()

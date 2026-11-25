@@ -307,6 +307,52 @@ class Pipeline:
             cursor=max(cursor,b)
         return gaps
 
+    @staticmethod
+    def _active_audio_duration(start: float, end: float, activity: list) -> float:
+        intervals=[]
+        for span in activity:
+            a=max(float(start),float(span.get('start',0)))
+            b=min(float(end),float(span.get('end',0)))
+            if b>a:intervals.append((a,b))
+        merged=[]
+        for a,b in sorted(intervals):
+            if merged and a<=merged[-1][1]:merged[-1]=(merged[-1][0],max(merged[-1][1],b))
+            else:merged.append((a,b))
+        return sum(b-a for a,b in merged)
+
+    @classmethod
+    def _classify_voice_free_gaps(cls, speech: list, transcript_words: list,
+                                  activity: list, duration: float,
+                                  minimum: float, padding: float,
+                                  speedup_minimum: float = 1.2) -> list[dict]:
+        """Cut truly quiet pauses; offer 2x for longer audible, voice-free play.
+
+        Every transcript word augments the Silero protection intervals. Energy
+        is used only to distinguish audible gameplay from actual quiet; it is
+        never treated as evidence of voice or as permission to cross speech.
+        """
+        protected=list(speech)
+        for word in transcript_words:
+            try:a=float(word.get('start',0));b=float(word.get('end',0))
+            except (TypeError,ValueError):continue
+            if math.isfinite(a) and math.isfinite(b) and b>a:
+                protected.append({'start':a,'end':b})
+        findings=[]
+        for start,end in cls._build_gaps(protected,duration,minimum,padding):
+            span=end-start
+            active=cls._active_audio_duration(start,end,activity)
+            audible_gameplay=(span>=speedup_minimum and active>=.35 and active/span>=.20)
+            if audible_gameplay:
+                findings.append({'a':start,'b':end,'type':'speedup','speed':2.0,
+                    'score':100,'note':('Sem fala detectada por Silero; há atividade de áudio '
+                        'neste intervalo. Sugestão revisável: acelerar para 2×.'),
+                    'checked':False})
+            else:
+                findings.append({'a':start,'b':end,'type':'silencio','score':100,
+                    'note':'Sem fala e sem atividade de áudio relevante; revisar antes de cortar.',
+                    'checked':False})
+        return findings
+
     def _batch_stage(self, chunks, stage, build, on_step=None):
         """Recupera cache por trecho e processa faltantes com o modelo carregado uma vez."""
         jobs=[]
@@ -417,7 +463,10 @@ class Pipeline:
 
         # Etapa 2: uma única instância Silero ONNX para todos os lotes não armazenados.
         def vad_payload(ch):
-            params={'threshold':.5,'min_silence_ms':350,'speech_pad_ms':100,'engine':'silero-onnx-v6'}
+            params={'threshold':.5,'min_silence_ms':350,'speech_pad_ms':100,
+                    'engine':'silero-onnx-v6',
+                    'audio_activity':{'frame_ms':100,'threshold_dbfs':-55.0,
+                                      'min_active_ms':250,'bridge_ms':200}}
             return params,{'audio_path':ch['extract']['audio_path'],**params}
         if needs_vad:
             self._notify(f'Silero VAD • verificando {len(chunks)} trecho(s)')
@@ -492,13 +541,16 @@ class Pipeline:
         self._notify('Qwen • análise contextual dos textos' if needs_qwen else 'Preparando resultados solicitados')
         results=[]
         for clip_index,clip in enumerate(items,1):
-            all_speech=[];all_words=[];all_segments=[];suggestions=[]
+            all_speech=[];all_audio_activity=[];all_words=[];all_segments=[];suggestions=[]
             belonging=[ch for ch in chunks if ch['clip'].id==clip.id]
             for ch in belonging:
                 relative=ch['relative'];a=ch['a'];length=ch['duration'];index=ch['index']
                 for span in ch.get('vad', {}).get('speech',[]):
                     all_speech.append({'start':relative+span['start'],
                                        'end':relative+span['end']})
+                for span in ch.get('vad', {}).get('audio_activity',[]):
+                    all_audio_activity.append({'start':relative+float(span['start']),
+                                               'end':relative+float(span['end'])})
                 tr=ch.get(transcript_stage, {'words': [], 'segments': []});normalized=[]
                 if clip.id in known_words:
                     for word in known_words[clip.id]:
@@ -587,20 +639,19 @@ class Pipeline:
                                             'checked':False,'word_ids':proposal['word_ids']})
                 step()
             if needs_vad:
-                # Silence means time without voice. Game ambience/effects do
-                # not suppress a long candidate when Silero found no speech.
-                for sa,sb in self._build_gaps(all_speech,clip.end-clip.start,
-                                               opts.min_silence,opts.silence_padding):
-                    suggestions.append({'clip_id':clip.id,'title':clip.title,
-                                        'a':sa,'b':sb,'type':'silencio','score':100,
-                                        'note':'Silero VAD: ausencia de voz (revise gameplay/musica)',
-                                        'checked':False})
+                transcript_spans=[{'start':float(word['start']),'end':float(word['end'])}
+                    for word in all_words if float(word.get('end',0))>float(word.get('start',0))]
+                for finding in self._classify_voice_free_gaps(
+                        all_speech,transcript_spans,all_audio_activity,
+                        clip.end-clip.start,opts.min_silence,opts.silence_padding):
+                    suggestions.append({'clip_id':clip.id,'title':clip.title,**finding})
             suggestions.sort(key=lambda f:(f['a'],f['b']))
             results.append({'clip_id':clip.id,'title':clip.title,
                             'source':str(Path(clip.source).resolve()),
                             'start':clip.start,'end':clip.end,'duration':clip.end-clip.start,
                             'words':all_words,'segments':all_segments,
-                            'speech':all_speech,'suggestions':suggestions})
+                            'speech':all_speech,'audio_activity':all_audio_activity,
+                            'suggestions':suggestions})
         return {'reports':results,'suggestions':[f for r in results for f in r['suggestions']],
                 'cache_hits':self.cache_hits,'cache_misses':self.cache_misses,
                 'stages':self.stages,'mode':mode}

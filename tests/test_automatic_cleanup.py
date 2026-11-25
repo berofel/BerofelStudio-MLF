@@ -217,6 +217,21 @@ class AutomaticCleanupTests(unittest.TestCase):
         self.assertGreaterEqual(plan.candidates[0].start,0)
         self.assertLess(plan.candidates[0].end,item.end-item.start)
 
+    def test_voice_free_audio_candidate_keeps_speed_action_for_review(self):
+        item=clip(10,20)
+        finding={'clip_id':item.id,'a':2.,'b':8.,'type':'speedup','speed':2.,
+                 'note':'Jogo audível sem fala.'}
+        def fake(clips,**kwargs):
+            return {'reports':[{'clip_id':item.id,'title':item.title,'start':10.,'end':20.,
+                    'speech':[],'words':[],'audio_activity':[{'start':2.,'end':8.}],
+                    'suggestions':[finding]}], 'suggestions':[finding],
+                    'cache_hits':0,'cache_misses':0,'stages':[]}
+        plan=analyze_automatic_cleanup([item],EditOptions(remove_silences=True),analyze=fake)
+        result=plan.candidates[0].as_finding(item.title)
+        self.assertEqual(result['type'],'speedup')
+        self.assertEqual(result['speed'],2.)
+        self.assertEqual((result['a'],result['b']),(2.,8.))
+
     def test_context_finds_long_attempt_suffix_without_cutting_unique_prefix(self):
         first=words('O editor tem uma seção de configuração, hoje iremos fazer uma demonstração do programa.',1.)
         second=words('No vídeo de hoje faremos uma demonstração do programa.',13.)

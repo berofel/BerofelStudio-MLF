@@ -31,11 +31,13 @@ from berofel.services.proxies import create_proxy, find_proxy
 from berofel.services.analysis import analyze_clips, repetitions_clips
 from berofel.services.ai_pipeline import (AIOptions, run_analysis, default_llama_cli,
     default_qwen_model, transcript_model_identity)
-from berofel.services.batch_editing import plan_actions, run_edit_queue, apply_reviewed_cuts
+from berofel.services.batch_editing import (plan_actions, run_edit_queue,
+    apply_reviewed_cuts, apply_reviewed_speedups)
 from berofel.services.automatic_cleanup import EditOptions, analyze_automatic_cleanup
 from berofel.services.subtitles import merge_reports, export_srt, timeline_words
 from berofel.services.action_scope import (ScopeSpec, resolve_scope, scope_summary,
-    local_to_original_proposal, scope_is_still_valid, selected_proposals_conflict)
+    ScopeTarget, local_to_original_proposal, scope_is_still_valid,
+    selected_proposals_conflict)
 from berofel.services.caption_actions import (create_manual_caption, create_auto_captions,
     export_scoped_srt, scoped_cues)
 from berofel.services.transcript_coverage import (record_coverage,has_coverage,words_in_clip)
@@ -354,8 +356,8 @@ class SuggestionsDialog(QDialog):
         info=QLabel('ASSISTENTE LOCAL  ·  REVISÃO HUMANA')
         info.setStyleSheet('color:#ffad70;font-weight:850;font-size:12px;letter-spacing:.5px;')
         root.addWidget(info)
-        description=QLabel('Confira o intervalo e o motivo sugeridos. “Manter” e “Cortar” alteram apenas '
-                    'a seleção desta revisão; os arquivos originais permanecem intactos.')
+        description=QLabel('Confira o intervalo e o motivo. As sugestões podem cortar uma pausa '
+                    'silenciosa ou acelerar gameplay sem fala; os arquivos originais permanecem intactos.')
         description.setWordWrap(True);root.addWidget(description)
 
         navigation=QHBoxLayout()
@@ -394,8 +396,8 @@ class SuggestionsDialog(QDialog):
                                        'color:#e6ebf0;font-weight:700;padding:6px 12px;}')
         self.keep_button.clicked.connect(lambda:self._set_current(False))
         decision_row.addWidget(self.keep_button)
-        self.cut_button=QPushButton('✂ Cortar')
-        self.cut_button.setToolTip('Inclui esta sugestão na seleção de cortes a aplicar.')
+        self.cut_button=QPushButton('✂ Aplicar ação')
+        self.cut_button.setToolTip('Inclui esta sugestão na seleção de edições a aplicar.')
         self.cut_button.setStyleSheet('QPushButton{background:#ff8126;border:1px solid #ff9a4e;'
                                       'color:#24170f;font-weight:800;padding:6px 12px;}')
         self.cut_button.clicked.connect(lambda:self._set_current(True))
@@ -409,7 +411,8 @@ class SuggestionsDialog(QDialog):
         filters.addWidget(QLabel('Tipo:'))
         self.filter_type=QComboBox()
         self.filter_type.addItem('Todos os tipos','all')
-        type_labels={'silencio':'Silêncio · Silero','contexto':'Contexto · análise local',
+        type_labels={'silencio':'Silêncio · Silero','speedup':'Gameplay sem fala · acelerar',
+                     'contexto':'Contexto · análise local',
                      'repeticao':'Repetições','filler':'Vícios de fala',
                      'misto':'Corte combinado · análise local'}
         types=sorted({str(f.get('type') or 'outro') for f in findings})
@@ -431,7 +434,8 @@ class SuggestionsDialog(QDialog):
             note=f.get('note','Silêncio detectado')
             score=(f"  |  Nota sugerida: {f['score']}/100" if f.get('type')=='contexto' and
                    f.get('score') is not None else '')
-            c=QCheckBox(f"{f['title']}  {f['a']:.2f}–{f['b']:.2f}s  {note}{score}")
+            action=('⚡ 2×' if f.get('type')=='speedup' else '✂ cortar')
+            c=QCheckBox(f"{action}  {f['title']}  {f['a']:.2f}–{f['b']:.2f}s  {note}{score}")
             c.setStyleSheet('QCheckBox{spacing:8px;}')
             flags=list(f.get('risk_flags') or [])
             if f.get('requires_individual_review'):
@@ -457,10 +461,10 @@ class SuggestionsDialog(QDialog):
         select_all.setToolTip('Marca de uma vez todas as sugestões, mesmo que haja centenas.')
         select_all.clicked.connect(lambda:self._set_all(True))
         bulk.addWidget(select_all)
-        self.approve_all_button=QPushButton('✂ Aprovar e aplicar TODOS')
+        self.approve_all_button=QPushButton('✓ Aprovar e aplicar TODOS')
         self.approve_all_button.setObjectName('approveAllCuts')
         self.approve_all_button.setToolTip(
-            'Aplica imediatamente todos os cortes sugeridos; o projeto continua com Undo.')
+            'Aplica os cortes e as acelerações selecionadas; a edição continua reversível por Undo.')
         self.approve_all_button.setEnabled(bool(self.findings))
         self.approve_all_button.clicked.connect(self._approve_all)
         bulk.addWidget(self.approve_all_button)
@@ -481,8 +485,8 @@ class SuggestionsDialog(QDialog):
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|
                                   QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText('Aplicar apenas os marcados')
-        skip=buttons.addButton('Pular cortes',QDialogButtonBox.ButtonRole.ActionRole)
-        skip.setToolTip('Preserva transcrição e legendas solicitadas, sem cortar nenhum trecho.')
+        skip=buttons.addButton('Pular edições',QDialogButtonBox.ButtonRole.ActionRole)
+        skip.setToolTip('Preserva transcrição e legendas solicitadas, sem aplicar cortes ou acelerações.')
         skip.clicked.connect(lambda:self.done(2))
         buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
@@ -555,7 +559,7 @@ class SuggestionsDialog(QDialog):
 
     def _update_count(self, *args):
         n=sum(c.isChecked() for c in self.checks)
-        self.counter.setText(f'{n} de {len(self.checks)} cortes selecionados · '
+        self.counter.setText(f'{n} de {len(self.checks)} edições selecionadas · '
                              f'{len(self._visible_indices())} visíveis')
         self._update_current()
 
@@ -580,6 +584,13 @@ class SuggestionsDialog(QDialog):
         self.review_interval.setText(
             f"{finding.get('title','Trecho')}  ·  {finding.get('a',0):.2f}–{finding.get('b',0):.2f}s")
         self.review_reason.setText('Por que a IA marcou: '+str(finding.get('note','Revisão manual solicitada.')))
+        if finding.get('type')=='speedup':
+            speed=float(finding.get('speed',2.0))
+            self.cut_button.setText(f'⚡ Acelerar {speed:g}×')
+            self.cut_button.setToolTip('Aplica a velocidade somente ao intervalo sem fala e reduz a duração da timeline.')
+        else:
+            self.cut_button.setText('✂ Cortar')
+            self.cut_button.setToolTip('Inclui esta sugestão de corte na seleção a aplicar.')
         self.previous_button.setEnabled(len(visible)>1);self.next_button.setEnabled(len(visible)>1)
         self.keep_button.setEnabled(True);self.cut_button.setEnabled(True)
 
@@ -4132,27 +4143,32 @@ class MainWindow(QMainWindow):
             baseline=copy.deepcopy(self.project)
             def finish_edit(progress,control=None,stage=None):
                 working=copy.deepcopy(baseline)
+                approved_cuts=[f for f in approved if f.get('type')!='speedup']
+                approved_speedups=[f for f in approved if f.get('type')=='speedup']
                 locked_cut_groups=set()
-                for finding in approved:
+                for finding in approved_cuts:
                     target_clip=working.clip(str(finding.get('clip_id','')))
                     if target_clip and not working.can_edit_linked_av(target_clip.id):
                         locked_cut_groups.add(target_clip.group_id or target_clip.id)
                 if stage:stage('Montagem não destrutiva · aprovados e transcrições')
-                if progress:progress(0,3)
+                if progress:progress(0,4)
                 count=merge_reports(working,results['reports'])
                 if results['reports']:
                     record_coverage(working,results['reports'],transcript_model_identity(opts),opts.language)
                 if control:control.checkpoint()
-                if progress:progress(1,3)
-                new_targets=apply_reviewed_cuts(working,targets,approved,control=control)
-                if progress:progress(2,3)
+                if progress:progress(1,4)
+                new_targets=apply_reviewed_cuts(working,targets,approved_cuts,control=control)
+                if control:control.checkpoint()
+                speed_result=apply_reviewed_speedups(
+                    working,originals,new_targets,approved_speedups,control=control)
+                if progress:progress(3,4)
                 if 'subtitles' in chosen:
                     if stage:stage('Legendas · sincronizando com os trechos sobreviventes')
                     create_auto_captions(working,new_targets)
-                if progress:progress(3,3)
-                return working,new_targets,count,locked_cut_groups
+                if progress:progress(4,4)
+                return working,new_targets,count,locked_cut_groups,speed_result
             def finished_edit(output):
-                working,new_targets,count,locked_cut_groups=output
+                working,new_targets,count,locked_cut_groups,speed_result=output
                 if self.project!=baseline:
                     QMessageBox.warning(self,'Projeto alterado',
                         'O projeto foi alterado durante a montagem. Nenhum corte foi aplicado; '
@@ -4202,8 +4218,11 @@ class MainWindow(QMainWindow):
                         QMessageBox.information(self,'Narração Qwen3-TTS',
                             'Não há texto para narrar. Escreva um roteiro na aba Narração.')
                         self.open_narration()
-                removed=len(approved)
-                msg=(f'Edição concluída: {removed} cortes aprovados, {count} palavras novas; '
+                removed=len(approved_cuts)
+                accelerated=len(speed_result['applied'])
+                saved_seconds=sum(item['saved_seconds'] for item in speed_result['applied'])
+                msg=(f'Edição concluída: {removed} cortes, {accelerated} trechos acelerados '
+                     f'({saved_seconds:.1f}s economizados), {count} palavras novas; '
                      f'ASR analisou {results["asr_seconds"]:.1f}s de '
                      f'{results["source_seconds"]:.1f}s de fonte. '
                      f'Cache: {results["cache_hits"]} acertos.')
@@ -4211,6 +4230,8 @@ class MainWindow(QMainWindow):
                 if locked_cut_groups:
                     msg+=(f' {len(locked_cut_groups)} trecho(s) mantido(s): '
                           'desbloqueie todas as faixas de áudio/vídeo vinculadas para cortar.')
+                if speed_result['skipped']:
+                    msg+=f" {len(speed_result['skipped'])} aceleração(ões) ignoradas com segurança."
                 self.statusBar().showMessage(msg)
                 if results.get('qwen_errors'):
                     detail='\n'.join(results['qwen_errors'])
@@ -4592,37 +4613,43 @@ class MainWindow(QMainWindow):
         self.project.review_queue=[]
         self.project.review_title=''
         if not choices:return
-        by_clip={}
-        for item in choices:
-            clip=self.project.clip(item['clip_id'])
-            if not clip:continue
-            # A análise trabalha com tempo na FONTE; o motor de edição com
-            # tempo de PLAYBACK. Não perde cortes/legendas em clips 2×/10×.
-            by_clip.setdefault(item['clip_id'],[]).append((item['a']/clip.speed,item['b']/clip.speed))
+        chosen_ids=list(dict.fromkeys(str(item['clip_id']) for item in choices))
+        originals={clip_id:copy.deepcopy(self.project.clip(clip_id))
+                   for clip_id in chosen_ids if self.project.clip(clip_id)}
+        targets=[ScopeTarget(clip.id,clip.start,clip.end,clip.timeline_start,
+                             clip.timeline_end,clip.track_id)
+                 for clip in originals.values()]
+        cuts=[item for item in choices if item.get('type')!='speedup']
+        speedups=[item for item in choices if item.get('type')=='speedup']
         # Executa cortes não destrutivos numa cópia, permitindo cancelar antes
         # de confirmar. O projeto original não é alterado durante a tarefa.
         baseline=copy.deepcopy(self.project)
         def apply(progress,control=None,stage=None):
             working=copy.deepcopy(baseline)
-            total=len(by_clip)
-            if stage:stage(f'Aplicando cortes · {total} bloco(s)')
-            if progress:progress(0,total)
-            for number,(clip_id,spans) in enumerate(by_clip.items(),1):
-                if control:control.checkpoint()
-                working.cut_intervals(clip_id,spans)
-                if progress:progress(number,total)
-            return working
-        def ready(updated):
+            if stage:stage('Aplicando cortes e acelerações aprovados')
+            if progress:progress(0,3)
+            remapped=apply_reviewed_cuts(working,targets,cuts,control=control)
+            if progress:progress(1,3)
+            speed_result=apply_reviewed_speedups(
+                working,originals,remapped,speedups,control=control)
+            if progress:progress(2,3)
+            return working,remapped,speed_result
+        def ready(output):
+            updated,remapped,speed_result=output
             if self.project!=baseline:
-                QMessageBox.warning(self,'Cortes','O projeto mudou durante os cortes. '
-                                    'Nenhum corte automático foi aplicado.')
+                QMessageBox.warning(self,'Edição automática','O projeto mudou durante a edição. '
+                                    'Nenhum corte ou aceleração automática foi aplicado.')
                 return
             self.snapshot()
             self.project=updated
-            self.refresh([])
+            self._reveal_ai_edit_result(remapped,choices)
+            saved=sum(entry['saved_seconds'] for entry in speed_result['applied'])
             self.statusBar().showMessage(
-                f'{len(choices)} cortes aplicados somente a blocos escolhidos. Ctrl+Z desfaz.')
-        self._task(apply,ready,label=f'Aplicar {len(choices)} cortes')
+                f'{len(cuts)} corte(s), {len(speed_result["applied"])} aceleração(ões) '
+                f'aplicados; {saved:.1f}s economizados. Ctrl+Z desfaz.'+
+                (f' {len(speed_result["skipped"])} aceleração(ões) ignoradas com segurança.'
+                 if speed_result['skipped'] else ''))
+        self._task(apply,ready,label=f'Aplicar {len(choices)} edições revisadas')
 
     def export_video(self):
         if not self.project.clips:

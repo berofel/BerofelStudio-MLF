@@ -108,6 +108,44 @@ def _read_wav(wav: str):
     return np.frombuffer(pcm, dtype='<i2').astype('float32') / 32768.0
 
 
+def _audio_activity_spans(audio, *, frame_ms: int = 100,
+                          threshold_dbfs: float = -55.0,
+                          min_active_ms: int = 250,
+                          bridge_ms: int = 200) -> list[dict]:
+    """Return coarse audible intervals for classifying voice-free gameplay.
+
+    This is only an energy gate used alongside Silero speech regions. It does
+    not identify game content and can never override a speech interval.
+    """
+    import numpy as np
+    samples=np.asarray(audio,dtype=np.float32)
+    samples_per_frame=max(1,round(16000*int(frame_ms)/1000))
+    count=len(samples)//samples_per_frame
+    if count<=0:return []
+    frames=samples[:count*samples_per_frame].reshape(count,samples_per_frame)
+    rms=np.sqrt(np.mean(frames*frames,axis=1))
+    threshold=10.0**(float(threshold_dbfs)/20.0)
+    active=rms>=threshold
+    bridge=max(0,round(int(bridge_ms)/max(1,int(frame_ms))))
+    if bridge:
+        # Fill only short holes between audible frames; leading/trailing quiet
+        # stays quiet, and long pauses are not turned into activity.
+        indices=np.flatnonzero(active)
+        for left,right in zip(indices,indices[1:]):
+            if 0 < right-left-1 <= bridge:
+                active[left:right+1]=True
+    minimum=max(1,round(int(min_active_ms)/max(1,int(frame_ms))))
+    spans=[];index=0
+    while index<count:
+        if not active[index]:index+=1;continue
+        start=index
+        while index<count and active[index]:index+=1
+        if index-start>=minimum:
+            spans.append({'start':round(start*frame_ms/1000.0,4),
+                          'end':round(min(len(samples)/16000,index*frame_ms/1000.0),4)})
+    return spans
+
+
 def _vad(d: dict) -> dict:
     # O Silero VAD ONNX acompanha a dependência faster-whisper, sem PyTorch.
     from faster_whisper.vad import VadOptions, get_speech_timestamps
@@ -119,7 +157,14 @@ def _vad(d: dict) -> dict:
     detected = get_speech_timestamps(audio, vad_options=options, sampling_rate=16000)
     spans = [{'start': round(s['start'] / 16000, 4), 'end': round(s['end'] / 16000, 4)}
              for s in detected]
+    energy=d.get('audio_activity',{}) or {}
+    activity=_audio_activity_spans(audio,
+        frame_ms=int(energy.get('frame_ms',100)),
+        threshold_dbfs=float(energy.get('threshold_dbfs',-55.0)),
+        min_active_ms=int(energy.get('min_active_ms',250)),
+        bridge_ms=int(energy.get('bridge_ms',200)))
     return {'speech': spans, 'duration': round(len(audio) / 16000, 4),
+            'audio_activity':activity,
             'engine': 'Silero-VAD-ONNX-via-faster-whisper'}
 
 

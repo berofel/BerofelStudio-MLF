@@ -937,6 +937,19 @@ class ActionsUITests(unittest.TestCase):
         self.assertEqual(len(dialog.accepted_findings()),2)
         dialog.close()
 
+    def test_voice_free_gameplay_review_offers_speed_action_not_cut(self):
+        finding={'clip_id':'game','title':'Gameplay sem fala','a':12.,'b':18.,
+                 'type':'speedup','speed':2.,'note':'Áudio de jogo sem fala.'}
+        dialog=SuggestionsDialog([finding])
+        try:
+            self.assertIn('⚡ 2×',dialog.checks[0].text())
+            self.assertEqual(dialog.cut_button.text(),'⚡ Acelerar 2×')
+            dialog.cut_button.click()
+            self.assertEqual(dialog.accepted_findings(),[finding])
+            self.assertIn('acelerações',dialog.approve_all_button.toolTip())
+        finally:
+            dialog.close()
+
     def test_review_keeps_queue_when_overlapping_cuts_are_confirmed_together(self):
         win=MainWindow()
         try:
@@ -961,6 +974,35 @@ class ActionsUITests(unittest.TestCase):
             self.assertIsNotNone(win._pending_review_findings)
             self.assertEqual(len(win.project.review_queue),2)
             self.assertEqual(len(win.project.clips),1)
+        finally:
+            win.close();self.app.processEvents()
+
+    def test_approved_voice_free_gameplay_review_speeds_only_the_selected_interval(self):
+        win=MainWindow()
+        try:
+            clip=win.project.add_clip(Clip('game.mp4',0,20,kind='video',
+                track_id=win.project.tracks[0].id,timeline_start=0,source_length=20))
+            finding={'clip_id':clip.id,'title':'Gameplay sem fala','a':5.,'b':9.,
+                     'type':'speedup','speed':2.,'note':'Sem fala; áudio de gameplay.',
+                     '_review_anchor':{'source':clip.source,'start':clip.start,
+                         'end':clip.end,'speed':clip.speed,'track_id':clip.track_id}}
+            win._pending_review_findings=[finding]
+            win._pending_review_title='Gameplay sem fala'
+            def approve(dialog):
+                dialog.checks[0].setChecked(True)
+                return QDialog.DialogCode.Accepted
+            def run_inline(worker,callback,**kwargs):
+                callback(worker(None))
+            with patch.object(SuggestionsDialog,'exec',new=approve), \
+                 patch.object(win,'_task',side_effect=run_inline), \
+                 patch.object(win,'_autosave'):
+                win._show_pending_review()
+            pieces=sorted((item for item in win.project.clips if item.source=='game.mp4'),
+                          key=lambda item:item.start)
+            self.assertEqual([(item.start,item.end,item.speed) for item in pieces],
+                             [(0,5,1),(5,9,2),(9,20,1)])
+            self.assertAlmostEqual(pieces[-1].timeline_start,7.)
+            self.assertIn('1 aceleração',win.statusBar().currentMessage())
         finally:
             win.close();self.app.processEvents()
 
