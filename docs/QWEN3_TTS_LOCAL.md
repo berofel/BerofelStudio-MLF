@@ -37,7 +37,8 @@ Não é necessário fazer login no Hugging Face para inferência. A geração n�
 
 - A UI ainda priorizava Pocket TTS e mantinha Qwen como opção de compatibilidade. Novos pedidos podiam seguir para um motor diferente do escolhido para clonagem.
 - O ambiente Qwen isolado não incluía `imageio-ffmpeg`, usado na normalização da amostra. O instalador passou a incluí-lo e verificar a importação.
-- A API oficial do Qwen usa `max_new_tokens=2048` como padrão. Sem orçamento por texto, frases curtas podiam continuar gerando até estourar o timeout de uma hora em CPU. O worker agora limita a saída usando uma estimativa proporcional ao texto, com margem e teto oficial de 2048 tokens.
+- O Qwen3-TTS Base não é um catálogo de locutores: ele clona a referência de áudio selecionada. O instalador não inclui gravações de voz pessoais ou perfis prontos; cada computador precisa importar/criar seus próprios perfis autorizados.
+- Narrações longas não têm limite de caracteres na interface. Os backends que aceitam orçamento de tokens recebem solicitações maiores (até 8.192 tokens por chamada); quando o texto ultrapassa a faixa segura do backend, o serviço divide por frases/palavras e junta os WAVs, sem pausa adicionada, em um único arquivo para biblioteca/timeline. Pure C não expõe limite de tokens na API empacotada, então usa trechos menores sequenciais para evitar truncamento.
 - No ambiente instalado, `qwen-tts==0.1.1`, `transformers==4.57.3` e PyTorch CPU importaram corretamente. Apesar do aviso do SoX e da ausência de FlashAttention, o worker fez inferência local real; esses avisos não causaram a falha reproduzida.
 - Em 19/11/2026, o benchmark pareado float32/INT8 foi repetido pelo script versionado; ambos os modos geraram áudio finito e não silencioso offline. O SoX ausente continuou sendo apenas aviso nesse caminho; `imageio-ffmpeg` estava instalado no venv isolado.
 

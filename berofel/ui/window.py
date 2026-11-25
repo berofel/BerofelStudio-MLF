@@ -3708,7 +3708,7 @@ class MainWindow(QMainWindow):
         QThreadPool.globalInstance().start(task)
         return task
 
-    def _task(self,fn,on_success,*args,label='Processamento'):
+    def _task(self,fn,on_success,*args,label='Processamento',finish_before_success=False):
         # Todas as tarefas demoradas compartilham UMA vaga. Não inicia uma
         # segunda IA/exportação antes de finalizar a atual (Batata Quente).
         if self.active_task is not None:
@@ -3727,12 +3727,17 @@ class MainWindow(QMainWindow):
         def success(result):
             if self.active_task is task:
                 self.active_task=None
+            # Some result callbacks open a modal review dialog. The measured
+            # analysis ends when the worker returns, not when the user closes it.
+            if finish_before_success:
+                self.process_panel.finish('concluido')
             try:
                 on_success(result)
             except Exception as exc:
                 error(f'{type(exc).__name__}: {exc}')
                 return
-            self.process_panel.finish('concluido')
+            if not finish_before_success:
+                self.process_panel.finish('concluido')
 
         def error(message):
             if self.active_task is task:
@@ -4047,7 +4052,8 @@ class MainWindow(QMainWindow):
 
         self._ai_busy=True
         self.actions_panel.busy(True)
-        task=self._task(worker,ready,label='Limpeza automática local')
+        task=self._task(worker,ready,label='Limpeza automática local',
+                        finish_before_success=True)
         if task:
             def done():
                 self._ai_busy=False;self.actions_panel.busy(False)

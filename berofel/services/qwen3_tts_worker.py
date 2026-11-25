@@ -14,6 +14,7 @@ from scipy.io import wavfile
 
 from .audio_reference import prepare_audio_prompt
 from .qwen3_audio_compat import install_librosa_compat
+from .narration_service import qwen_output_token_budget
 
 PROMPT_SCHEMA=5  # caches include safe edge-only trimming with internal pauses
 _MAX_PROMPTS=64
@@ -213,7 +214,11 @@ def _synthesize(model,request: dict,memory_cache: dict) -> dict:
     if not text:raise ValueError('Digite um texto para narrar.')
     prompt,prompt_cache_hit,profile_prepare_seconds=_voice_prompt(model,request,memory_cache)
     conditioning=_verify_clone_conditioning(prompt,str(request.get('reference_text','')))
-    max_tokens=min(2048,max(96,int(len(text)*1.5+48)))
+    # The official API accepts a caller-supplied output budget. The former
+    # 2048-token clamp truncated otherwise valid long Portuguese scripts.
+    # Long requests are split at sentence/word boundaries by narration_service;
+    # this ceiling is therefore a per-request safety guard, not a UI char cap.
+    max_tokens=qwen_output_token_budget(text)
     generation_started=time.perf_counter()
     wavs,rate=model.generate_voice_clone(text=text,language=request['language'],
         voice_clone_prompt=prompt,max_new_tokens=max_tokens)

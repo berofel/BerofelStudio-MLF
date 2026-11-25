@@ -26,7 +26,7 @@ import numpy as np
 
 from .ai_cache import cache_root, digest, write_json
 from .narration_service import (LANGUAGES, NarrationRequest, persistent_folder,
-                                _process_flags, validate_request,
+                                _process_flags, qwen_output_token_budget, validate_request,
                                 validate_clone_conditioning)
 
 ENGINE_ID='qwen3-tts-native-q4'
@@ -432,7 +432,8 @@ def generate_native_clone(request: NarrationRequest,progress=None,runner=None,
         with _LOCK:
             process,model_load_seconds=_start_server(exe,model,tokenizer,control,threads)
             payload={'text':request.text.strip(),'output':str(temporary),
-                'language':_LANGUAGES[request.language],'max_tokens':2048,
+                'language':_LANGUAGES[request.language],
+                'max_tokens':qwen_output_token_budget(request.text),
                 'embedding_in':str(embedding)}
             if stream_file is not None:
                 stream_file.unlink(missing_ok=True)

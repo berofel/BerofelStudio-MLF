@@ -1,3 +1,10 @@
+## Próxima atualização (ainda não publicada)
+
+- Narração longa: removido o teto de 2.048 tokens por solicitação do Qwen Original; textos extensos são divididos em limites de frase/palavra e unidos em um WAV único, sem impor limite de caracteres no campo. A rota Pure C usa trechos sequenciais por não expor orçamento de tokens na API empacotada.
+- A tela de narração explica que Qwen3-TTS Base não inclui locutores pré-gravados; perfis autorizados são locais e não são distribuídos pelo instalador.
+- O cronômetro da limpeza automática agora encerra quando a análise retorna, antes da janela de revisão. A aplicação posterior das sugestões continua sendo uma tarefa cronometrada separadamente.
+- Testes de regressão para textos acima de 1.700 caracteres, divisão sem perda de palavras e consolidação dos trechos em WAV contínuo.
+
 # 0.10.0-alpha.4 — instalação sem janela de terminal
 
 - O setup executa o bootstrap PowerShell oculto com `nsExec` do NSIS e encaminha as mensagens de etapa para o painel de detalhes do próprio instalador; não abre uma janela de CMD/PowerShell durante a preparação do editor.

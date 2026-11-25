@@ -81,6 +81,7 @@ class NarrationPanel(QScrollArea):
         layout.addWidget(QLabel('Texto para narrar'))
         self.text = QTextEdit()
         self.text.setPlaceholderText('Digite sua narração, um roteiro, uma correção de fala...')
+        self.text.setToolTip('Sem limite artificial de caracteres. Textos extensos são divididos em trechos seguros quando necessário e entregues como um único WAV.')
         self.text.setMinimumHeight(145)
         layout.addWidget(self.text)
         fill = QPushButton('↳ Trazer transcrição dos blocos selecionados')
@@ -218,7 +219,7 @@ class NarrationPanel(QScrollArea):
         self._qwen_install_timer=QTimer(self)
         self._qwen_install_timer.setInterval(1000)
         self._qwen_install_timer.timeout.connect(self._poll_qwen_install)
-        self.license_note = QLabel('Qwen3-TTS Base · clonagem local a partir de referência autorizada.')
+        self.license_note = QLabel('Qwen3-TTS Base não inclui vozes pré-gravadas: crie ou importe um perfil autorizado neste computador. Perfis privados não são distribuídos pelo instalador.')
         self.license_note.setWordWrap(True)
         self.license_note.setStyleSheet('color:#8b9db3;font-size:11px;')
         self.license_note.setOpenExternalLinks(True)
@@ -887,6 +888,8 @@ class NarrationPanel(QScrollArea):
                 self.license_note.setText('Importe uma referência de voz autorizada para gerar com Qwen3-TTS Base.')
         else:
             self.license_note.setText('Qwen3-TTS Base usa áudio de referência e sua transcrição para clonagem local. A amostra não sai deste computador.')
+        self.license_note.setText(self.license_note.text() +
+            ' O modelo Base não inclui um catálogo de vozes; perfis autorizados são criados/importados neste computador e não vêm no instalador.')
         self._clone_engine_note=self.license_note.text()
         self._refresh_clone_guidance(engine)
 
