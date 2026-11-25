@@ -86,9 +86,31 @@ jobs:
           name: BerofelStudio-Windows-x64
           path: dist
 
-      - name: Install core-only package on clean Windows
+      - name: Prepare signed Visual C++ runtime for headless setup
         shell: powershell
         run: |
+          $runtime = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64' -ErrorAction SilentlyContinue
+          $installed = $false
+          if ($runtime -and $runtime.Installed -eq 1) {
+            try { $installed = ([version]($runtime.Version.ToString().TrimStart('v')) -ge [version]'14.50.0.0') } catch { $installed = $false }
+          }
+          if (-not $installed) {
+            $installerPath = Join-Path $env:RUNNER_TEMP 'vc_redist.x64.exe'
+            Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile $installerPath -TimeoutSec 120
+            $signature = Get-AuthenticodeSignature -LiteralPath $installerPath
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') {
+              throw 'O runtime Visual C++ baixado não passou na validação Authenticode da Microsoft.'
+            }
+            $process = Start-Process -FilePath $installerPath -ArgumentList '/install /quiet /norestart' -Wait -PassThru
+            if ($process.ExitCode -notin @(0, 1638, 3010)) { throw "Visual C++ runtime terminou com código $($process.ExitCode)." }
+          }
+
+      - name: Install core-only package on clean Windows
+        id: smoke
+        shell: powershell
+        run: |
+          "install_log=$env:LOCALAPPDATA\BerofelStudio\logs\instalacao_*.log" >> $env:GITHUB_OUTPUT
+          "update_log=$env:TEMP\BerofelStudio-update-check.log" >> $env:GITHUB_OUTPUT
           $installer = Get-ChildItem dist -Filter 'BerofelStudio-*-Setup-x64.exe' | Where-Object { $_.Name -ne 'BerofelStudio-Setup-x64.exe' } | Select-Object -First 1
           if (-not $installer) { throw 'O instalador versionado não veio no artefato.' }
           $shaFile = $installer.FullName + '.sha256'
@@ -99,7 +121,14 @@ jobs:
           if ($actual -ine $expected) { throw 'O EXE do instalador diverge do SHA-256.' }
           $installRoot = Join-Path $env:LOCALAPPDATA 'BerofelStudio'
           if (Test-Path -LiteralPath $installRoot) { throw 'Runner de smoke não está limpo: instalação anterior detectada.' }
-          $setupProcess = Start-Process -FilePath $installer.FullName -ArgumentList @('/S','/NOUPDATECHECK','/COREONLY') -Wait -PassThru -WindowStyle Hidden
+          $setupProcess = Start-Process -FilePath $installer.FullName -ArgumentList @('/S','/NOUPDATECHECK','/COREONLY') -PassThru -WindowStyle Hidden
+          if (-not $setupProcess.WaitForExit(900000)) {
+            $logs = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'BerofelStudio\logs') -Filter 'instalacao_*.log' -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($logs) { Get-Content -LiteralPath $logs.FullName -Tail 100 | Write-Host }
+            throw 'Setup excedeu 15 minutos no runner limpo; o log de instalação foi impresso para diagnóstico.'
+          }
+          $setupProcess.Refresh()
           if ($setupProcess.ExitCode -ne 0) { throw "Setup silencioso falhou com código $($setupProcess.ExitCode)." }
           $python = Join-Path $env:LOCALAPPDATA 'BFS\venv\Scripts\python.exe'
           if (-not (Test-Path -LiteralPath $python)) { throw 'O bootstrap não criou o ambiente Python.' }
@@ -121,6 +150,17 @@ jobs:
           if (Test-Path -LiteralPath $installRoot) { throw 'A pasta do aplicativo permaneceu após a desinstalação.' }
           if (Test-Path -LiteralPath $desktopLink) { throw 'O atalho não foi removido na desinstalação.' }
           Write-Host '[OK] Instalação limpa, diagnóstico, janela Qt, atalho, preservação de dados e desinstalação.'
+
+      - name: Preserve installation diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BerofelStudio-installer-smoke-diagnostics
+          path: |
+            ${{ steps.smoke.outputs.install_log }}
+            ${{ steps.smoke.outputs.update_log }}
+          if-no-files-found: warn
+          retention-days: 7
 
   publish-release:
     name: Publish validated GitHub Release
