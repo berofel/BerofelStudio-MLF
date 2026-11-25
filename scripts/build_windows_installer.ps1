@@ -48,11 +48,12 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Não foi possível criar o snapshot limpo de release.' }
     Expand-Archive -LiteralPath $archive -DestinationPath $stageFull -Force
 
-    foreach ($name in @('.venv','venv','env','ENV','__pycache__','.pytest_cache','.mypy_cache','.ruff_cache','logs','tools','models','dist','build','node_modules','tests')) {
-        $candidate = Join-Path $stageFull $name
-        if (Test-Path -LiteralPath $candidate) { Remove-Item -LiteralPath $candidate -Recurse -Force }
+    # git archive includes only tracked release source. Local model/media/cache
+    # files are not in the archive; keep installer inputs untouched.
+    $testsDirectory = Join-Path $stageFull 'tests'
+    if (Test-Path -LiteralPath $testsDirectory -PathType Container) {
+        Remove-Item -LiteralPath $testsDirectory -Recurse -Force
     }
-    Get-ChildItem -LiteralPath $stageFull -File -Recurse -Include '*.zip','*.7z','*.rar','*.bundle','*.gguf','*.safetensors','*.pt','*.pth','*.ckpt','*.onnx','*.tflite','*.engine','*.model','*.bin','*.exe','*.dll','*.pyd','*.so','*.dylib','*.lib','*.wav','*.mp3','*.flac','*.ogg','*.m4a','*.aac','*.wma','*.mp4','*.mov','*.mkv','*.avi','*.webm','*.bfs','*.bfsproject','*.bfsproj','*.sqlite','*.sqlite3','*.db' | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
 
     $script = Join-Path $stageFull 'installer\BerofelStudio.nsi'
     if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
