@@ -180,8 +180,12 @@ try {
     Run-Python @((Join-Path $root 'scripts\verificar.py'),'--strict','--quick','--editor-only')
     $env:BEROFEL_APP_ROOT = $root
     $versionCode = 'import os,sys;sys.path.insert(0,os.environ["BEROFEL_APP_ROOT"]);from berofel import __version__;print(__version__)'
-    $appVersion = (& $venvExe -c $versionCode | Select-Object -Last 1)
-    if ($LASTEXITCODE -ne 0 -or -not $appVersion) {
+    # Capture all stdout before selecting the last line. A native command piped
+    # through Select-Object can leave $LASTEXITCODE unset in Windows PowerShell.
+    $versionOutput = @(& $venvExe -c $versionCode)
+    $versionExitCode = $LASTEXITCODE
+    $appVersion = $versionOutput | Select-Object -Last 1
+    if ($versionExitCode -ne 0 -or -not $appVersion) {
         throw 'Instalacao terminou, mas nao foi possivel ler a versao do codigo local.'
     }
     Write-Host "`n[OK] Instalacao do BerofelStudio $($appVersion.Trim()) concluida." -ForegroundColor Green

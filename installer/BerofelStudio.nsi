@@ -77,6 +77,10 @@ Section "BerofelStudio (obrigatório)" SEC_EDITOR
   DetailPrint "Preparando Python, bibliotecas, FFmpeg e testes locais..."
   ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\scripts\instalar_windows.ps1" -SkipQwenPrompt$InstallParakeetTdt$InstallQwen3' $0
   ${If} $0 != 0
+    ${If} ${Silent}
+      SetErrorLevel 1
+      Abort
+    ${EndIf}
     MessageBox MB_ICONSTOP "A preparação das dependências falhou (código $0). Consulte os logs em $INSTDIR\logs."
     Abort
   ${EndIf}
