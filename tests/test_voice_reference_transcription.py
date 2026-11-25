@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+import wave
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -54,30 +55,33 @@ class VoiceReferenceTranscriptionTests(unittest.TestCase):
             root = Path(folder)
             source = root / 'authorized-reference.ogg'
             source.write_bytes(b'not decoded by this unit test' * 20)
-            models = root / 'whisper-base'
+            models = root / 'parakeet-tdt-v3-int8'
             models.mkdir()
-            (models / 'model.bin').write_bytes(b'local model fixture')
+            (models / 'encoder.int8.onnx').write_bytes(b'local model fixture')
 
             def make_wav(command, **_kwargs):
-                Path(command[-1]).write_bytes(b'RIFF' + b'pcm fixture' * 20)
+                with wave.open(command[-1],'wb') as wav:
+                    wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000)
+                    wav.writeframes(b'\0\0'*8000)
                 return SimpleNamespace(returncode=0, stdout='', stderr='')
 
             def run_stage(name, payload, _output, **_kwargs):
-                self.assertEqual(name, 'whisper')
-                self.assertEqual(payload['language'], 'pt')
-                self.assertTrue(payload['offline_only'])
-                self.assertTrue(payload['word_timestamps'])
-                self.assertEqual(payload['compute_type'], 'int8')
-                return {'result': {
-                    'language': 'pt',
-                    'segments': [{'text': ' A gente vai narrar hoje. '}],
-                    'words': [{'probability': .9}, {'probability': .8}],
-                }}
+                if name=='vad':
+                    return {'result':{'speech':[{'start':0.2,'end':0.7}]}}
+                if name=='parakeet':
+                    self.assertEqual(payload['threads'],4)
+                    self.assertEqual(payload['speech_spans'],[{'start':0.2,'end':0.7}])
+                    return {'result':{
+                        'language':'pt',
+                        'segments':[{'text':' A gente vai narrar hoje. '}],
+                        'words':[{'probability':.9}, {'probability':.8}],
+                    }}
+                raise AssertionError(name)
 
             with (patch('berofel.services.audio_reference._reference_window',
                         return_value=(12.5, 8.0, .91)),
                   patch('berofel.services.ffmpeg.ffmpeg_path', return_value='ffmpeg'),
-                  patch('berofel.services.model_paths.whisper_model_dir',
+                  patch('berofel.services.model_paths.parakeet_tdt_model_dir',
                         return_value=models),
                   patch('berofel.services.voice_reference_transcription.subprocess.run',
                         side_effect=make_wav)):
@@ -89,7 +93,7 @@ class VoiceReferenceTranscriptionTests(unittest.TestCase):
         self.assertAlmostEqual(result['mean_word_confidence'], .85)
         self.assertTrue(result['review_required'])
 
-    def test_missing_local_whisper_model_has_actionable_error(self):
+    def test_missing_local_parakeet_model_has_actionable_error(self):
         from berofel.services.voice_reference_transcription import transcribe_voice_reference
 
         with tempfile.TemporaryDirectory(prefix='bfs_ref_asr_missing_') as folder:
@@ -98,9 +102,9 @@ class VoiceReferenceTranscriptionTests(unittest.TestCase):
             model_dir = Path(folder) / 'missing-model'
             with (patch('berofel.services.audio_reference._reference_window',
                         return_value=(0.0, 4.0, .8)),
-                  patch('berofel.services.model_paths.whisper_model_dir',
+                  patch('berofel.services.model_paths.parakeet_tdt_model_dir',
                         return_value=model_dir)):
-                with self.assertRaisesRegex(FileNotFoundError, 'Faster-Whisper Base local'):
+                with self.assertRaisesRegex(FileNotFoundError, 'Parakeet TDT v3 ONNX INT8'):
                     transcribe_voice_reference(str(source))
 
 

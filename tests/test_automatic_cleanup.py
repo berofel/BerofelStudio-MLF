@@ -176,6 +176,12 @@ class AutomaticCleanupTests(unittest.TestCase):
         self.assertTrue(any('Repetição adjacente' in c.reason for c in found))
         self.assertFalse(any(c.evidence[0].lower() in {'tipo','não','é','né'} for c in found))
 
+    def test_unknown_parakeet_word_confidence_uses_neutral_filler_gate(self):
+        transcript=words('Ah eu vou começar.',1.)
+        transcript[0]['probability']=None
+        found=_filler_candidates(clip(),{'words':transcript})
+        self.assertTrue(any(candidate.evidence == ('Ah',) for candidate in found))
+
     def test_filler_detector_finds_restarted_phrase_without_cutting_emphasis(self):
         restarted=words('Eu vou, eu vou mostrar a timeline.',1.)
         found=_filler_candidates(clip(),{'words':restarted})

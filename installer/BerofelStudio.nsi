@@ -41,7 +41,7 @@ BrandingText "BerofelStudio"
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "PortugueseBR"
 
-Var InstallWhisperBase
+Var InstallParakeetTdt
 Var InstallQwen3
 
 Function .onInit
@@ -49,7 +49,7 @@ Function .onInit
     MessageBox MB_ICONSTOP "O BerofelStudio requer Windows 10/11 de 64 bits (x64)."
     Abort
   ${EndIf}
-  StrCpy $InstallWhisperBase ""
+  StrCpy $InstallParakeetTdt ""
   StrCpy $InstallQwen3 ""
   SetShellVarContext current
 FunctionEnd
@@ -58,8 +58,8 @@ Function LaunchBerofelStudio
   ExecShell "open" "$INSTDIR\ABRIR_BEROFELSTUDIO.vbs"
 FunctionEnd
 
-Section "Faster-Whisper Base, Silero e corretor pt-BR (~150 MB)" SEC_WHISPER
-  StrCpy $InstallWhisperBase " -InstallWhisperBase"
+Section "Parakeet TDT v3 ONNX INT8/CPU, Silero e corretor pt-BR (~700 MB)" SEC_PARAKEET
+  StrCpy $InstallParakeetTdt " -InstallParakeetTdt"
 SectionEnd
 
 Section "Qwen3-TTS Base 0.6B (modelo ~2,5 GB + runtime; requer internet e vários GB livres)" SEC_QWEN3
@@ -78,7 +78,7 @@ Section "BerofelStudio (obrigatório)" SEC_EDITOR
   CreateShortCut "$SMPROGRAMS\BerofelStudio\Desinstalar BerofelStudio.lnk" "$INSTDIR\Uninstall.exe" "" "$INSTDIR\assets\brand\berofel_studio.ico" 0
 
   DetailPrint "Preparando Python, bibliotecas, FFmpeg e testes locais..."
-  ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\scripts\instalar_windows.ps1" -SkipQwenPrompt$InstallWhisperBase$InstallQwen3' $0
+  ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\scripts\instalar_windows.ps1" -SkipQwenPrompt$InstallParakeetTdt$InstallQwen3' $0
   ${If} $0 != 0
     MessageBox MB_ICONSTOP "A preparação das dependências falhou (código $0). Consulte os logs em $INSTDIR\logs."
     Abort

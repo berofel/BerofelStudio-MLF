@@ -22,7 +22,7 @@ def main():
         if p.returncode:raise RuntimeError('Não foi possível gerar o teste: '+p.stderr[-350:])
         selected=Clip(source=str(source),start=1,end=7,track_id='test',kind='video',title='Selecionado')
         cache=CacheStore(Path(dir)/'cache')
-        print('Primeira análise (Silero VAD + Faster-Whisper Base; mídia sintética sem fala):',flush=True)
+        print('Primeira análise (Silero VAD + Parakeet TDT v3 INT8; mídia sintética sem fala):',flush=True)
         started=time.monotonic()
         first=Pipeline(cache).analyze([selected],AIOptions(),progress=lambda x,y:print(f'Etapas: {x}/{y}',flush=True))
         print('Cache primeira vez:',first['cache_hits'],'reusos,',first['cache_misses'],'processadas',flush=True)

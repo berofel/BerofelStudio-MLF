@@ -12,7 +12,7 @@ Get-Content .\BerofelStudio-<versão>-Setup-x64.exe.sha256
 ```
 
 Os valores SHA-256 precisam ser iguais. Execute o EXE e mantenha selecionados
-os componentes Faster-Whisper e Qwen3-TTS para instalar os motores de IA junto
+os componentes Parakeet TDT v3 ONNX INT8/CPU e Qwen3-TTS para instalar os motores de IA junto
 com o editor. A opção de atalho da Área de Trabalho fica selecionada por padrão.
 O setup instala por usuário, sem copiar projetos, mídias ou perfis vocais do
 computador que produziu o instalador.
@@ -58,7 +58,7 @@ e executa os autotestes locais.
 
 As duas tarefas de IA vêm marcadas inicialmente e podem ser desmarcadas:
 
-* Faster-Whisper Base, Silero/ONNX e dicionário local VERO pt-BR.
+* Parakeet TDT v3 ONNX INT8/CPU, Silero VAD ONNX e dicionário local VERO pt-BR.
 * Qwen3-TTS Base 0.6B no ambiente isolado existente (download aproximado de
   2,5 GB).
 
@@ -67,8 +67,8 @@ grandes, têm seus próprios termos/licenças e não devem entrar no Git. O EXE 
 um bootstrapper verificado pelo SHA-256 que baixa os artefatos de suas fontes
 durante a instalação. Portanto, esta versão não é offline nem portátil; após os
 downloads, os motores locais funcionam sem API, conforme seus módulos. A
-assistente local Qwen 1.7B, Parakeet e runtimes experimentais continuam
-opcionais e não são instalados por padrão.
+assistente local Qwen 1.7B e runtimes experimentais continuam opcionais e
+não são instalados por padrão.
 
 O pacote é montado com NSIS e usa somente o compressor zlib. O código e esse
 compressor são distribuídos sob licença zlib/libpng, que permite uso comercial;

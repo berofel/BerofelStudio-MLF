@@ -121,10 +121,9 @@ def validate_reference_transcript(text: str, duration_seconds: float) -> None:
 def _silero_speech_regions(source: Path, binary: str, duration: float):
     """Use the already-installed Silero VAD in bounded chunks when available."""
     try:
-        from faster_whisper.vad import VadOptions, get_speech_timestamps
-        options=VadOptions(threshold=.5,min_speech_duration_ms=250,
-                           min_silence_duration_ms=350,speech_pad_ms=120)
-    except ImportError:
+        from .parakeet_asr import detect_speech, load_vad
+        vad=load_vad(threads=1)
+    except (ImportError,FileNotFoundError,RuntimeError):
         return None
     rate=16000;chunk_samples=rate*30;regions=[];process=None;offset=0
     command=[binary,'-hide_banner','-loglevel','error','-nostdin','-i',str(source),
@@ -137,9 +136,11 @@ def _silero_speech_regions(source: Path, binary: str, duration: float):
             if not raw:break
             audio=np.frombuffer(raw[:len(raw)//4*4],dtype='<f4').copy()
             if audio.size:
-                for span in get_speech_timestamps(audio,vad_options=options,sampling_rate=rate):
-                    start=offset+int(span['start']);end=offset+int(span['end'])
-                    if end>start:regions.append((start/rate,min(duration,end/rate)))
+                for span in detect_speech(audio,vad=vad,min_speech_ms=250,
+                        min_silence_ms=350,speech_pad_ms=120,
+                        max_speech_seconds=20):
+                    start=offset+float(span['start']);end=offset+float(span['end'])
+                    if end>start:regions.append((start,min(duration,end)))
             offset+=len(audio)
         process.communicate(timeout=30)
         if process.returncode:raise RuntimeError('Silero não conseguiu analisar a referência.')

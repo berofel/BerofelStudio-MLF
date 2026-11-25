@@ -197,9 +197,9 @@ class NarrationPanel(QScrollArea):
             'o texto corresponder ao trecho falado.')
         self.reference_text_reviewed.setVisible(False)
         layout.addWidget(self.reference_text_reviewed)
-        self.transcribe_reference=QPushButton('Transcrever referência (Whisper local)')
+        self.transcribe_reference=QPushButton('Transcrever referência (Parakeet local)')
         self.transcribe_reference.setToolTip(
-            'Transcreve a janela vocal selecionada com o Faster-Whisper local. '
+            'Transcreve a janela vocal selecionada com o Parakeet TDT v3 ONNX INT8 local. '
             'Revise e corrija o texto antes de usá-lo na clonagem PT-BR.')
         self.transcribe_reference.clicked.connect(self._transcribe_reference)
         layout.addWidget(self.transcribe_reference)
@@ -1302,7 +1302,7 @@ class NarrationPanel(QScrollArea):
         confidence_note=(f' confiança média {float(confidence):.0%};' if confidence is not None
                          else '')
         self.status.setText(
-            f'Rascunho Whisper local pronto{confidence_note} · janela {start:.1f}–'
+            f'Rascunho Parakeet local pronto{confidence_note} · janela {start:.1f}–'
             f'{start+duration:.1f}s. Revise a transcrição e corrija qualquer erro antes '
             'de gerar; o texto da gravação não foi alterado automaticamente.')
 

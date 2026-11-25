@@ -1,4 +1,4 @@
-"""Legendas independentes: texto manual ou Whisper, em qualquer escopo.
+"""Legendas independentes: texto manual ou transcrição local, em qualquer escopo.
 
 Cada legenda gerada vira um clipe de TEXTO editável na timeline. Nada é
 sobreposto sem consentimento, e clipes manuais nunca são apagados.
@@ -69,7 +69,7 @@ def scoped_cues(project, targets):
                 continue
             a, b = float(w['source_start']), float(w['source_end'])
             # Não extrapolar limites da seleção. Um resíduo pequeno pode surgir
-            # por arredondamento do timestamp do Whisper.
+            # por arredondamento dos timestamps do reconhecedor.
             if a < target.source_start-.005 or b > target.source_end+.005 or b <= a:
                 continue
             at = target.timeline_start + (a - target.source_start) / clip.speed

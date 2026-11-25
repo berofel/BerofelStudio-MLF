@@ -1,7 +1,7 @@
-"""Local, reversible automatic cleanup using the editor's Silero/Whisper cache.
+"""Local, reversible automatic cleanup using the editor's Silero/Parakeet cache.
 
 All proposed intervals are clip-source-relative seconds. No generative model is
-used here; transcript words always keep timestamps supplied by Faster-Whisper
+used here; transcript words always keep timestamps supplied by Parakeet TDT
 or already persisted by the project.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ import time
 import unicodedata
 import math
 from typing import Callable
-from .asr_vocabulary import BASE_HOTWORDS
+from .domain_terms import BASE_ANALYSIS_TERMS
 from .discourse_features import analyze_irony
 
 from .ai_pipeline import AIOptions, run_analysis
@@ -130,8 +130,8 @@ _CONCEPT_BY_LEMMA={
     'legenda':'legenda','subtítulo':'legenda','subtitular':'legenda',
 }
 _KNOWN_ENTITIES=frozenset({'windows','linux','macos','berofelstudio','berofel','qwen',
-    'silero','whisper','ffmpeg','timeline','portugues','português','brasil'})
-_ANALYSIS_APPROVED=frozenset(word.casefold() for term in BASE_HOTWORDS
+    'silero','parakeet','ffmpeg','timeline','portugues','português','brasil'})
+_ANALYSIS_APPROVED=frozenset(word.casefold() for term in BASE_ANALYSIS_TERMS
                              for word in _WORD_RE.findall(term))
 _ANALYSIS_ALIAS_SEEN=set()
 _ACTION_LEMMAS=frozenset({'começar','iniciar','mostrar','exibir','apresentar','ensinar','demonstrar',
@@ -458,7 +458,7 @@ def _sentences(words: list[dict], clip_start: float, pauses: list[tuple[float, f
         if not text or not math.isfinite(start) or not math.isfinite(end) or end <= start:
             continue
         # Split on an actual VAD pause or reliable hard punctuation. A generic
-        # Whisper word gap is not enough to declare a sentence boundary.
+    # A word gap from ASR alone is not enough to declare a sentence boundary.
         gap=max(0.,start-last_end)
         preceding_correction=bool(current and
             _tokens(current[-1].text.strip(' ,;:'))[:1] in (['não'],['nao']))
@@ -471,7 +471,12 @@ def _sentences(words: list[dict], clip_start: float, pauses: list[tuple[float, f
                         re.search(r'[.!?]["”\']?$',current[-1].text)):
             result.append(current); current = []
         speaker=item.get('speaker_id',item.get('speaker'))
-        word = TranscriptWord(text, start, end, float(item.get('probability') or 1.0),
+        raw_probability=item.get('probability')
+        # Some ASR engines (including Parakeet TDT v3 through onnx-asr) do
+        # not publish token confidence. Treat that as unknown/neutral, not as
+        # a fabricated zero or a perfect score.
+        probability=.5 if raw_probability is None else float(raw_probability)
+        word = TranscriptWord(text, start, end, probability,
                               str(speaker) if speaker is not None else None)
         current.append(word); last_end = end
         # Ellipsis marks an interrupted thought and must stay attached to a
@@ -728,12 +733,18 @@ def _filler_candidates(clip, report: dict) -> list[CutCandidate]:
         normalized=token[0]
         extended=bool(re.search(r'(?:é|ã|a|h){2,}', normalized))
         is_filler=normalized in _FILLERS or extended
-        if is_filler and end-start <= 1.2 and item.get('probability',1) >= .25:
+        raw_probability=item.get('probability')
+        try:
+            probability=.5 if raw_probability is None else float(raw_probability)
+        except (TypeError,ValueError):
+            probability=0.
+        if is_filler and end-start <= 1.2 and probability >= .25:
             found.append(CutCandidate(clip.id,max(0,start-clip.start),min(clip.end-clip.start,end-clip.start),
                 'Hesitação lexical isolada com timestamp confirmado.',(text,),88,'filler',
                 f'fill:{clip.id}:{round(start*1000)}:{round(end*1000)}'))
         try:
-            probability=float(item.get('probability',1.) or 0.)
+            raw_probability=item.get('probability')
+            probability=.5 if raw_probability is None else float(raw_probability)
         except (TypeError,ValueError):
             probability=0.
         clean.append((normalized,start,end,text,probability))
@@ -747,7 +758,7 @@ def _filler_candidates(clip, report: dict) -> list[CutCandidate]:
             found.append(CutCandidate(clip.id,max(0,start-clip.start),min(clip.end-clip.start,end-clip.start),
                 'Repetição adjacente da mesma palavra; ocorrência seguinte preservada.',
                 (text, clean[i+1][3]),82,'filler',f'rep:{clip.id}:{round(start*1000)}'))
-    # A short repeated speech starter is a common restart even when Whisper
+    # A short repeated speech starter is a common restart even when the ASR
     # emits no separate sentence ("eu vou, eu vou mostrar"). Require a known
     # starter, a restart mark, a close boundary and a continuation after the
     # second copy; this deliberately leaves rhetorical repetitions intact.
@@ -808,10 +819,10 @@ def _merge_candidates(candidates: list[CutCandidate]) -> tuple[list[CutCandidate
 def analyze_automatic_cleanup(clips, options: EditOptions, *, known_words=None,
                               analyze: Callable=run_analysis, progress=None,
                               control=None, stage=None, ai_options=None) -> EditPlan:
-    """Run selected modules, sharing existing cached Silero and Whisper data.
+    """Run selected modules, sharing existing cached Silero and Parakeet data.
 
     ``silence`` is the existing Silero route; ``transcribe`` is the existing
-    Faster-Whisper route. This function never calls Qwen or a generative model.
+    Parakeet ONNX route. This function never calls Qwen or a generative model.
     """
     started=time.perf_counter(); plan=EditPlan(options)
     feature_cache_before=(_token_cache.cache_info(),_lemma.cache_info(),_phrase_signature.cache_info())
@@ -839,7 +850,7 @@ def analyze_automatic_cleanup(clips, options: EditOptions, *, known_words=None,
     # by MainWindow. Transcribe only clip ranges lacking persisted words.
     if needs_text and uncovered:
         if control: control.checkpoint()
-        if stage: stage('Faster-Whisper · transcrição necessária')
+        if stage: stage('Parakeet TDT v3 · transcrição necessária')
         then=time.perf_counter()
         with _ProcessMemorySampler() as memory:
             text_data=analyze(uncovered,options=opts,known_words={},progress=progress,

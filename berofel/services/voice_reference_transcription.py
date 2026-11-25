@@ -8,12 +8,11 @@ from pathlib import Path
 
 def transcribe_voice_reference(reference: str, *, runner=None, progress=None,
                                control=None, stage=None) -> dict:
-    """Transcribe the selected <=30 s reference window with existing Whisper.
+    """Transcribe the selected <=30 s reference window with local Parakeet TDT.
 
     This is only a transcript draft. It is returned to the UI for review and is
     never silently used to alter the source recording or a saved voice profile.
-    The same local Faster-Whisper installation/model used elsewhere in the
-    editor is reused, strictly offline.
+    The same local Parakeet TDT v3 ONNX INT8 runtime used elsewhere is reused.
     """
     source = Path(reference).expanduser().resolve()
     if not source.is_file():
@@ -31,11 +30,11 @@ def transcribe_voice_reference(reference: str, *, runner=None, progress=None,
         raise ValueError('Não foi possível encontrar uma janela de áudio para transcrever.')
 
     from .ffmpeg import ffmpeg_path
-    from .model_paths import whisper_model_dir
-    model_dir = whisper_model_dir()
-    if not (model_dir / 'model.bin').is_file():
+    from .model_paths import parakeet_tdt_model_dir
+    model_dir = parakeet_tdt_model_dir()
+    if not model_dir.is_dir() or not any(model_dir.glob('*.onnx')):
         raise FileNotFoundError(
-            'O Faster-Whisper Base local não está instalado. Instale a IA opcional '
+            'O Parakeet TDT v3 ONNX INT8 não está instalado. Execute INSTALAR_IA_OPCIONAL.bat '
             'ou digite/revise manualmente a transcrição da referência.'
         )
 
@@ -46,7 +45,7 @@ def transcribe_voice_reference(reference: str, *, runner=None, progress=None,
                    '-map', '0:a:0', '-vn', '-t', f'{duration:.4f}',
                    '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', str(wav_path)]
         if stage:
-            stage('FFmpeg · preparando a janela escolhida para o Whisper local')
+            stage('FFmpeg · preparando a janela escolhida para o Parakeet')
         if control:
             completed = control.run(command, timeout=max(120, int(duration * 4)),
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -64,17 +63,22 @@ def transcribe_voice_reference(reference: str, *, runner=None, progress=None,
         if control:
             control.checkpoint()
         if stage:
-            stage('Faster-Whisper Base · transcrevendo em português para revisão')
+            stage('Silero ONNX · encontrando fala na referência')
         if progress:
             progress(0, 1)
-        payload = {'audio_path': str(wav_path), 'model': 'base', 'language': 'pt',
-                   'offline_only': True, 'compute_type': 'int8', 'device': 'cpu',
-                   'word_timestamps': True}
-        answer = Path(temp) / 'transcript.json'
+        vad_answer=Path(temp)/'vad.json'
         if runner is None:
             from .ai_pipeline import StageRunner
             runner = StageRunner()
-        envelope = runner('whisper', payload, answer,
+        vad_result=runner('vad',{'audio_path':str(wav_path),'threads':1},vad_answer,
+                          timeout=max(180,int(duration*4)),control=control)
+        vad_result=vad_result.get('result',vad_result)
+        payload = {'audio_path': str(wav_path), 'model_path':str(model_dir),
+                   'speech_spans':vad_result.get('speech',[]),'threads':4}
+        answer = Path(temp) / 'transcript.json'
+        if stage:
+            stage('Parakeet TDT v3 ONNX INT8/CPU · transcrevendo em português para revisão')
+        envelope = runner('parakeet', payload, answer,
                           timeout=max(180, int(duration * 8)), control=control)
         result = envelope.get('result', envelope)
         segments = result.get('segments') or []
@@ -82,7 +86,7 @@ def transcribe_voice_reference(reference: str, *, runner=None, progress=None,
         text = ' '.join(text.split())
         if not text:
             raise RuntimeError(
-                'O Whisper não reconheceu fala suficiente nessa janela. Escolha uma '
+                'O Parakeet não reconheceu fala suficiente nessa janela. Escolha uma '
                 'gravação mais limpa ou digite a transcrição exata manualmente.'
             )
         words = result.get('words') or []
@@ -97,8 +101,8 @@ def transcribe_voice_reference(reference: str, *, runner=None, progress=None,
             control.checkpoint()
         if progress:
             progress(1, 1)
-        return {'text': text, 'language_detected': str(result.get('language') or 'pt'),
+        return {'text': text, 'language_detected': str(result.get('language') or 'multilingual-auto'),
                 'reference_window': {'start': float(start), 'duration': float(duration)},
                 'active_fraction': float(active_fraction), 'word_count': len(text.split()),
                 'mean_word_confidence': confidence, 'review_required': True,
-                'model': 'Faster-Whisper Base local'}
+                'model': 'Parakeet TDT v3 ONNX INT8/CPU'}

@@ -7,6 +7,7 @@ import time
 import unittest
 import wave
 from pathlib import Path
+from unittest.mock import patch
 
 from berofel.services.process_control import ProcessControl, ProcessCancelled, psutil
 from berofel.services.ai_pipeline import Pipeline, AIOptions, StageRunner
@@ -126,6 +127,10 @@ class ControlTests(unittest.TestCase):
 
     def test_cache_survives_cancel_and_resumes_later(self):
         with tempfile.TemporaryDirectory() as folder:
+            model_dir=Path(folder)/'parakeet';model_dir.mkdir()
+            (model_dir/'model.int8.onnx').write_bytes(b'model')
+            vad_dir=Path(folder)/'silero';vad_dir.mkdir()
+            (vad_dir/'silero.onnx').write_bytes(b'vad')
             source = Path(folder) / 'media.mp4'
             source.write_bytes(b'fake-media')
             clip = Clip(source=str(source),start=0,end=5,kind='video')
@@ -139,13 +144,20 @@ class ControlTests(unittest.TestCase):
                     result = {'audio_path':str(wav),'duration':5}
                 elif stage == 'vad':
                     result = {'speech':[{'start':0,'end':5}], 'duration':5}
-                elif stage == 'whisper':
+                elif stage == 'parakeet':
                     result = {'words':[], 'segments':[], 'duration':5}
                 else:
                     raise AssertionError(stage)
                 write_json(Path(output),{'schema':CACHE_SCHEMA,'stage':stage,'result':result})
                 return result
             cache = CacheStore(Path(folder)/'cache')
+            with patch('berofel.services.ai_pipeline.parakeet_tdt_model_dir',
+                       return_value=model_dir), \
+                 patch('berofel.services.ai_pipeline.silero_vad_model_dir',
+                       return_value=vad_dir):
+                self._run_cancel_resume(cache,clip,control,calls,fake)
+
+    def _run_cancel_resume(self,cache,clip,control,calls,fake):
             def stop_after_first(done,total):
                 if done == 1:
                     control.cancel()
@@ -153,7 +165,7 @@ class ControlTests(unittest.TestCase):
                 Pipeline(cache,fake,control=control).analyze([clip],AIOptions(),progress=stop_after_first)
             self.assertEqual(calls,['extract'])
             result = Pipeline(cache,fake,control=ProcessControl()).analyze([clip],AIOptions())
-            self.assertEqual(calls,['extract','vad','whisper'])
+            self.assertEqual(calls,['extract','vad','parakeet'])
             self.assertEqual(result['cache_hits'],1)
             self.assertEqual(result['cache_misses'],2)
 

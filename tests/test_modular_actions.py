@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from dataclasses import replace
+from unittest.mock import patch
 import wave
 
 from berofel.core.project import Project, Clip
@@ -29,7 +30,7 @@ class FakeModels:
         elif stage=='vad':
             result={'speech':[{'start':1.0,'end':4.0}],
                     'duration':float(payload.get('duration',6))}
-        elif stage=='whisper':
+        elif stage=='parakeet':
             result={'words':[{'id':'a','start':1.0,'end':1.5,'text':'Olá'},
                              {'id':'b','start':2.0,'end':2.3,'text':'amigos'}],
                     'segments':[],'language':'pt','duration':6.0}
@@ -54,6 +55,16 @@ class ModularActionsTests(unittest.TestCase):
                     track_id=self.prj.tracks[1].id,timeline_start=5)
         for c in (self.a,self.b,self.c):self.prj.add_clip(c)
         self.fake=FakeModels();self.cache=CacheStore(Path(self.tmp.name)/'cache')
+        self.model_dir=Path(self.tmp.name)/'parakeet'
+        self.model_dir.mkdir();(self.model_dir/'model.int8.onnx').write_bytes(b'model')
+        self.vad_dir=Path(self.tmp.name)/'silero'
+        self.vad_dir.mkdir();(self.vad_dir/'silero.onnx').write_bytes(b'vad')
+        for target,value in (
+            ('berofel.services.ai_pipeline.parakeet_tdt_model_dir',self.model_dir),
+            ('berofel.services.ai_pipeline.silero_vad_model_dir',self.vad_dir),
+        ):
+            mocked=patch(target,return_value=value)
+            mocked.start();self.addCleanup(mocked.stop)
 
     def test_conflicting_review_cuts_are_detected_per_clip(self):
         self.assertTrue(selected_proposals_conflict([
@@ -115,7 +126,7 @@ class ModularActionsTests(unittest.TestCase):
         self.a.speed=3
         self.assertFalse(scope_is_still_valid(self.prj,original_snapshot,[target]))
 
-    def test_silero_only_and_whisper_only_with_shared_cache(self):
+    def test_silero_only_and_parakeet_only_with_shared_cache(self):
         selected,_=resolve_scope(self.prj,ScopeSpec('one',(self.a.id,)))
         opts=AIOptions(chunk_seconds=20)
         first=Pipeline(self.cache,self.fake).analyze(selected,opts,mode='silence')
@@ -123,13 +134,13 @@ class ModularActionsTests(unittest.TestCase):
         self.assertEqual(first['reports'][0]['words'],[])
         self.assertTrue(first['suggestions'])
         transcribe=Pipeline(self.cache,self.fake).analyze(selected,opts,mode='transcribe')
-        self.assertEqual(self.fake.calls,['extract','vad','whisper'])
-        self.assertEqual(transcribe['cache_hits'],1)
+        self.assertEqual(self.fake.calls,['extract','vad','parakeet'])
+        self.assertEqual(transcribe['cache_hits'],2)
         self.assertEqual(transcribe['cache_misses'],1)
         self.assertFalse(transcribe['suggestions'])
         self.assertEqual(transcribe['reports'][0]['words'][0]['source_start'],11.)
         subtitles=Pipeline(self.cache,self.fake).analyze(selected,opts,mode='subtitles')
-        self.assertEqual(subtitles['cache_hits'],2)
+        self.assertEqual(subtitles['cache_hits'],3)
         self.assertEqual(subtitles['cache_misses'],0)
 
     def test_qwen_without_vad_for_fillers_and_context_readonly(self):
@@ -138,11 +149,11 @@ class ModularActionsTests(unittest.TestCase):
         opts=AIOptions(chunk_seconds=20,qwen_model=str(model),llama_cli=str(cli))
         selected,_=resolve_scope(self.prj,ScopeSpec('one',(self.a.id,)))
         first=Pipeline(self.cache,self.fake).analyze(selected,opts,mode='fillers')
-        self.assertEqual(self.fake.calls,['extract','whisper','qwen'])
+        self.assertEqual(self.fake.calls,['extract','vad','parakeet','qwen'])
         self.assertEqual(len(first['suggestions']),1)
         second=Pipeline(self.cache,self.fake).analyze(selected,opts,mode='context')
-        self.assertEqual(self.fake.calls,['extract','whisper','qwen','qwen'])
-        self.assertEqual(second['cache_hits'],2)
+        self.assertEqual(self.fake.calls,['extract','vad','parakeet','qwen','qwen'])
+        self.assertEqual(second['cache_hits'],3)
 
     def test_linked_video_audio_shares_same_batch_stage_and_progress(self):
         audio=replace(self.a,id='linked_audio',kind='audio',track_id=self.prj.tracks[1].id)
@@ -152,16 +163,16 @@ class ModularActionsTests(unittest.TestCase):
             progress=lambda done,total:counts.append((done,total)))
         self.assertEqual(len(result['reports']),2)
         self.assertEqual(self.fake.calls.count('extract'),1)
-        self.assertEqual(self.fake.calls.count('whisper'),1)
-        self.assertEqual(counts[-1],(4,4))
-        self.assertEqual(result['cache_misses'],2)
+        self.assertEqual(self.fake.calls.count('parakeet'),1)
+        self.assertEqual(counts[-1],(6,6))
+        self.assertEqual(result['cache_misses'],3)
 
     def test_source_duration_in_speed_10x_clip_is_fully_covered(self):
         speed=replace(self.a,speed=10,start=0,end=60)
         p=Pipeline(self.cache,self.fake).analyze([speed],AIOptions(chunk_seconds=15),mode='transcribe')
-        self.assertEqual(p['cache_misses'],8)
+        self.assertEqual(p['cache_misses'],12)
         self.assertEqual(p['cache_hits'],0)
-        self.assertEqual(sum(s=='whisper' for s in self.fake.calls),4)
+        self.assertEqual(sum(s=='parakeet' for s in self.fake.calls),4)
         self.assertEqual(p['reports'][0]['words'][-2]['source_start'],46.)
 
     def test_auto_captions_scoped_and_idempotent(self):
@@ -332,11 +343,29 @@ if __name__=='__main__':unittest.main()
 
 class CoverageReuseTests(unittest.TestCase):
     """Desempenho 0.8: transcrições completas são válidas após dividir um bloco."""
-    def test_reuses_words_without_whisper_after_split(self):
+    def setUp(self):
+        from unittest.mock import patch
+        self.model_tmp=tempfile.TemporaryDirectory();self.addCleanup(self.model_tmp.cleanup)
+        root=Path(self.model_tmp.name)
+        self.model_dir=root/'parakeet';self.model_dir.mkdir()
+        (self.model_dir/'model.int8.onnx').write_bytes(b'model')
+        self.vad_dir=root/'silero';self.vad_dir.mkdir()
+        (self.vad_dir/'silero.onnx').write_bytes(b'vad')
+        for target,value in (
+            ('berofel.services.ai_pipeline.parakeet_tdt_model_dir',self.model_dir),
+            ('berofel.services.ai_pipeline.silero_vad_model_dir',self.vad_dir),
+        ):
+            mocked=patch(target,return_value=value)
+            mocked.start();self.addCleanup(mocked.stop)
+    def test_reuses_words_without_parakeet_after_split(self):
         from berofel.services.transcript_coverage import (record_coverage,has_coverage,
             words_in_clip)
         from berofel.services.subtitles import merge_reports
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory() as folder, \
+             patch('berofel.services.ai_pipeline.parakeet_tdt_model_dir',
+                   return_value=self.model_dir), \
+             patch('berofel.services.ai_pipeline.silero_vad_model_dir',
+                   return_value=self.vad_dir):
             source=Path(folder)/'source.mov';source.write_bytes(b'source')
             project=Project()
             original=Clip(source=str(source),start=10,end=40,speed=2,
@@ -366,7 +395,11 @@ class CoverageReuseTests(unittest.TestCase):
 
     def test_cached_covered_text_only_launches_qwen(self):
         from berofel.services.transcript_coverage import record_coverage,words_in_clip
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory() as folder, \
+             patch('berofel.services.ai_pipeline.parakeet_tdt_model_dir',
+                   return_value=self.model_dir), \
+             patch('berofel.services.ai_pipeline.silero_vad_model_dir',
+                   return_value=self.vad_dir):
             source=Path(folder)/'source.mov';source.write_bytes(b'source')
             clip=Clip(source=str(source),start=0,end=20)
             project=Project();project.add_clip(replace(clip,track_id=project.tracks[0].id))

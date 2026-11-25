@@ -1,4 +1,4 @@
-"""Batata Quente 2.0: extrair -> Silero/ONNX -> Whisper/INT8 -> Qwen/GGUF.
+"""Local pipeline: extract -> Silero/ONNX -> Parakeet TDT v3 INT8 -> Qwen/GGUF.
 
 Um subprocesso por etapa. Cada etapa usa JSON em cache e só então passa o
 resultado à seguinte. Nenhum modelo permanece carregado na memória do editor.
@@ -17,8 +17,7 @@ from typing import Callable
 
 from .ai_cache import CacheStore, CACHE_SCHEMA, digest, read_json, write_json
 from .process_control import ProcessControl
-from .model_paths import (whisper_model_dir, parakeet_model_path,
-                          transcribe_binding_wheel, transcribe_runtime_dir)
+from .model_paths import parakeet_tdt_model_dir, silero_vad_model_dir
 from .performance import current_profile, qwen_limits, qwen_threads
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,9 +37,9 @@ def qwen_stage_timeout(word_items: list[dict], prompt_max_chars: int) -> int:
 
 def qwen_removal_interval(word_ids: list[str], words: list[dict], clip_duration: float,
                           padding: float = .025, max_cut_seconds: float = 6.) -> tuple[float,float] | None:
-    """Map a continuous Whisper word-ID span to source-relative clip seconds.
+    """Map a continuous Parakeet word-ID span to source-relative clip seconds.
 
-    Qwen never predicts timecodes. The editor uses Whisper's word timestamps:
+    Qwen never predicts timecodes. The editor uses Parakeet's word timestamps:
     start = first_word.start - padding; end = last_word.end + padding.
     Both values are relative to the source interval of the clip, before speed
     mapping in ``apply_reviewed_cuts``.
@@ -88,25 +87,18 @@ def default_qwen_model() -> Path:
 
 @dataclass
 class AIOptions:
-    whisper_model: str = 'base'
-    # Parakeet is opt-in. Faster-Whisper remains the stable default until a
-    # user's own recordings and complete editor flow validate the alternative.
-    asr_backend: str = 'faster-whisper'
-    asr_device: str = 'cpu'
     asr_model_path: str = ''
-    asr_binding_wheel: str = ''
-    asr_library: str = ''
+    vad_model_path: str = ''
     language: str = 'pt'
     device: str = 'cpu'
-    compute_type: str = 'int8'
-    # Optional local domain hints passed to Faster-Whisper. Empty by default,
-    # so existing transcription behavior and cache keys remain unchanged.
-    whisper_hotwords: str = ''
     chunk_seconds: int = 120
     min_silence: float = 0.65
     silence_padding: float = 0.12
     enable_qwen: bool = False
-    cpu_threads: int = 0           # 0 = escolha automática do motor; sem teto de RAM
+    cpu_threads: int = 6
+    # Local benchmark: 4 intra-op threads beat 6/8 on VAD-bounded Parakeet
+    # utterances. Keep cpu_threads=6 unchanged for Qwen stages.
+    asr_threads: int = 4
     qwen_model: str = ''
     llama_cli: str = ''
     offline_only: bool = True
@@ -114,20 +106,18 @@ class AIOptions:
 
 def transcript_model_identity(options: AIOptions) -> str:
     """Stable project-coverage identity; never reuse transcript across ASRs."""
-    backend=str(getattr(options,'asr_backend','faster-whisper')).strip().lower()
-    if backend=='parakeet-ultra':
-        model=Path(options.asr_model_path) if options.asr_model_path else parakeet_model_path()
-        library=Path(options.asr_library) if options.asr_library else transcribe_runtime_dir()/'transcribe.dll'
-        wheel=Path(options.asr_binding_wheel) if options.asr_binding_wheel else transcribe_binding_wheel()
-        def fingerprint(path):
-            try:
-                stat=path.stat()
-                return f'{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}'
-            except OSError:
-                return str(path)
-        revision='/'.join((fingerprint(model),fingerprint(library),fingerprint(wheel)))
-        return f'parakeet-ultra-Q8_0/transcribe.cpp-0.4.2/{options.asr_device}/{revision}'
-    return str(options.whisper_model)
+    model=Path(options.asr_model_path) if options.asr_model_path else parakeet_tdt_model_dir()
+    vad=Path(options.vad_model_path) if options.vad_model_path else silero_vad_model_dir()
+    def fingerprint(directory):
+        files=[]
+        if directory.is_dir():
+            for path in sorted(directory.rglob('*')):
+                if path.is_file() and '.cache' not in path.parts:
+                    stat=path.stat()
+                    files.append(f'{path.relative_to(directory).as_posix()}:{stat.st_size}:{stat.st_mtime_ns}')
+        return digest(files)
+    return 'parakeet-tdt-v3-int8/onnx-asr-cpu/threads={}/model={}/vad={}'.format(
+        max(1,int(options.asr_threads)),fingerprint(model),fingerprint(vad))
 
 
 def _windows_flags():
@@ -188,7 +178,7 @@ class StageRunner:
         conclusão completa. Se houver falha, etapas concluídas ficam no cache.
         """
         if not jobs:return
-        if stage not in ('vad','whisper','parakeet'):
+        if stage not in ('vad','parakeet'):
             raise ValueError('Apenas VAD e os motores ASR possuem processamento em lote.')
         with tempfile.TemporaryDirectory(prefix='bfs_ai_batch_') as folder:
             folder=Path(folder)
@@ -419,11 +409,11 @@ class Pipeline:
             'subtitles': (False, True, False),
             'silence': (True, False, False),
             'fillers': (False, True, True),
-            'context': (False, True, True),
+            'context': (True, True, True),
         }
         if mode not in actions:
             raise ValueError('Ação de IA desconhecida: '+str(mode))
-        needs_vad, needs_whisper, needs_qwen = actions[mode]
+        needs_vad, needs_asr, needs_qwen = actions[mode]
         if not 15 <= opts.chunk_seconds <= 1800:
             raise ValueError('Tamanho de lote inválido (15 a 1800 segundos).')
         if needs_qwen:
@@ -433,6 +423,12 @@ class Pipeline:
                 raise FileNotFoundError('Qwen solicitado, mas llama-cli ou o modelo GGUF não foram encontrados. '
                                         'Execute INSTALAR_QWEN_OPCIONAL.bat ou configure os caminhos.')
         items=[c for c in clips if getattr(c,'kind','video') in ('audio','video') and c.duration>.05]
+        # TDT needs short speech windows, so Silero is a prerequisite only if
+        # there is actually uncovered text to transcribe. Existing project
+        # coverage avoids both VAD and ASR unless the selected action analyzes
+        # pauses (silence/context/combined).
+        needs_vad = needs_vad or (needs_asr and any(c.id not in known_words for c in items))
+        include_silence_suggestions = mode in ('combined','silence')
         chunks=[]
         for clip in items:
             index=0
@@ -442,7 +438,7 @@ class Pipeline:
                 a=clip.start+relative;b=min(clip.end,a+opts.chunk_seconds)
                 chunks.append({'clip':clip,'index':index,'relative':relative,'a':a,'b':b,'duration':b-a})
                 index+=1
-        total=max(1,len(chunks)*(1 + int(needs_vad) + int(needs_whisper)) +
+        total=max(1,len(chunks)*(1 + int(needs_vad) + int(needs_asr)) +
                   (len(items) if needs_qwen else 0))
         count=0
         def step():
@@ -451,7 +447,7 @@ class Pipeline:
             if progress:progress(count,total)
 
         self._notify(f'Preparando áudio e cobertura do cache • {len(chunks)} trecho(s)')
-        # A transcrição já validada no projeto dispensa EXTRAIR/WHISPER para
+        # A transcrição já validada no projeto dispensa extração/ASR para
         # qualquer subset, mesmo após split/corte ou se a faixa foi selecionada.
         # Silero independente ainda precisa extrair o sinal de áudio.
         for ch in chunks:
@@ -463,81 +459,60 @@ class Pipeline:
 
         # Etapa 2: uma única instância Silero ONNX para todos os lotes não armazenados.
         def vad_payload(ch):
+            vad_path=Path(opts.vad_model_path) if opts.vad_model_path else silero_vad_model_dir()
             params={'threshold':.5,'min_silence_ms':350,'speech_pad_ms':100,
-                    'engine':'silero-onnx-v6',
+                    'engine':'onnx-asr-0.12.0-silero-v6',
+                    'model':[(f.name,f.stat().st_size,f.stat().st_mtime_ns)
+                             for f in sorted(vad_path.rglob('*.onnx'))],
                     'audio_activity':{'frame_ms':100,'threshold_dbfs':-55.0,
                                       'min_active_ms':250,'bridge_ms':200}}
-            return params,{'audio_path':ch['extract']['audio_path'],**params}
+            return params,{'audio_path':ch['extract']['audio_path'],
+                           'vad_model_path':str(vad_path),**params}
         if needs_vad:
             self._notify(f'Silero VAD • verificando {len(chunks)} trecho(s)')
             self._batch_stage(chunks,'vad',vad_payload,on_step=step)
 
-        # Etapa 3: mantém um ASR selecionado durante todos os lotes pendentes.
-        # Faster-Whisper segue como padrão; Parakeet é opt-in e tem cache/modelo
-        # isolados para não contaminar cobertura nem resultados anteriores.
-        asr_backend=str(getattr(opts,'asr_backend','faster-whisper')).strip().lower()
-        if asr_backend not in ('faster-whisper','parakeet-ultra'):
-            raise ValueError('Motor ASR inválido. Use faster-whisper ou parakeet-ultra.')
-        transcript_stage='parakeet' if asr_backend=='parakeet-ultra' else 'whisper'
-        model_fingerprint=None
-        if asr_backend=='faster-whisper' and opts.whisper_model == 'base':
-            model_file=whisper_model_dir()/'model.bin'
-            if model_file.is_file():
-                stat=model_file.stat()
-                model_fingerprint=(stat.st_size,stat.st_mtime_ns)
-        def whisper_payload(ch):
-            runtime_threads=opts.cpu_threads or (6 if asr_backend=='parakeet-ultra'
-                                                  else current_profile().ai_threads)
-            if asr_backend=='parakeet-ultra':
-                model_path=Path(opts.asr_model_path) if opts.asr_model_path else parakeet_model_path()
-                wheel=Path(opts.asr_binding_wheel) if opts.asr_binding_wheel else transcribe_binding_wheel()
-                library=Path(opts.asr_library) if opts.asr_library else transcribe_runtime_dir()/'transcribe.dll'
-                if not model_path.is_file():
-                    raise FileNotFoundError(f'Modelo Parakeet Ultra não instalado: {model_path}')
-                if not wheel.is_file() or not library.is_file():
-                    raise FileNotFoundError('Runtime Parakeet ausente. Execute scripts/install_parakeet_ultra.ps1.')
-                model_stat=model_path.stat();library_stat=library.stat();wheel_stat=wheel.stat()
-                params={'engine':'parakeet-ultra','model':'Q8_0',
-                        'model_path':str(model_path.resolve()),
-                        'model_fingerprint':(model_stat.st_size,model_stat.st_mtime_ns),
-                        'runtime':'transcribe.cpp-0.4.2','library_size':library_stat.st_size,
-                        'library_mtime_ns':library_stat.st_mtime_ns,
-                        'binding_size':wheel_stat.st_size,'binding_mtime_ns':wheel_stat.st_mtime_ns,
-                        'backend':opts.asr_device,'language':opts.language,
-                        'threads':runtime_threads,'word_timestamps':True}
-                payload={'audio_path':ch['extract']['audio_path'],'model_path':str(model_path),
-                         'binding_wheel':str(wheel),'library':str(library),
-                         'backend':opts.asr_device,'language':opts.language,
-                         'threads':runtime_threads}
-                return params,payload
-            params={'model_revision':model_fingerprint,'model':opts.whisper_model,'lang':opts.language,
-                    'compute':opts.compute_type,'device':opts.device,'threads':opts.cpu_threads,
-                    'word_timestamps':True}
-            payload={'audio_path':ch['extract']['audio_path'],
-                           'model':opts.whisper_model,'language':opts.language,
-                           'compute_type':opts.compute_type,'device':opts.device,
-                           'cpu_threads':runtime_threads,'offline_only':opts.offline_only}
-            hotwords=str(getattr(opts,'whisper_hotwords','') or '').strip()
-            if hotwords:
-                params['hotwords']=hotwords
-                payload['hotwords']=hotwords
-            return params,payload
-        if needs_whisper:
+        transcript_stage='parakeet'
+        def parakeet_payload(ch):
+            model_path=Path(opts.asr_model_path) if opts.asr_model_path else parakeet_tdt_model_dir()
+            vad_path=Path(opts.vad_model_path) if opts.vad_model_path else silero_vad_model_dir()
+            files=sorted(model_path.rglob('*.onnx')) if model_path.is_dir() else []
+            if not files or not any('int8' in f.name.casefold() for f in files):
+                raise FileNotFoundError(
+                    f'Parakeet TDT v3 ONNX INT8 não instalado: {model_path}. '
+                    'Execute scripts\\instalar_parakeet_tdt_v3.ps1.')
+            if not vad_path.is_dir() or not any(vad_path.rglob('*.onnx')):
+                raise FileNotFoundError(
+                    f'Silero VAD ONNX não instalado: {vad_path}. '
+                    'Execute scripts\\instalar_parakeet_tdt_v3.ps1.')
+            model_fingerprint=[(f.name,f.stat().st_size,f.stat().st_mtime_ns) for f in files]
+            speech=(ch.get('vad') or {}).get('speech',[])
+            threads=max(1,min(16,int(opts.asr_threads or 4)))
+            params={'engine':'parakeet-tdt-0.6b-v3','quantization':'int8',
+                    'provider':'CPUExecutionProvider','model':model_fingerprint,
+                    'onnx_asr':'0.12.0','language_mode':'multilingual-auto','threads':threads,
+                    'speech_spans':speech,'timestamps':'token-frame',
+                    'vad_model':[(f.name,f.stat().st_size,f.stat().st_mtime_ns)
+                                 for f in sorted(vad_path.rglob('*.onnx'))]}
+            return params,{'audio_path':ch['extract']['audio_path'],
+                           'model_path':str(model_path),'vad_model_path':str(vad_path),
+                           'speech_spans':speech,
+                           'threads':threads}
+        if needs_asr:
             pending=[ch for ch in chunks if ch['clip'].id not in known_words]
-            asr_name='Parakeet Ultra Q8' if asr_backend=='parakeet-ultra' else 'Faster-Whisper'
-            asr_stage=f'{asr_name} • {len(pending)} trecho(s) sem cobertura válida'
-            if asr_backend=='parakeet-ultra' and pending:
-                asr_stage+=' · o runtime não informa percentual interno; o avanço é por trecho concluído'
+            asr_stage=f'Parakeet TDT v3 · ONNX INT8/CPU · {len(pending)} trecho(s) sem cobertura válida'
+            if pending:
+                asr_stage+=' · inferência por regiões de fala (Silero), sem fallback'
             self._notify(asr_stage)
             for ch in chunks:
                 if ch['clip'].id in known_words:
                     step()  # checkpoint equivalente a um hit de transcrição prévia
-            self._batch_stage(pending,transcript_stage,whisper_payload,on_step=step)
+            self._batch_stage(pending,transcript_stage,parakeet_payload,on_step=step)
 
-        # Etapa 4: Qwen recebe uma transcrição completa por clipe, apenas com
-        # texto e IDs. Isso evita reiniciar a IA por cada lote de áudio Whisper.
+        # Etapa 4: análise contextual recebe uma transcrição completa por clipe, apenas com
+        # texto e IDs. Isso evita reiniciar o ASR por cada lote de áudio.
         # O worker divide texto longo em lotes do contexto, com sobreposição.
-        # Timestamps e cortes são calculados localmente a partir do Whisper.
+        # Timestamps e cortes são calculados localmente a partir do Parakeet.
         self._notify('Qwen • análise contextual dos textos' if needs_qwen else 'Preparando resultados solicitados')
         results=[]
         for clip_index,clip in enumerate(items,1):
@@ -572,7 +547,10 @@ class Pipeline:
                                            'source_end':round(a+local_e,4),
                                            'source':str(Path(clip.source).resolve()),
                                            'clip_id':clip.id,'text':str(w['text']).strip(),
-                                           'probability':float(w.get('probability') or 0.)})
+                                           # Parakeet TDT does not expose word
+                                           # confidence in this adapter. Keep it
+                                           # unknown instead of fabricating 0/1.
+                                           'probability':w.get('probability')})
                 all_words.extend(normalized)
                 for seg in tr.get('segments',[]):
                     all_segments.append({'start':round(relative+float(seg['start']),3),
@@ -638,7 +616,7 @@ class Pipeline:
                                             'note':'Qwen: '+str(proposal.get('reason','candidato'))[:140],
                                             'checked':False,'word_ids':proposal['word_ids']})
                 step()
-            if needs_vad:
+            if include_silence_suggestions:
                 transcript_spans=[{'start':float(word['start']),'end':float(word['end'])}
                     for word in all_words if float(word.get('end',0))>float(word.get('start',0))]
                 for finding in self._classify_voice_free_gaps(

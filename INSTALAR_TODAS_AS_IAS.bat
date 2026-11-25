@@ -5,7 +5,7 @@ chcp 65001 >nul
 title BerofelStudio - Instalar todas as IAs
 set "ERR=0"
 echo =======================================================
-echo  Silero + Faster-Whisper + Qwen3-TTS
+echo  Parakeet TDT v3 INT8/CPU + Silero ONNX + Qwen3-TTS
  echo =======================================================
 echo O ambiente do editor deve ser instalado primeiro.
 echo Os pacotes, modelos e vozes serao baixados se necessario.
@@ -23,10 +23,10 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo [1/3] Silero VAD + Faster-Whisper...
+echo [1/3] Parakeet TDT v3 ONNX INT8/CPU + Silero VAD...
 "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\instalar_ia.ps1"
 if errorlevel 1 (
-  echo [ERRO] Falha Whisper/Silero. Consulte logs.
+  echo [ERRO] Falha Parakeet/Silero. Consulte logs.
   set "ERR=1"
 )
 echo.

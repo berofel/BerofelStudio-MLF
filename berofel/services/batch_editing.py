@@ -1,4 +1,4 @@
-"""Fila de IA selecionável: Silero -> Whisper -> Qwen -> legendas/narração.
+"""Fila de IA selecionável: Silero -> Parakeet TDT -> Qwen -> legendas/narração.
 
 Os modelos nunca concorrem entre si: cada etapa usa o runner existente de
 subprocessos e cache. A seleção/edição da timeline não é bloqueada por esta fila.
@@ -38,7 +38,7 @@ def plan_actions(actions, optimize_silence=True) -> EditPlan:
     if 'silence' in chosen:
         steps.append('silence')
     if need_text:
-        steps.append('whisper')
+        steps.append('parakeet')
     if 'fillers' in chosen or 'context' in chosen:
         steps.append('qwen')
     if 'subtitles' in chosen:
@@ -99,7 +99,7 @@ def run_edit_queue(clips, actions, options: AIOptions | None = None,
     """
     opts=options or AIOptions()
     plan=plan_actions(actions,optimize_silence)
-    phases=[name for name in plan.phases if name in ('silence','whisper','qwen')]
+    phases=[name for name in plan.phases if name in ('silence','parakeet','qwen')]
     total=max(1,len(phases)*100)
     if progress:progress(0,total)
     all_findings=[]
@@ -121,13 +121,13 @@ def run_edit_queue(clips, actions, options: AIOptions | None = None,
         if stage:
             stage(('Silero VAD · detectar pausas, sem modificar a timeline' if name=='silence'
                    else 'Qwen · analisar somente texto e IDs das palavras' if name=='qwen'
-                   else 'Faster-Whisper · transcrever somente os trechos necessários'))
+                   else 'Parakeet TDT v3 · transcrever somente as regiões com fala'))
         mode=('silence' if name=='silence' else
               'fillers' if name=='qwen' and 'fillers' in plan.selected else
               'context' if name=='qwen' else 'transcribe')
         selected_clips=clips if name in ('silence','qwen') else asr_clips
         # Qwen recebe toda a transcrição dos blocos de origem, incluindo os
-        # trechos de fala já condensados pelo VAD. Não recarrega o Whisper.
+        # trechos de fala já condensados pelo VAD. Não recarrega o Parakeet.
         words_for_stage=(accumulated_words if name=='qwen' else known_words or {})
         if selected_clips:
             try:
@@ -143,7 +143,7 @@ def run_edit_queue(clips, actions, options: AIOptions | None = None,
                 result={'reports':[], 'suggestions':[], 'cache_hits':0,
                         'cache_misses':0,'stages':[]}
         else:
-            # O VAD não encontrou voz: não iniciamos Whisper/Qwen à toa.
+            # O VAD não encontrou voz: não iniciamos ASR/Qwen à toa.
             result={'reports':[], 'suggestions':[], 'cache_hits':0,
                     'cache_misses':0,'stages':[]}
         hits+=result.get('cache_hits',0)
@@ -154,7 +154,7 @@ def run_edit_queue(clips, actions, options: AIOptions | None = None,
             if plan.use_vad_for_asr:
                 asr_clips,asr_seconds=spoken_clips(clips,result.get('reports',[]))
                 if stage:stage(f'Silero concluído · {asr_seconds:.1f}s de fala preparados para transcrição')
-        elif name=='whisper':
+        elif name=='parakeet':
             reports.extend(result.get('reports',[]))
             for report in result.get('reports',[]):
                 accumulated_words.setdefault(report['clip_id'],[]).extend(report.get('words',[]))
@@ -162,7 +162,7 @@ def run_edit_queue(clips, actions, options: AIOptions | None = None,
             context_reports.extend(result.get('reports',[]))
             if 'fillers' in plan.selected:
                 # As propostas Qwen são relativas à seleção ORIGINAL, mesmo
-                # que o Whisper tenha transcrito segmentos virtuais menores.
+                # que o reconhecedor tenha transcrito segmentos virtuais menores.
                 original_by_id={c.id:c for c in clips}
                 for report in result.get('reports',[]):
                     original=original_by_id.get(report['clip_id'])

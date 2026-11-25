@@ -2,7 +2,7 @@
 
 Abre uma janela Qt temporária, reproduz dois vídeos gerados localmente,
 verifica que aparecem pelo menos 3 frames no widget. Fecha sozinho.
-Não requer câmera, Whisper ou nenhum arquivo pessoal.
+Não requer câmera, modelos de ASR ou nenhum arquivo pessoal.
 """
 from __future__ import annotations
 import os

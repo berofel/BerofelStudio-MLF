@@ -1,7 +1,7 @@
 """Processo isolado: cada invocação carrega APENAS uma IA e termina ao concluir.
 
 Entrada JSON e saída JSON atômica. Uso: python -m berofel.services.ai_worker STAGE INPUT OUTPUT.
-Faster-Whisper inclui Silero VAD ONNX; não precisamos de PyTorch.
+ASR e VAD usam ONNX Runtime CPU; Parakeet TDT v3 é o único reconhecedor ativo.
 """
 from __future__ import annotations
 import json
@@ -146,17 +146,17 @@ def _audio_activity_spans(audio, *, frame_ms: int = 100,
     return spans
 
 
-def _vad(d: dict) -> dict:
-    # O Silero VAD ONNX acompanha a dependência faster-whisper, sem PyTorch.
-    from faster_whisper.vad import VadOptions, get_speech_timestamps
+def _vad(d: dict, model=None) -> dict:
+    from .parakeet_asr import detect_speech, load_vad
     audio = _read_wav(d['audio_path'])
-    options = VadOptions(threshold=float(d.get('threshold', .50)),
-                         min_speech_duration_ms=125,
-                         min_silence_duration_ms=int(d.get('min_silence_ms', 350)),
-                         speech_pad_ms=int(d.get('speech_pad_ms', 100)))
-    detected = get_speech_timestamps(audio, vad_options=options, sampling_rate=16000)
-    spans = [{'start': round(s['start'] / 16000, 4), 'end': round(s['end'] / 16000, 4)}
-             for s in detected]
+    vad = model or load_vad(vad_path=d.get('vad_model_path'),
+                            threads=int(d.get('threads', 1)))
+    spans = detect_speech(audio, vad=vad,
+        threshold=float(d.get('threshold', .50)),
+        min_speech_ms=125,
+        min_silence_ms=int(d.get('min_silence_ms', 350)),
+        speech_pad_ms=int(d.get('speech_pad_ms', 100)),
+        max_speech_seconds=float(d.get('max_speech_seconds', 20)))
     energy=d.get('audio_activity',{}) or {}
     activity=_audio_activity_spans(audio,
         frame_ms=int(energy.get('frame_ms',100)),
@@ -165,56 +165,7 @@ def _vad(d: dict) -> dict:
         bridge_ms=int(energy.get('bridge_ms',200)))
     return {'speech': spans, 'duration': round(len(audio) / 16000, 4),
             'audio_activity':activity,
-            'engine': 'Silero-VAD-ONNX-via-faster-whisper'}
-
-
-def _load_whisper(d: dict):
-    from faster_whisper import WhisperModel
-    from .model_paths import whisper_model_dir
-    requested = d.get('model', 'base')
-    local_base = whisper_model_dir()
-    name = str(local_base) if requested == 'base' and (local_base / 'model.bin').is_file() else requested
-    if not Path(name).is_dir() and d.get('offline_only', True):
-        raise RuntimeError('Modelo Whisper não instalado. Execute INSTALAR_IA_OPCIONAL.bat primeiro.')
-    threads = int(d.get('cpu_threads') or current_profile().ai_threads)
-    return WhisperModel(name, device=d.get('device', 'cpu'),
-                        compute_type=d.get('compute_type', 'int8'), cpu_threads=threads,
-                        local_files_only=bool(d.get('offline_only', True)))
-
-
-def _whisper(d: dict, model=None) -> dict:
-    if model is None:
-        model = _load_whisper(d)
-    requested = d.get('model', 'base')
-    # O áudio já foi extraído pelo FFmpeg como WAV PCM16 mono/16 kHz.
-    # Faster-Whisper 1.2.1 passa metadata_errors= para av.open() ao receber
-    # um caminho; PyAV 19 removeu esse parâmetro. Entregando o np.ndarray
-    # diretamente, evitamos essa incompatibilidade e uma segunda decodificação.
-    # Cada lote tem duração limitada, então o vetor não cresce com o vídeo todo.
-    audio = _read_wav(d['audio_path'])
-    transcribe_options={'language':d.get('language') or None,
-                        'beam_size':3,'word_timestamps':True,'vad_filter':False,
-                        'condition_on_previous_text':False}
-    # Domain hints can improve recognition of product/tool names. Keep this
-    # optional: an empty hint must preserve the existing Whisper behavior.
-    hotwords=str(d.get('hotwords') or '').strip()
-    if hotwords:
-        transcribe_options['hotwords']=hotwords
-    segments, info = model.transcribe(audio, **transcribe_options)
-    out_segments, words = [], []
-    for si, seg in enumerate(segments):
-        seg_words=[]
-        for w in (seg.words or []):
-            a = max(0., float(w.start)); b = max(a, float(w.end))
-            if b-a < 0.01:
-                continue
-            item={'id': f'w{si}_{len(words)}', 'start': round(a, 4), 'end': round(b, 4),
-                  'text': w.word.strip(), 'probability': round(float(w.probability or 0.), 3)}
-            words.append(item); seg_words.append(item['id'])
-        out_segments.append({'start': round(float(seg.start), 3), 'end': round(float(seg.end), 3),
-                             'text': seg.text.strip(), 'word_ids': seg_words})
-    return {'words': words, 'segments': out_segments, 'language': info.language,
-            'model': requested, 'duration': float(info.duration)}
+            'engine': 'Silero-VAD-ONNX/onnx-asr'}
 
 
 def _parse_model_json(text: str) -> dict:
@@ -265,7 +216,7 @@ def _parse_model_json(text: str) -> dict:
                     return {'removals':items}
     # A few GGUF/chat templates return the candidate array directly. It is safe
     # to accept only objects here because the downstream validator still checks
-    # every ID, its order, confidence, and protected words against Whisper.
+    # every ID, its order, confidence, and protected words against Parakeet.
     for position,char in enumerate(text):
         if char!='[':continue
         try:
@@ -284,7 +235,7 @@ _QWEN_PROMPT_PREFIX = ("/no_think\nVocê é um assistente de edição de fala em
                        "Trabalhe sobre o texto completo recebido e recomende SOMENTE remoções de "
                        "vícios de linguagem claros, falsos começos e repetições imediatas redundantes. "
                        "Não reescreva o roteiro, não devolva timestamps e não proponha inserções: "
-                       "o editor usa os IDs do Whisper para calcular os cortes exatos. "
+                       "o editor usa os IDs do Parakeet para calcular os cortes exatos. "
                        "Preserve negações, números, nomes, "
                        "repetições enfáticas e informações novas. Na dúvida, NÃO remover. "
                        "Retorne no máximo 8 grupos de remoção por lote. "
@@ -438,7 +389,7 @@ def _qwen(d: dict) -> dict:
     # Checkpoints usually live below a cache directory that already includes
     # the request fingerprint. Keep a fingerprint in each file as well so a
     # moved/reused checkpoint directory cannot apply a decision to different
-    # text that happens to retain the same Whisper word IDs.
+    # text that happens to retain the same Parakeet word IDs.
     try:
         model_stat=model.stat()
         model_identity={'path':str(model.resolve()),'size':model_stat.st_size,
@@ -605,35 +556,23 @@ def _qwen(d: dict) -> dict:
 
 
 def _vad_batch(d: dict) -> dict:
-    # Importa o motor uma unica vez e o reutiliza nos lotes deste processo.
-    from faster_whisper.vad import get_vad_model
-    get_vad_model()
+    # Uma sessão Silero CPU é reutilizada para os trechos deste lote.
+    from .parakeet_asr import load_vad
+    vad=load_vad(threads=1)
     for job in d['jobs']:
-        result=_vad(job['payload'])
+        result=_vad(job['payload'],model=vad)
         write_json(Path(job['output']), {'schema': CACHE_SCHEMA, 'stage': 'vad', 'result': result})
     return {'completed': len(d['jobs'])}
 
 
-def _whisper_batch(d: dict) -> dict:
-    # Muito mais eficiente para longos videos: Whisper carrega apenas UMA vez.
-    jobs=d['jobs']
-    if not jobs: return {'completed': 0}
-    model=_load_whisper(jobs[0]['payload'])
-    for job in jobs:
-        result=_whisper(job['payload'], model=model)
-        write_json(Path(job['output']), {'schema': CACHE_SCHEMA, 'stage': 'whisper', 'result': result})
-    return {'completed': len(jobs)}
-
-
 def _parakeet(d: dict, *, model=None) -> dict:
-    from .parakeet_asr import transcribe_file
-    return transcribe_file(d['audio_path'], model_path=d.get('model_path'),
-                           backend=d.get('backend', 'cpu'),
-                           threads=int(d.get('threads', 6)),
-                           language=d.get('language') or 'pt',
-                           binding_wheel=Path(d['binding_wheel']) if d.get('binding_wheel') else None,
-                           library=Path(d['library']) if d.get('library') else None,
-                           model=model)
+    from .parakeet_asr import load_model, transcribe_file
+    threads=max(1,min(16,int(d.get('threads',4))))
+    if model is None:
+        model=load_model(model_path=d.get('model_path'),threads=threads)
+    return transcribe_file(d['audio_path'], model=model,
+                           speech_spans=d.get('speech_spans'),
+                           threads=threads)
 
 
 def _parakeet_batch(d: dict) -> dict:
@@ -641,32 +580,26 @@ def _parakeet_batch(d: dict) -> dict:
     jobs=d['jobs']
     if not jobs:
         return {'completed': 0}
-    from .model_paths import parakeet_model_path
-    from .parakeet_asr import load_binding
+    from .parakeet_asr import load_model
     first=jobs[0]['payload']
-    model_path=Path(first.get('model_path') or parakeet_model_path())
-    if not model_path.is_file():
-        raise FileNotFoundError(
-            f'Modelo Parakeet Ultra Q8 ausente: {model_path}. Execute scripts/install_parakeet_ultra.ps1.'
-        )
-    binding=load_binding(wheel=Path(first['binding_wheel']) if first.get('binding_wheel') else None,
-                          library=Path(first['library']) if first.get('library') else None)
-    with binding.Model(str(model_path),backend=first.get('backend','cpu')) as model:
-        for job in jobs:
-            result=_parakeet(job['payload'],model=model)
-            write_json(Path(job['output']),{'schema':CACHE_SCHEMA,
-                                            'stage':'parakeet','result':result})
+    model_path=Path(first.get('model_path')) if first.get('model_path') else None
+    threads=max(1,min(16,int(first.get('threads',4))))
+    model=load_model(model_path=model_path,threads=threads)
+    for job in jobs:
+        result=_parakeet(job['payload'],model=model)
+        write_json(Path(job['output']),{'schema':CACHE_SCHEMA,
+                                        'stage':'parakeet','result':result})
     return {'completed':len(jobs)}
 
 
-HANDLERS = {'extract': _extract, 'vad': _vad, 'whisper': _whisper, 'qwen': _qwen,
-            'vad_batch': _vad_batch, 'whisper_batch': _whisper_batch,
+HANDLERS = {'extract': _extract, 'vad': _vad, 'qwen': _qwen,
+            'vad_batch': _vad_batch,
             'parakeet': _parakeet, 'parakeet_batch': _parakeet_batch}
 
 
 def main() -> int:
     if len(sys.argv) != 4 or sys.argv[1] not in HANDLERS:
-        print('Uso: python -m berofel.services.ai_worker extract|vad|whisper|qwen entrada.json saida.json', file=sys.stderr)
+        print('Uso: python -m berofel.services.ai_worker extract|vad|parakeet|qwen entrada.json saida.json', file=sys.stderr)
         return 2
     stage, input_name, output_name = sys.argv[1:]
     try:

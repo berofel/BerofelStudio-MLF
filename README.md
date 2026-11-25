@@ -51,18 +51,18 @@ Cada botão executa apenas o necessário:
 
 | Ação | Etapas usadas | Comportamento |
 | --- | --- | --- |
-| Transcrever | Extração + Faster-Whisper | Armazena palavras com tempo, **sem Silero, Qwen ou cortes** |
-| Legendas automáticas | Faster-Whisper se ainda não houve transcrição válida | Gera blocos de **texto editáveis** numa faixa `Legendas`; não faz cortes |
+| Transcrever | Extração + Silero VAD + Parakeet TDT v3 ONNX INT8/CPU | Armazena palavras com tempo, **sem Qwen ou cortes** |
+| Legendas automáticas | Parakeet TDT v3 se ainda não houve transcrição válida | Gera blocos de **texto editáveis** numa faixa `Legendas`; não faz cortes |
 | Detectar silêncios | Extração + Silero VAD/ONNX | Sugere cortes para revisão **sem Whisper/Qwen** |
-| Vícios de linguagem | Faster-Whisper + Qwen (ou Qwen se já transcrito) | Identifica candidatos para revisão individual; não corta automaticamente |
-| Análise contextual | Faster-Whisper + Qwen (ou só Qwen se transcrito) | **Somente consulta**, relatório sem botão de aplicar corte |
+| Vícios de linguagem | Parakeet TDT v3 + Qwen (ou Qwen se já transcrito) | Identifica candidatos para revisão individual; não corta automaticamente |
+| Análise contextual | Parakeet TDT v3 + Qwen (ou só Qwen se transcrito) | **Somente consulta**, relatório sem botão de aplicar corte |
 | Exportar SRT do alcance | Sem IA, usando texto existente | Respeita faixa/intervalo e inclui legendas manuais/editadas |
 | Usar transcrição na narração | Sem IA, copia texto já transcrito | Abre Narração Qwen3-TTS Base; texto livre continua independente |
 | Legendas manuais | Sem IA | Escreva texto e adicione ao alcance; pode arrastar, aparar ou editar depois |
 
-**Batata Quente 2.0:** VAD, Whisper e Qwen de análise são tarefas independentes e sequenciais; Qwen3-TTS Base roda em worker local isolado com cache persistente e modelo aquecido na sessão. Nenhuma regra fixa limita a RAM de PCs mais fortes.
+**Batata Quente 2.0:** VAD Silero ONNX, Parakeet TDT v3 INT8/CPU e Qwen de análise são tarefas sequenciais; o TDT recebe regiões de fala do Silero e não mantém uma segunda detecção de atividade. Qwen3-TTS Base roda em worker local isolado. Nenhuma regra fixa limita a RAM de PCs mais fortes.
 
-**Reutilização de transcrição após divisões:** o projeto salva `ai_coverage` (fonte, tamanho, mtime, modelo, idioma e limites absolutos). Se você transcreveu um bloco e depois dividiu, rearranjou, alterou a velocidade ou selecionou apenas uma parte, o sistema reaproveita as palavras salvas **sem rodar Whisper novamente**, quando há cobertura válida. Áudio e vídeo separados que referenciam a mesma fonte/intervalo compartilham a etapa de processamento. Se o arquivo original for modificado ou o modelo/idioma mudar, a cobertura não é reutilizada.
+**Reutilização de transcrição após divisões:** o projeto salva `ai_coverage` (fonte, tamanho, mtime, modelo, idioma e limites absolutos). Se você transcreveu um bloco e depois dividiu, rearranjou, alterou a velocidade ou selecionou apenas uma parte, o sistema reaproveita as palavras salvas sem rodar o Parakeet novamente, quando há cobertura válida. Áudio e vídeo separados que referenciam a mesma fonte/intervalo compartilham a etapa de processamento. Se o arquivo original, o modelo ou o perfil de threads mudar, a cobertura não é reutilizada.
 
 **Tempos seguros:** In/Out é informado na timeline, convertido para o intervalo correto na fonte antes da análise; sugestões são convertidas de volta ao bloco original para revisão. Isso mantém o comportamento de 2×/10×. Os cortes continuam não destrutivos e precisam da autorização do usuário.
 
@@ -70,8 +70,8 @@ Cada botão executa apenas o necessário:
 
 Para uma instalação de um clique, use `BerofelStudio-<versão>-Setup-x64.exe`
 na seção **Releases** do GitHub quando houver uma versão publicada. O instalador
-prepara Python, bibliotecas, FFmpeg e atalhos; por padrão oferece Faster-Whisper
-Base/Silero e Qwen3-TTS Base, baixados das fontes oficiais durante a instalação.
+prepara Python, bibliotecas, FFmpeg e atalhos; o módulo opcional de ASR instala
+Parakeet TDT v3 ONNX INT8, Silero VAD ONNX e Qwen3-TTS Base, baixados durante a instalação.
 O Qwen de voz exige cerca de 2,5 GB e internet. O instalador não é offline e
 pesos/modelos não são redistribuídos dentro do EXE. Consulte
 [`installer/README.md`](installer/README.md) para conteúdo, limites e build.
@@ -170,11 +170,11 @@ de todas as IAs; seu modelo pode exigir autorização no Hugging Face.
 
 ## Base da 0.4 — IA Batata Quente 2.0
 
-**Instalação rápida:** rode `instalar_dependencias.bat` (editor). Depois rode `INSTALAR_TODAS_AS_IAS.bat` (Whisper Base, Silero ONNX, Qwen3 GGUF/llama.cpp) ou instale opcionalmente por separado: `INSTALAR_IA_OPCIONAL.bat` e `INSTALAR_QWEN_OPCIONAL.bat`. O instalador de Qwen baixa cerca de 1,3 GB e exige internet, mas seu uso posterior é local. Se não instalar Qwen, o editor e as transcrições com Whisper continuam funcionando.
+**Instalação rápida:** rode `instalar_dependencias.bat` (editor). Depois rode `INSTALAR_TODAS_AS_IAS.bat` (Parakeet TDT v3 ONNX INT8/CPU, Silero ONNX, Qwen3 GGUF/llama.cpp) ou instale opcionalmente por separado: `INSTALAR_IA_OPCIONAL.bat` e `INSTALAR_QWEN_OPCIONAL.bat`. O instalador de Qwen baixa cerca de 1,3 GB e exige internet, mas seu uso posterior é local. Se não instalar Qwen, o editor e as transcrições com Parakeet continuam funcionando.
 
 Após importar, **selecione um ou mais blocos da timeline** e abra o menu ☰ Ferramentas:
 
-- **Transcrever IA:** usa Faster-Whisper Base (CPU, INT8) e guarda palavras com tempos precisos de origem sem cortar nada.
+- **Transcrever IA:** usa Parakeet TDT v3 ONNX INT8 (CPU) e guarda palavras com tempos precisos de origem sem cortar nada.
 - **Silero + Whisper:** detecta períodos sem fala por Silero VAD/ONNX, mostra transcrição e sugere intervalos para revisão. **As sugestões ficam desmarcadas por padrão.**
 - **Qwen Contextual:** só recebe o texto e os IDs das palavras; identifica possíveis hesitações, recomeços e redundâncias, devolve notas/justificativas e propõe cortes desmarcados. Precisão semântica será calibrada com material real.
 - **Exportar SRT:** converte tempos **de origem** para tempos **atuais da timeline** depois dos cortes e guarda as legendas externamente.
@@ -213,7 +213,7 @@ Antes de instalar dependências, FFmpeg ou IAs opcionais, feche o editor e aguar
 
 Se já vinha de um pacote Alpha, não é necessário apagar seu Python instalado; o instalador reutiliza o que estiver correto. Se a instalação parar no FFmpeg, execute `CONTINUAR_INSTALACAO.bat`; o módulo FFmpeg faz tentativas com barra de progresso, timeout e duas fontes verificadas. Para testar só o motor sem abrir a GUI, execute `VERIFICAR_MOTOR.bat`.
 
-Para **IA de transcrição**, execute **`INSTALAR_IA_OPCIONAL.bat`**; ela instala Faster-Whisper, CTranslate2, ONNX Runtime e baixa o modelo Whisper Base uma única vez para uso local. O **Silero VAD/ONNX** acompanha o Faster-Whisper. Para **Qwen contextual**, execute `INSTALAR_QWEN_OPCIONAL.bat`. O Pocket TTS faz parte das versões 0.5 em diante e é instalado separadamente ou pelo pacote de IAs.
+Para **IA de transcrição**, execute **`INSTALAR_IA_OPCIONAL.bat`**; instala ONNX Runtime CPU e onnx-asr e baixa Parakeet TDT v3 INT8 e Silero VAD ONNX uma vez para uso local. A instalação valida ambos os modelos; a transcrição normal usa somente cópias locais. Para **Qwen contextual**, execute `INSTALAR_QWEN_OPCIONAL.bat`.
 
 ## Primeiro vídeo — roteiro de uso
 

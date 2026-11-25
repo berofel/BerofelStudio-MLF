@@ -1,7 +1,7 @@
 # BerofelStudio bootstrap for clean Windows 10/11 x64.
 # Installs the fully functional editor core. IA is optional.
 param(
-    [switch]$InstallWhisperBase,
+    [switch]$InstallParakeetTdt,
     [switch]$InstallQwen3,
     [switch]$SkipQwenPrompt
 )
@@ -153,13 +153,13 @@ try {
     Step '6/9 - Autoteste do motor FFmpeg (dois videos + audio)'
     Run-Python @((Join-Path $root 'scripts\diagnostico_motor.py'))
 
-    if ($InstallWhisperBase) {
-        Step '7/9 - Faster-Whisper Base, Silero e dicionário pt-BR offline'
+    if ($InstallParakeetTdt) {
+        Step '7/9 - Parakeet TDT v3 INT8/CPU, Silero ONNX e dicionário pt-BR offline'
         $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
         & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'instalar_ia.ps1')
-        if ($LASTEXITCODE -ne 0) { throw 'A instalação de Faster-Whisper/Silero falhou. Consulte o log próprio.' }
+        if ($LASTEXITCODE -ne 0) { throw 'A instalação de Parakeet TDT/Silero falhou. Consulte o log próprio.' }
     } else {
-        Write-Host 'Modelo de transcrição offline adiado. O editor principal permanece instalado.' -ForegroundColor Yellow
+        Write-Host 'Parakeet TDT v3 foi adiado. Instale por INSTALAR_TODAS_AS_IAS.bat.' -ForegroundColor Yellow
     }
 
     Step '8/9 - Qwen3-TTS Base 0.6B (motor único de voz, ambiente isolado)'
@@ -186,7 +186,7 @@ try {
     }
     Write-Host "`n[OK] Instalacao do BerofelStudio $($appVersion.Trim()) concluida." -ForegroundColor Green
     Write-Host 'Motor único de narração e clonagem: Qwen3-TTS Base 0.6B.'
-    Write-Host 'Whisper/Silero: INSTALAR_TODAS_AS_IAS.bat.'
+    Write-Host 'Parakeet TDT v3/Silero: INSTALAR_TODAS_AS_IAS.bat.'
     Write-Host "Abra: $root\ABRIR_BEROFELSTUDIO.bat" -ForegroundColor Green
     Write-Host "Log de instalacao: $logFile"
     exit 0

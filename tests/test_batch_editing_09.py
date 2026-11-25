@@ -22,9 +22,9 @@ class QueueTests(unittest.TestCase):
 
     def test_plan_order_dedup_and_empty(self):
         plan=plan_actions(['subtitles','fillers','silence','transcribe','context'])
-        self.assertEqual(plan.phases,('silence','whisper','qwen','subtitles'))
+        self.assertEqual(plan.phases,('silence','parakeet','qwen','subtitles'))
         self.assertTrue(plan.use_vad_for_asr)
-        self.assertEqual(plan_actions(['subtitles']).phases,('whisper','subtitles'))
+        self.assertEqual(plan_actions(['subtitles']).phases,('parakeet','subtitles'))
         self.assertEqual(plan_actions(['silence']).phases,('silence',))
         self.assertFalse(plan_actions(['silence','subtitles'],False).use_vad_for_asr)
         self.assertEqual(plan_actions(['narration']).phases,('narration',))
@@ -45,7 +45,7 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.original,before)
         self.assertEqual(self.project.clips,[self.original])
 
-    def test_pipeline_runs_vad_first_and_whisper_qwen_once(self):
+    def test_pipeline_runs_vad_first_and_parakeet_qwen_once(self):
         calls=[];progress=[];qwen_words=[]
         def fake(clips,options,known_words,progress,control,stage,mode):
             if mode=='fillers':
@@ -71,14 +71,14 @@ class QueueTests(unittest.TestCase):
                         sum(b-a for a,b in calls[2][1]))
         self.assertLess(data['asr_seconds'],data['source_seconds'])
         self.assertIn('errado',qwen_words)  # Qwen usa a transcrição já pronta
-        self.assertEqual(data['plan'].phases,('silence','whisper','qwen','subtitles'))
+        self.assertEqual(data['plan'].phases,('silence','parakeet','qwen','subtitles'))
         self.assertEqual(len(data['suggestions']),2)
         self.assertTrue(all(0<=f['a']<f['b']<=100 for f in data['suggestions']))
         self.assertEqual(progress[-1],(300,300))
         self.assertEqual(data['cache_hits'],2)
         self.assertEqual(self.original.end,100)  # não cortou sem aprovação
 
-    def test_no_spoken_words_skips_whisper(self):
+    def test_no_spoken_words_skips_parakeet(self):
         calls=[]
         def fake(clips,options,known_words,progress,control,stage,mode):
             calls.append(mode)

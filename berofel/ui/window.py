@@ -41,7 +41,6 @@ from berofel.services.action_scope import (ScopeSpec, resolve_scope, scope_summa
 from berofel.services.caption_actions import (create_manual_caption, create_auto_captions,
     export_scoped_srt, scoped_cues)
 from berofel.services.transcript_coverage import (record_coverage,has_coverage,words_in_clip)
-from berofel.services.asr_vocabulary import confirmed_caption_texts, project_hotwords
 from berofel.services.clipper import analyze_clips as analyze_clip_candidates
 from berofel.ui.actions_panel import ActionsPanel, format_timecode
 from berofel.ui.clipper_dialog import ClipperDialog
@@ -2018,7 +2017,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 'Transcrição local pronta para revisão; confira se corresponde à gravação selecionada.')
         task=self._task(transcribe_voice_reference,ready,reference,
-                        label='Transcrever referência vocal · Faster-Whisper local')
+                        label='Transcrever referência vocal · Parakeet TDT v3 local')
         if task is None:
             panel.set_reference_transcription_busy(False)
             return
@@ -3969,8 +3968,7 @@ class MainWindow(QMainWindow):
             f'{len(marks)} evento(s) acústico(s) marcado(s) na timeline. Ctrl+Z desfaz os marcadores.')
 
     def _ai_options(self, **values):
-        backend,device=self.actions_panel.asr_selection()
-        return AIOptions(asr_backend=backend,asr_device=device,**values)
+        return AIOptions(**values)
 
     def execute_automatic_cleanup(self, actions):
         """Limpeza local: Silero/ASR somente quando selecionados, depois regras Python."""
@@ -3992,13 +3990,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self,'Alcance','Escolha blocos de áudio/vídeo para analisar.')
             self.open_actions();return
         originals=copy.deepcopy({t.original_id:self.project.clip(t.original_id) for t in targets})
-        # Small fixed vocabulary helps Faster-Whisper recognize the editor's
-        # domain when this cleanup action needs a fresh transcript. Existing
-        # project transcripts still bypass ASR; hints never rewrite the text.
-        opts=self._ai_options(enable_qwen=False,
-                       whisper_hotwords=project_hotwords(
-                           self.project.transcripts,
-                           confirmed_texts=confirmed_caption_texts(self.project)))
+        opts=self._ai_options(enable_qwen=False)
         known={c.id:words_in_clip(self.project,c) for c in selected
                if has_coverage(self.project,c,transcript_model_identity(opts),opts.language)}
         count,seconds=scope_summary(targets)
@@ -4099,9 +4091,7 @@ class MainWindow(QMainWindow):
             if not srt_path:return
             if not srt_path.lower().endswith('.srt'):srt_path+='.srt'
         originals=copy.deepcopy({t.original_id:self.project.clip(t.original_id) for t in targets})
-        opts=self._ai_options(whisper_hotwords=project_hotwords(
-            self.project.transcripts,
-            confirmed_texts=confirmed_caption_texts(self.project)))
+        opts=self._ai_options()
         known={c.id:words_in_clip(self.project,c) for c in selected
                if has_coverage(self.project,c,transcript_model_identity(opts),opts.language)}
         seconds=sum(t.playback_seconds for t in targets)
@@ -4346,14 +4336,12 @@ class MainWindow(QMainWindow):
                 return
         captured=copy.deepcopy({t.original_id:self.project.clip(t.original_id) for t in targets})
         count,seconds=scope_summary(targets)
-        opts=self._ai_options(whisper_hotwords=project_hotwords(
-            self.project.transcripts,
-            confirmed_texts=confirmed_caption_texts(self.project)))
+        opts=self._ai_options()
         # Snapshot das palavras para que a thread não consulte um projeto mutável.
         known={c.id:words_in_clip(self.project,c) for c in selected
                if has_coverage(self.project,c,transcript_model_identity(opts),opts.language)
                and action!='silence'}
-        asr_name='Parakeet Ultra Q8' if opts.asr_backend=='parakeet-ultra' else 'Faster-Whisper'
+        asr_name='Parakeet TDT v3 ONNX INT8/CPU'
         descriptions={'transcribe':f'Somente transcrição · {asr_name}',
                       'subtitles':f'Somente legendas · {asr_name}',
                       'silence':'Somente silêncios · Silero',
@@ -4457,12 +4445,9 @@ class MainWindow(QMainWindow):
             if not default_llama_cli().is_file() or not default_qwen_model().is_file():
                 QMessageBox.information(self, 'Qwen não instalado',
                                         'Instale o modelo e o executável via INSTALAR_QWEN_OPCIONAL.bat. '
-                                        'Faster-Whisper e Silero continuam disponíveis sem Qwen.')
+                                        'Parakeet TDT v3 e Silero continuam disponíveis sem Qwen.')
                 return
-        opts=self._ai_options(enable_qwen=semantic,
-                       whisper_hotwords=project_hotwords(
-                           self.project.transcripts,
-                           confirmed_texts=confirmed_caption_texts(self.project)))
+        opts=self._ai_options(enable_qwen=semantic)
         self.statusBar().showMessage(f'Batata Quente: processando {len(selected)} bloco(s) selecionado(s)...')
         def worker(progress,control=None,stage=None):
             return run_analysis(selected, options=opts, progress=progress,
@@ -4537,11 +4522,11 @@ class MainWindow(QMainWindow):
         if not selected:
             QMessageBox.information(self,'Repeticoes','Selecione primeiro os blocos com fala.');return
         if QMessageBox.question(self,'Repeticoes',
-            'Faster-Whisper verificara somente os blocos selecionados. '\
-            'O modelo Base precisa estar instalado. Prosseguir?')==QMessageBox.StandardButton.Yes:
+            'Parakeet TDT v3 ONNX INT8 verificará somente os blocos selecionados. '\
+            'Prosseguir?')==QMessageBox.StandardButton.Yes:
             self._task(repetitions_clips,
                        lambda findings:self._review(findings,'Possiveis repeticoes'),selected,
-                       label='Repetições · Whisper legado')
+                       label='Repetições · Parakeet TDT v3')
 
     def _review(self,findings,title):
         if not findings:
@@ -4772,7 +4757,7 @@ class MainWindow(QMainWindow):
             for task in tuple(self.workers):
                 task.control.cancel()
             # Inclui prévias interativas e processos de IA; não deixa filhos
-            # FFmpeg/llama/Whisper órfãos ao sair.
+            # FFmpeg/llama/Parakeet órfãos ao sair.
             QThreadPool.globalInstance().waitForDone(4000)
         try:
             from berofel.services.qwen3_tts_local import stop_local_worker

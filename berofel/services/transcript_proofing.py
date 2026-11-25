@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import re
 
-from .asr_vocabulary import BASE_HOTWORDS
+from .domain_terms import BASE_ANALYSIS_TERMS
 
 
 _WORD = re.compile(r"[\wÀ-ÿ][\wÀ-ÿ'’-]*", re.UNICODE)
@@ -38,7 +38,7 @@ def project_approved_words(project, *, max_captions: int = 500,
     user-authored/edited captions are added; ordinary sentence words are not
     whitelisted, so a typo in prose still remains reviewable.
     """
-    approved = {word.casefold() for term in BASE_HOTWORDS for word in _WORD.findall(term)}
+    approved = {word.casefold() for term in BASE_ANALYSIS_TERMS for word in _WORD.findall(term)}
     count = captions = 0
     for clip in getattr(project, 'clips', ()):
         if getattr(clip, 'kind', '') != 'text':

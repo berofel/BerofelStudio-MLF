@@ -13,7 +13,7 @@ ACESSO E ATUALIZAÇÕES:
   encerra processos automaticamente.
 
 Instalação: instalar_dependencias.bat (oferece Pocket TTS local) > ABRIR_BEROFELSTUDIO.bat
-Whisper/Silero e Qwen de compatibilidade: INSTALAR_TODAS_AS_IAS.bat
+Transcrição Parakeet TDT v3 ONNX INT8/Silero e Qwen: INSTALAR_TODAS_AS_IAS.bat
 Pocket TTS avulso/reparo: INSTALAR_POCKET_TTS.bat
 Testes: TESTAR_EDITOR_08.bat e TESTAR_INTERFACE_ACOES_08.bat
 
@@ -39,7 +39,7 @@ INSTALACAO DO EDITOR:
 3. Execute ABRIR_BEROFELSTUDIO.bat.
 
 INSTALACAO DAS IAS (opcional, uma unica vez com internet):
-4. Execute INSTALAR_IA_OPCIONAL.bat para Silero VAD ONNX + Faster-Whisper Base.
+4. Execute INSTALAR_IA_OPCIONAL.bat para Parakeet TDT v3 ONNX INT8/CPU + Silero VAD ONNX.
 5. Execute INSTALAR_QWEN_OPCIONAL.bat para Qwen3 1.7B + llama-cli.
    Ou use INSTALAR_TODAS_AS_IAS.bat para instalar os tres conjuntos, incluindo Pocket TTS.
    O Qwen pede download grande de aproximadamente 1,3 GB.
@@ -48,7 +48,7 @@ ANALISE DE BLOCOS:
 - Importe o video, arraste para a timeline e selecione um ou varios blocos.
 - Clique no menu "☰ Ferramentas".
 - "Transcrever IA" salva a transcricao sem fazer cortes.
-- "Silero + Whisper" identifica pausas e mostra as propostas para REVISAO.
+- "Silero + Parakeet TDT v3" identifica pausas e transcreve regiões de fala para revisão.
 - "Qwen Contextual" analisa o texto da fala e sugere remocoes (requer Qwen).
 - "Exportar SRT" sincroniza legendas com a timeline ATUAL, depois dos cortes.
 - O video original nunca e alterado e nenhuma analise roda automaticamente.

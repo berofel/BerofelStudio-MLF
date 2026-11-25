@@ -8,8 +8,7 @@ from PySide6.QtWidgets import (QScrollArea, QWidget, QVBoxLayout, QHBoxLayout,
 from .wheel_controls import WheelGuardComboBox as QComboBox
 
 from berofel.services.action_scope import ScopeSpec, resolve_scope, scope_summary
-from berofel.services.model_paths import (parakeet_model_path,
-    transcribe_binding_wheel, transcribe_runtime_dir)
+from berofel.services.model_paths import parakeet_tdt_model_dir
 
 SCOPES = [
     ('Um bloco selecionado', 'one'),
@@ -184,21 +183,15 @@ class ActionsPanel(QScrollArea):
         box.addWidget(QLabel('AÇÕES AVULSAS · um clique, uma função'))
         box.addWidget(QLabel('Motor de transcrição local'))
         self.asr_engine=QComboBox()
-        self.asr_engine.addItem('Faster-Whisper · padrão',('faster-whisper','cpu'))
-        self.asr_engine.addItem('Parakeet Ultra Q8 · CPU',('parakeet-ultra','cpu'))
-        self.asr_engine.addItem('Parakeet Ultra Q8 · Vulkan',('parakeet-ultra','vulkan'))
-        available=(parakeet_model_path().is_file() and
-                   transcribe_binding_wheel().is_file() and
-                   (transcribe_runtime_dir()/'transcribe.dll').is_file())
-        if not available:
-            for index in (1,2):
-                item=self.asr_engine.model().item(index)
-                if item:item.setEnabled(False)
-            self.asr_engine.setToolTip(
-                'Instale modelo/runtime Parakeet pelo script opcional para habilitar estas opções.')
-        self.asr_engine.currentIndexChanged.connect(self._save_asr_preference)
-        self.asr_engine.currentIndexChanged.connect(self._update_plan)
-        self._restore_asr_preference()
+        self.asr_engine.addItem('Parakeet TDT v3 · ONNX INT8 · CPU',
+                                ('parakeet-tdt-v3-int8','cpu'))
+        model_dir=parakeet_tdt_model_dir()
+        available=(model_dir.is_dir() and any(model_dir.glob('*.onnx')))
+        self.asr_engine.setToolTip(
+            'Único motor de transcrição local. ' +
+            ('Modelo ONNX INT8 instalado.' if available else
+             'Modelo ainda não instalado; execute INSTALAR_IA_OPCIONAL.bat.'))
+        self.asr_engine.setEnabled(False)
         box.addWidget(self.asr_engine)
         for label,key in ACTIONS:
             button=QPushButton(label)
@@ -234,18 +227,13 @@ class ActionsPanel(QScrollArea):
                          'Berofel','BerofelStudio')
 
     def _restore_asr_preference(self):
-        selected=str(self._settings().value('ai/asr_backend','faster-whisper|cpu'))
-        index=self.asr_engine.findData(tuple(selected.split('|',1)))
-        self.asr_engine.setCurrentIndex(max(0,index))
+        self.asr_engine.setCurrentIndex(0)
 
     def _save_asr_preference(self,*_args):
-        value=self.asr_engine.currentData() or ('faster-whisper','cpu')
-        self._settings().setValue('ai/asr_backend','|'.join(value))
-        self._settings().sync()
+        return None
 
     def asr_selection(self):
-        value=self.asr_engine.currentData() or ('faster-whisper','cpu')
-        return str(value[0]),str(value[1])
+        return 'parakeet-tdt-v3-int8','cpu'
 
     def resizeEvent(self,event):
         super().resizeEvent(event)
@@ -289,8 +277,7 @@ class ActionsPanel(QScrollArea):
         needs_vad='silence' in chosen or 'context' in chosen
         stages=[]
         if needs_vad: stages.append('Silero VAD')
-        engine='Parakeet Ultra Q8' if self.asr_selection()[0]=='parakeet-ultra' else 'Faster-Whisper'
-        if needs_text: stages.append(engine+' se necessário')
+        if needs_text: stages.append('Parakeet TDT v3 ONNX INT8/CPU se necessário')
         stages.append('regras locais em Python')
         self.plan_label.setText('Limpeza local: ' + ' → '.join(stages) +
             '\nSem Qwen/LLM. Cada corte aguarda revisão; Contexto sozinho não remove pausas.')

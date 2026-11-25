@@ -532,7 +532,7 @@ def _candidate_spans(words: Sequence[Mapping], options: ClipperOptions) -> list[
 
 def _boundary_choices(all_words: Sequence[Mapping], candidate: Mapping,
                       options: ClipperOptions) -> tuple[list[dict],list[dict]]:
-    """Offer nearby Whisper word edges while preserving configured duration."""
+    """Offer nearby ASR word edges while preserving configured duration."""
     start=int(candidate['start_ms']);end=int(candidate['end_ms'])
     minimum=options.min_seconds*1000.;maximum=options.max_seconds*1000.
     start_choices=[];end_choices=[]
@@ -559,7 +559,7 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                   cache_dir: Path | None = None) -> dict:
     """Rank candidate windows from saved words and optional measured audio.
 
-    This function never calls Whisper/Qwen, renders video, or changes a project.
+    This function never calls a language model, renders video, or changes a project.
     """
     opts=options or ClipperOptions()
     opts.__post_init__()

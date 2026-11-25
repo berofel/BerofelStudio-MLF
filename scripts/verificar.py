@@ -40,7 +40,7 @@ def main():
                       sys.version.split()[0] + (" (64-bit)" if sys.maxsize > 2**32 else " (32-bit)"))
     core_modules = ("PySide6.QtCore", "PySide6.QtWidgets", "PySide6.QtMultimedia",
                     "PySide6.QtMultimediaWidgets", "imageio_ffmpeg", "PIL", "psutil", "zmq")
-    ai_modules = ("numpy", "faster_whisper", "ctranslate2", "av", "onnxruntime")
+    ai_modules = ("numpy", "onnx_asr", "onnxruntime")
     for module in core_modules + (ai_modules if args.ai and not args.editor_only else ()):
         try:
             importlib.import_module(module)
@@ -64,15 +64,24 @@ def main():
             result("FFmpeg azmq (EQ ao vivo)",False,str(exc))
     if args.ai and not args.editor_only and not args.quick:
         try:
-            from preparar_modelos import model_path
-            model = model_path()
-            valid = (model / "config.json").is_file() and (model / "model.bin").is_file()
+            from berofel.services.model_paths import parakeet_tdt_model_dir, silero_vad_model_dir
+            model = parakeet_tdt_model_dir()
+            valid = (model.is_dir() and any(p.is_file() and p.suffix.casefold()=='.onnx'
+                                             for p in model.rglob('*')) and
+                     any('int8' in p.name.casefold() for p in model.rglob('*.onnx')))
             if args.strict:
-                bad += not result("Whisper Base baixado", valid, str(model))
+                bad += not result("Parakeet TDT v3 ONNX INT8", valid, str(model))
             else:
-                result("Whisper Base baixado", valid, str(model))
+                result("Parakeet TDT v3 ONNX INT8", valid, str(model))
+            vad=silero_vad_model_dir()
+            vad_valid=vad.is_dir() and any(p.is_file() and p.suffix.casefold()=='.onnx'
+                                           for p in vad.rglob('*'))
+            if args.strict:
+                bad += not result("Silero VAD ONNX local",vad_valid,str(vad))
+            else:
+                result("Silero VAD ONNX local",vad_valid,str(vad))
         except Exception as exc:
-            bad += not result("Whisper Base baixado", False, str(exc))
+            bad += not result("Parakeet TDT v3 ONNX INT8", False, str(exc))
     if args.strict:
         rc = subprocess.run([sys.executable, "-m", "pip", "check"], capture_output=True,
                             text=True, timeout=60)

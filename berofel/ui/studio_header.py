@@ -54,7 +54,7 @@ class StudioHeader(QWidget):
         root.addWidget(self.task_slot,1)
 
         self.local_status=QLabel('● IA LOCAL');self.local_status.setObjectName('localStatus')
-        self.local_status.setToolTip('Silero, Faster-Whisper e Qwen3-TTS Base funcionam localmente quando instalados.')
+        self.local_status.setToolTip('Parakeet TDT v3 ONNX INT8, Silero VAD e Qwen3-TTS Base funcionam localmente quando instalados.')
         root.addWidget(self.local_status)
 
         self.project_menu_button=QToolButton();self.project_menu_button.setText('Projeto ▾')

@@ -42,8 +42,8 @@ def main()->int:
     parser.add_argument('--length',choices=tuple(TEXTS),default='curta')
     parser.add_argument('--configs',nargs='+',choices=tuple(x[0] for x in CONFIGS),
                         default=tuple(x[0] for x in CONFIGS))
-    parser.add_argument('--asr-wer',action='store_true',
-        help='calcula WER com Faster-Whisper Base local (proxy de inteligibilidade).')
+    parser.add_argument('--parakeet-wer',action='store_true',
+        help='calcula WER com Parakeet TDT v3 INT8 local (proxy textual, não métrica vocal).')
     args=parser.parse_args()
     if not args.confirm_own_or_authorized_voice:
         parser.error('confirme autorização com --confirm-own-or-authorized-voice')
@@ -99,11 +99,10 @@ def main()->int:
                     'sample_file':output.name,'cache_hit':False}
                 records.append(record)
                 print(json.dumps(record,ensure_ascii=False,sort_keys=True),flush=True)
-        if args.asr_wer:
-            from berofel.services.ai_worker import _load_whisper,_whisper
-            whisper_options={'model':'base','language':'pt','offline_only':True,
-                'compute_type':'int8','device':'cpu'}
-            whisper=_load_whisper(whisper_options)
+        if args.parakeet_wer:
+            from berofel.services.parakeet_asr import load_model,load_vad,transcribe_file
+            recognizer=load_model(threads=6)
+            vad=load_vad(threads=1)
             reference_words=re.findall(r'\w+',text.lower(),flags=re.UNICODE)
             with tempfile.TemporaryDirectory(prefix='bfs_sampling_wer_') as folder:
                 for record in records:
@@ -117,8 +116,7 @@ def main()->int:
                     converted=Path(folder)/(Path(record['sample_file']).stem+'.wav')
                     wavfile.write(str(converted),16000,
                         (np.clip(signal,-1,1)*32767).astype('<i2'))
-                    whisper_options['audio_path']=str(converted)
-                    result=_whisper(whisper_options,model=whisper)
+                    result=transcribe_file(converted,model=recognizer,vad=vad,threads=6)
                     transcript=' '.join(item.get('text','') for item in result.get('segments',[]))
                     hypothesis_words=re.findall(r'\w+',transcript.lower(),flags=re.UNICODE)
                     row=list(range(len(hypothesis_words)+1))
@@ -128,15 +126,15 @@ def main()->int:
                             current.append(min(current[-1]+1,row[j]+1,
                                 row[j-1]+(word!=observed)))
                         row=current
-                    record['whisper_base_int8_wer']=round(row[-1]/max(1,len(reference_words)),3)
-                    record['whisper_words']=len(hypothesis_words)
+                    record['parakeet_tdt_v3_int8_wer']=round(row[-1]/max(1,len(reference_words)),3)
+                    record['parakeet_words']=len(hypothesis_words)
         report={'backend':'Qwen3-TTS 12Hz 0.6B Base, nativo Q4, CPU, 6 threads',
             'text_length':args.length,'characters':len(text),'max_tokens':max_tokens,
             'offline':bool(os.environ.get('HF_HUB_OFFLINE')=='1' and
                            os.environ.get('TRANSFORMERS_OFFLINE')=='1'),
             'profile_embedding_cache_hit':bool(embedding_hit),
             'profile_prepare_seconds':round(profile_prepare,3),
-            'model_load_seconds':round(model_load,3),'asr_wer_measured':args.asr_wer,
+            'model_load_seconds':round(model_load,3),'parakeet_wer_measured':args.parakeet_wer,
             'repeats':args.repeats,'records':records}
         report_path=output_root/'results.json'
         report_path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')

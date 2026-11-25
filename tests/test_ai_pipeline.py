@@ -36,18 +36,15 @@ class FakeStages:
         elif stage == 'vad':
             result={'speech':[{'start':.0,'end':5.0},{'start':7.0,'end':min(15.,payload.get('duration',15.))}],
                     'duration':15.}
-        elif stage == 'whisper':
-            result={'words':[{'id':'w0_0','text':'Olá','start':.2,'end':.5},
-                             {'id':'w0_1','text':'pessoal','start':.6,'end':1.1},
-                             {'id':'w0_2','text':'é','start':1.3,'end':1.5}],
-                    'segments':[{'start':0.,'end':1.6,'text':'Olá pessoal é'}],
-                    'language':'pt','duration':15.}
         elif stage == 'parakeet':
-            result={'words':[{'id':'p0_0','text':'Olá','start':.2,'end':.5,
-                              'probability':0.}],
-                    'segments':[{'start':.2,'end':.5,'text':'Olá','word_ids':['p0_0']}],
-                    'language':'pt','model':'parakeet-ultra-Q8_0','duration':15.,
-                    'timestamp_kind':'word','runtime':'0.4.2','backend':payload.get('backend')}
+            words=[{'id':f'p{i}','text':text,'start':start,'end':end,'probability':0.}
+                   for i,(text,start,end) in enumerate((('Olá',.2,.5),
+                       ('pessoal',.6,1.1),('é',1.3,1.5)))]
+            result={'words':words,
+                    'segments':[{'start':.2,'end':1.5,'text':'Olá pessoal é',
+                                 'word_ids':[word['id'] for word in words]}],
+                    'language':'pt','model':'parakeet-tdt-0.6b-v3-int8','duration':15.,
+                    'timestamp_kind':'onnx-asr-token-frame','backend':'onnxruntime-cpu'}
         elif stage == 'qwen':
             on_progress=kw.get('on_progress')
             if on_progress:
@@ -101,6 +98,18 @@ class AITest(unittest.TestCase):
         self.prj.add_clip(self.other)
         self.cache=CacheStore(Path(self.temp.name)/'cache')
         self.fake=FakeStages()
+        self.model_dir=Path(self.temp.name)/'parakeet-int8'
+        self.model_dir.mkdir()
+        (self.model_dir/'encoder.int8.onnx').write_bytes(b'model fixture')
+        self.vad_dir=Path(self.temp.name)/'silero'
+        self.vad_dir.mkdir()
+        (self.vad_dir/'silero.onnx').write_bytes(b'vad fixture')
+        for target,value in (
+            ('berofel.services.ai_pipeline.parakeet_tdt_model_dir',self.model_dir),
+            ('berofel.services.ai_pipeline.silero_vad_model_dir',self.vad_dir),
+        ):
+            mocked=patch(target,return_value=value)
+            mocked.start();self.addCleanup(mocked.stop)
 
     def test_stage_runner_discards_stale_qwen_progress_before_retry(self):
         output=Path(self.temp.name)/'cache'/'qwen.json'
@@ -146,7 +155,7 @@ class AITest(unittest.TestCase):
     def test_selection_and_batata_quente_cache(self):
         pipe=Pipeline(self.cache,self.fake)
         res=pipe.analyze([self.clip],AIOptions())
-        self.assertEqual([x for x in self.fake.calls], ['extract','vad','whisper'])
+        self.assertEqual([x for x in self.fake.calls], ['extract','vad','parakeet'])
         self.assertEqual(res['cache_misses'],3)
         self.assertEqual(res['cache_hits'],0)
         self.assertEqual(len(res['reports']),1)
@@ -165,61 +174,42 @@ class AITest(unittest.TestCase):
         p=Pipeline(self.cache,self.fake).analyze([self.clip],AIOptions())
         self.assertEqual(p['cache_misses'],3)
 
-    def test_cleanup_hotwords_reach_whisper_and_only_invalidate_transcript_cache(self):
-        base=Pipeline(self.cache,self.fake).analyze([self.clip],AIOptions(enable_qwen=False))
-        self.assertEqual(base['cache_misses'],3)
-        hinted=Pipeline(self.cache,self.fake).analyze([self.clip],AIOptions(
-            enable_qwen=False,whisper_hotwords='Berofel Studio, timeline'))
-        self.assertEqual(hinted['cache_misses'],1)
-        call=[details for details in self.fake.call_details if details[0]=='whisper'][-1]
-        self.assertEqual(call[1]['hotwords'],'Berofel Studio, timeline')
-
-    def test_default_whisper_cache_key_remains_compatible_without_hotwords(self):
+    def test_parakeet_default_cache_key_reuses_transcript(self):
         base=Pipeline(self.cache,self.fake).analyze([self.clip],AIOptions(enable_qwen=False))
         again=Pipeline(self.cache,self.fake).analyze([self.clip],AIOptions(enable_qwen=False))
         self.assertEqual(base['cache_misses'],3)
         self.assertEqual(again['cache_misses'],0)
         self.assertEqual(len(self.fake.calls),3)
 
-    def test_parakeet_is_opt_in_has_own_cache_and_uses_six_threads(self):
-        model=Path(self.temp.name)/'parakeet.gguf';model.write_bytes(b'model')
-        wheel=Path(self.temp.name)/'binding.whl';wheel.write_bytes(b'binding')
-        library=Path(self.temp.name)/'transcribe.dll';library.write_bytes(b'runtime')
-        opts=AIOptions(asr_backend='parakeet-ultra',asr_device='vulkan',
-                       asr_model_path=str(model),asr_binding_wheel=str(wheel),
-                       asr_library=str(library))
+    def test_parakeet_tdt_is_the_only_asr_and_uses_benchmarked_four_threads(self):
+        opts=AIOptions(asr_model_path=str(self.model_dir),vad_model_path=str(self.vad_dir))
         result=Pipeline(self.cache,self.fake).analyze([self.clip],opts,mode='transcribe')
-        self.assertEqual(self.fake.calls,['extract','parakeet'])
+        self.assertEqual(self.fake.calls,['extract','vad','parakeet'])
         call=next(item for item in self.fake.call_details if item[0]=='parakeet')
-        self.assertEqual(call[1]['backend'],'vulkan')
-        self.assertEqual(call[1]['threads'],6)
+        self.assertEqual(call[1]['threads'],4)
+        self.assertEqual(call[1]['speech_spans'],[{'start':.0,'end':5.0},{'start':7.0,'end':15.0}])
         self.assertEqual(result['reports'][0]['words'][0]['text'],'Olá')
         cached=Pipeline(self.cache,self.fake).analyze([self.clip],opts,mode='transcribe')
         self.assertEqual(cached['cache_misses'],0)
         self.assertEqual(cached['reports'],result['reports'])
-        # A later default run must not reuse the Parakeet transcript.
+        # The default route is the same Parakeet TDT model and reuses cache.
         default=Pipeline(self.cache,self.fake).analyze([self.clip],AIOptions(),mode='transcribe')
-        self.assertEqual(default['cache_misses'],1)
-        self.assertEqual(self.fake.calls,['extract','parakeet','whisper'])
+        self.assertEqual(default['cache_misses'],0)
+        self.assertEqual(self.fake.calls,['extract','vad','parakeet'])
 
-    def test_parakeet_coverage_identity_invalidates_when_native_runtime_changes(self):
-        model=Path(self.temp.name)/'parakeet.gguf';model.write_bytes(b'model')
-        wheel=Path(self.temp.name)/'binding.whl';wheel.write_bytes(b'binding')
-        library=Path(self.temp.name)/'transcribe.dll';library.write_bytes(b'runtime-v1')
-        opts=AIOptions(asr_backend='parakeet-ultra',asr_device='vulkan',
-                       asr_model_path=str(model),asr_binding_wheel=str(wheel),
-                       asr_library=str(library))
+    def test_parakeet_coverage_identity_invalidates_when_onnx_model_changes(self):
+        opts=AIOptions(asr_model_path=str(self.model_dir),vad_model_path=str(self.vad_dir))
         first=transcript_model_identity(opts)
-        library.write_bytes(b'runtime-v2-changed')
+        (self.model_dir/'encoder.int8.onnx').write_bytes(b'new model version')
         self.assertNotEqual(first,transcript_model_identity(opts))
 
-    def test_qwen_option_only_executes_when_model_available_and_after_whisper(self):
+    def test_qwen_option_only_executes_when_model_available_and_after_parakeet(self):
         cli=Path(self.temp.name)/'llama-cli.exe';cli.write_bytes(b'fake')
         model=Path(self.temp.name)/'model.gguf';model.write_bytes(b'fake')
         opts=AIOptions(enable_qwen=True,llama_cli=str(cli),qwen_model=str(model))
         stages=[]
         res=Pipeline(self.cache,self.fake,stage_callback=stages.append).analyze([self.clip],opts)
-        self.assertEqual(self.fake.calls,['extract','vad','whisper','qwen'])
+        self.assertEqual(self.fake.calls,['extract','vad','parakeet','qwen'])
         _,qwen_payload,qwen_options=next(item for item in self.fake.call_details if item[0]=='qwen')
         self.assertEqual(qwen_options['timeout'],420)
         self.assertEqual(qwen_payload['timeout'],300)
@@ -260,7 +250,7 @@ class AITest(unittest.TestCase):
         self.assertEqual(result['suggestions'][0]['word_ids'],[payload['words'][2]['id']])
         self.assertEqual(result['cache_misses'],10)
 
-    def test_qwen_interval_formula_requires_contiguous_whisper_word_ids(self):
+    def test_qwen_interval_formula_requires_contiguous_parakeet_word_ids(self):
         words=[{'id':'a','start':1.0,'end':1.2},
                {'id':'b','start':1.25,'end':1.5},
                {'id':'c','start':2.0,'end':2.2}]
@@ -353,7 +343,7 @@ class AITest(unittest.TestCase):
             second=Pipeline(self.cache,self.fake).analyze([self.clip],opts)
         self.assertEqual(second['cache_hits'],3)
         self.assertEqual(second['cache_misses'],1)
-        self.assertEqual(self.fake.calls,['extract','vad','whisper','qwen','qwen'])
+        self.assertEqual(self.fake.calls,['extract','vad','parakeet','qwen','qwen'])
 
     def test_srt_after_removing_speech_and_saving_project(self):
         result=Pipeline(self.cache,self.fake).analyze([self.clip],AIOptions())
@@ -394,7 +384,7 @@ class AITest(unittest.TestCase):
         events=[]
         first=Pipeline(self.cache,fake).analyze([long],opts,
                                                   progress=lambda cur,total:events.append((cur,total)))
-        self.assertEqual(fake.batch_calls,[('vad',3),('whisper',3)])
+        self.assertEqual(fake.batch_calls,[('vad',3),('parakeet',3)])
         self.assertEqual(first['cache_misses'],9)
         self.assertEqual(events[-1],(9,9))
         second=Pipeline(self.cache,fake).analyze([long],opts)
