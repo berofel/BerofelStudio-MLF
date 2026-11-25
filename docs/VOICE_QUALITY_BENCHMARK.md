@@ -12,6 +12,18 @@ Em 25/11/2026, no ambiente virtual do aplicativo (Python 3.12, NumPy 2.5.4; iden
 
 Após trocar o adaptador de arquivo para leitura por regiões, fiz uma verificação local em uma referência vocal já autorizada: FFmpeg preparou PCM16 mono 16 kHz e `transcribe_file` executou sem spans VAD pré-calculados. Duas execuções isoladas em processos novos, cada uma com janela de 3,0 s e Parakeet TDT v3 INT8 + Silero ONNX em CPU, levaram 6,05 s e 4,64 s, reconheceram seis palavras e retornaram `memory_strategy=streamed_pcm_windows`. Na segunda, medição `psutil` amostrada a cada 25 ms registrou RSS inicial de 63,2 MiB, pico de 766,7 MiB e aumento de 703,5 MiB durante carga+VAD+ASR. São duas amostras exploratórias curtas, não p50/p95 nem comparação com a versão anterior; páginas do modelo possivelmente estavam no cache do sistema operacional na segunda execução. O acesso WMI para confirmar o nome da CPU e RAM física foi negado, portanto não atribuo esses números ao Ryzen 7 5700G. O texto não foi gravado neste relatório. Nenhum Whisper foi chamado.
 
+### Escala em gameplay real — Parakeet TDT v3 ONNX INT8/CPU
+
+Usei o vídeo de gameplay de 1h20 previamente indicado pelo usuário, sem modificar o original. FFmpeg extraiu apenas a faixa de áudio para WAV PCM16 mono 16 kHz temporário. Em cada linha foi iniciado um processo Python novo; Silero usou 1 thread, Parakeet 4 threads e `CPUExecutionProvider`. `vad_asr` inclui a varredura VAD e a inferência, não inclui carregamento dos modelos. RSS foi amostrado a cada 50 ms. Não foi usado Whisper.
+
+| Intervalo | PCM temporário | Extração FFmpeg | Carga VAD | Carga Parakeet | VAD + ASR | Total medido | RTF VAD+ASR | Pico RSS | Blocos VAD | Regiões reconhecidas | Palavras |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 5 min | — | 1,39 s | 0,25 s | 4,31 s | 6,75 s | 12,70 s | 0,0225 | 957,3 MiB | 10 | 23 | 367 |
+| 20 min | — | 3,86 s | 0,25 s | 4,30 s | 28,53 s | 36,94 s | 0,0238 | 956,7 MiB | 40 | 108 | 1.565 |
+| 1h20 (4.837,85 s) | 147,6 MiB | 9,48 s | 0,25 s | 4,36 s | 90,95 s | 105,05 s | 0,0188 | 963,9 MiB | 162 | 364 | 4.088 |
+
+`Total medido = FFmpeg + carga Silero + carga Parakeet + VAD/ASR`. No cenário completo, o RTF incluindo esses custos foi 0,0217. Os PCM temporários foram apagados automaticamente e o vídeo não foi reescrito. Os tempos vieram de uma execução por tamanho; não são p50/p95, CPU física foi ocultada pelo WMI e não houve comparação com Faster-Whisper nem com a implementação anterior. A contagem de palavras não mede precisão: sem transcrição humana alinhada não há WER/CER válido, e não foi feita avaliação auditiva do texto reconhecido. O teste comprova que a rota streaming concluiu o áudio completo em CPU sem manter o PCM inteiro em RAM; não comprova qualidade da transcrição nem a edição/renderização automática do vídeo.
+
 Ambiente Windows do aplicativo, Ryzen 7 5700G (8C/16T), 16 GB RAM, execução CPU local; referência vocal autorizada local de 3 s; síntese Pure C 0.6B, seis threads; um único texto PT-BR curto por backend. Foram usadas saídas WAV novas, sem cache de áudio. A checagem textual dos WAVs foi feita pelo Parakeet TDT v3 ONNX INT8/CPU já instalado. Os arquivos temporários foram removidos após a análise.
 
 | Backend | Tempo total | Duração WAV | RTF total | Inicialização/modelo | Resultado Parakeet |
