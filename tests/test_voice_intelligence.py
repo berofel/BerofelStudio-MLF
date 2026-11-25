@@ -268,6 +268,67 @@ class ReferenceWindowRankingTests(TestCase):
         self.assertEqual(score.confidence, 'limited')
 
 
+class VoiceReferenceReportCacheTests(TestCase):
+    def test_persists_numeric_report_and_reuses_it_for_unchanged_sample(self):
+        from berofel.services import audio_reference
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);source=root/'voice.wav';source.write_bytes(b'private voice bytes')
+            cache=root/'cache'
+            computed={'duration':8.0,'selected_start':2.0,
+                      'acoustic_features':{'rms_dbfs':-19.0},'warnings':[]}
+            with patch.dict('os.environ',{'BEROFEL_VOICE_INSPECTION_CACHE':str(cache)}), \
+                 patch.object(audio_reference,'_voice_report_dependencies',return_value={'v':1}), \
+                 patch.object(audio_reference,'_inspect_voice_reference_uncached',
+                              return_value=computed) as inspect:
+                first=audio_reference.inspect_voice_reference(source)
+                second=audio_reference.inspect_voice_reference(source)
+            self.assertFalse(first['cache_hit'])
+            self.assertTrue(second['cache_hit'])
+            self.assertEqual(inspect.call_count,1)
+            payload=next(cache.rglob('*.json')).read_text(encoding='utf-8')
+            self.assertNotIn(str(source),payload)
+            self.assertNotIn('private voice bytes',payload)
+
+    def test_invalidates_report_when_content_or_tool_identity_changes(self):
+        from berofel.services import audio_reference
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);source=root/'voice.wav';source.write_bytes(b'first authorized sample')
+            cache=root/'cache';report={'duration':3.0,'warnings':[]}
+            dependencies={'tool':'first'}
+            with patch.dict('os.environ',{'BEROFEL_VOICE_INSPECTION_CACHE':str(cache)}), \
+                 patch.object(audio_reference,'_voice_report_dependencies',
+                              side_effect=lambda:dependencies), \
+                 patch.object(audio_reference,'_inspect_voice_reference_uncached',
+                              return_value=report) as inspect:
+                audio_reference.inspect_voice_reference(source)
+                dependencies['tool']='second'
+                second=audio_reference.inspect_voice_reference(source)
+                source.write_bytes(b'second sample same path')
+                third=audio_reference.inspect_voice_reference(source)
+            self.assertFalse(second['cache_hit'])
+            self.assertFalse(third['cache_hit'])
+            self.assertEqual(inspect.call_count,3)
+            self.assertEqual(len(list(cache.rglob('*.json'))),1)
+
+    def test_corrupt_cache_fails_open_and_is_replaced(self):
+        from berofel.services import audio_reference
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);source=root/'voice.wav';source.write_bytes(b'voice source')
+            cache=root/'cache';report={'duration':4.0,'warnings':[]}
+            with patch.dict('os.environ',{'BEROFEL_VOICE_INSPECTION_CACHE':str(cache)}), \
+                 patch.object(audio_reference,'_voice_report_dependencies',return_value={'v':1}), \
+                 patch.object(audio_reference,'_inspect_voice_reference_uncached',
+                              return_value=report) as inspect:
+                audio_reference.inspect_voice_reference(source)
+                cache_file=next(cache.rglob('*.json'))
+                cache_file.write_text('{corrupt',encoding='utf-8')
+                recovered=audio_reference.inspect_voice_reference(source)
+                reread=audio_reference.inspect_voice_reference(source)
+            self.assertFalse(recovered['cache_hit'])
+            self.assertTrue(reread['cache_hit'])
+            self.assertEqual(inspect.call_count,2)
+
+
 class AcousticWindowAnalysisTests(TestCase):
     def test_reports_frame_features_without_claiming_calibrated_snr(self):
         from array import array

@@ -401,6 +401,7 @@ class PureCEditorIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='bfs_purec_emotion_gui_') as work:
             with patch.dict(os.environ, {
                     'BEROFEL_QWEN3_PUREC_PROFILE_CACHE':str(Path(work)/'cache'),
+                    'BEROFEL_VOICE_INSPECTION_CACHE':str(Path(work)/'voice-inspection-cache'),
                     'BEROFEL_QWEN3_PUREC_LOG':str(Path(work)/'purec-server.log'),
                 },clear=False), \
                  _isolated_qsettings(work), _stop_purec_worker_on_exit():

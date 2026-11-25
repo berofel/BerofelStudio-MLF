@@ -3,19 +3,90 @@ from __future__ import annotations
 
 from pathlib import Path
 from functools import lru_cache
+import json
+import os
 import re
 import tempfile
 import subprocess
 import threading
 from bisect import bisect_right
+from .ai_cache import digest, file_sha256
 
 _PROMPT_MAX_SECONDS = 30.0
 # Bump whenever candidate selection, trimming, resampling or conditioning
 # preparation changes; cached speaker prompts must not survive a new window.
 REFERENCE_PREPARATION_VERSION = 6
+VOICE_REFERENCE_REPORT_VERSION = 1
 _SILENCE_THRESHOLD_DB = -38
 _SILENCE_MIN_SECONDS = .35
 _REFERENCE_SCAN_LOCK=threading.RLock()
+_VOICE_REPORT_LOCK=threading.RLock()
+
+
+def _voice_report_cache_root() -> Path:
+    override=os.environ.get('BEROFEL_VOICE_INSPECTION_CACHE')
+    if override:return Path(override).expanduser().resolve()
+    local=os.environ.get('LOCALAPPDATA')
+    return (Path(local)/'BFS'/'cache'/'voice_reference' if local else
+            Path.home()/'.cache'/'BerofelStudio'/'voice_reference')
+
+
+def _voice_report_dependencies() -> dict:
+    """Return lightweight file identities for tools that affect the report."""
+    from .voice_intelligence.acoustic_analyzer import (
+        ACOUSTIC_FEATURE_VERSION, PITCH_FEATURE_VERSION)
+    from .ffmpeg import ffmpeg_path
+    ffmpeg=Path(ffmpeg_path())
+    try:
+        stat=ffmpeg.stat()
+        ffmpeg_identity=(str(ffmpeg.resolve()),stat.st_size,stat.st_mtime_ns)
+    except OSError:
+        ffmpeg_identity=(str(ffmpeg),None,None)
+    vad_files=[]
+    try:
+        from .model_paths import silero_vad_model_dir
+        root=Path(silero_vad_model_dir())
+        for model in sorted(root.glob('**/*')):
+            if model.is_file() and model.suffix.casefold() in {'.onnx','.pt'}:
+                stat=model.stat()
+                vad_files.append((str(model.relative_to(root)),stat.st_size,stat.st_mtime_ns))
+    except (OSError,RuntimeError,ValueError):
+        pass
+    return {'report_version':VOICE_REFERENCE_REPORT_VERSION,
+            'reference_preparation_version':REFERENCE_PREPARATION_VERSION,
+            'acoustic_feature_version':ACOUSTIC_FEATURE_VERSION,
+            'pitch_feature_version':PITCH_FEATURE_VERSION,
+            'ffmpeg':ffmpeg_identity,'vad_models':vad_files}
+
+
+def _read_voice_report_cache(path: Path, key: str) -> dict | None:
+    try:
+        data=json.loads(path.read_text(encoding='utf-8'))
+        if (not isinstance(data,dict) or data.get('schema')!=VOICE_REFERENCE_REPORT_VERSION
+                or data.get('key')!=key or not isinstance(data.get('report'),dict)):
+            return None
+        return dict(data['report'],cache_hit=True)
+    except (OSError,ValueError,TypeError):
+        return None
+
+
+def _write_voice_report_cache(path: Path, key: str, report: dict) -> None:
+    path.parent.mkdir(parents=True,exist_ok=True)
+    pending=path.with_name(path.name+f'.{os.getpid()}.tmp')
+    payload={'schema':VOICE_REFERENCE_REPORT_VERSION,'key':key,'report':report}
+    try:
+        with pending.open('w',encoding='utf-8',newline='\n') as stream:
+            json.dump(payload,stream,ensure_ascii=False,separators=(',',':'),allow_nan=False)
+            stream.flush();os.fsync(stream.fileno())
+        os.replace(pending,path)
+        # Keep one report per source path; a new source hash/algorithm version
+        # supersedes its stale private measurements without touching the audio.
+        for stale in path.parent.glob(path.stem.split('-',1)[0]+'-*.json'):
+            if stale!=path:
+                try:stale.unlink()
+                except OSError:pass
+    finally:
+        pending.unlink(missing_ok=True)
 
 
 def _candidate_acoustic_metrics(source: Path, binary: str,
@@ -273,7 +344,7 @@ def prepare_audio_prompt(voice: str,output_path: str | Path,
         raise
 
 
-def inspect_voice_reference(voice: str | Path) -> dict:
+def _inspect_voice_reference_uncached(voice: str | Path) -> dict:
     """Measure a local reference sample before cloning, without changing it."""
     source=Path(voice).expanduser()
     if not source.is_file():
@@ -343,3 +414,39 @@ def inspect_voice_reference(voice: str | Path) -> dict:
                 'acoustic_features':acoustic_features,
                 'pitch_features':pitch_features,
                 'warnings':warnings}
+
+
+def inspect_voice_reference(voice: str | Path) -> dict:
+    """Return a cached private acoustic report for an unchanged voice sample.
+
+    The cache stores measurements only (no waveform, transcript, embedding or
+    absolute source path). Its identity includes audio content, feature and
+    window-selection versions, and the FFmpeg/Silero files used by the scan.
+    Cache I/O errors fail open: the full inspection still runs normally.
+    """
+    source=Path(voice).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError('A gravação de referência não foi encontrada.')
+    try:
+        source_hash=file_sha256(source)
+        dependencies=_voice_report_dependencies()
+        source_key=digest({'path':str(source)})
+        cache_key=digest({'source_sha256':source_hash,'dependencies':dependencies})
+        cache_path=_voice_report_cache_root()/source_key[:2]/f'{source_key}-{cache_key}.json'
+    except (OSError,RuntimeError,ValueError):
+        report=_inspect_voice_reference_uncached(source)
+        report['cache_hit']=False
+        return report
+    with _VOICE_REPORT_LOCK:
+        cached=_read_voice_report_cache(cache_path,cache_key)
+        if cached is not None:
+            return cached
+        report=_inspect_voice_reference_uncached(source)
+        report['cache_hit']=False
+        cache_report={key:value for key,value in report.items() if key!='cache_hit'}
+        try:
+            _write_voice_report_cache(cache_path,cache_key,cache_report)
+        except (OSError,TypeError,ValueError):
+            # A read-only cache location must never block cloning preparation.
+            pass
+        return report
