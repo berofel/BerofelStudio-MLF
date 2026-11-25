@@ -10,7 +10,9 @@ from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QTextEdit,
                                QPushButton, QCheckBox, QFileDialog, QLineEdit, QHBoxLayout,
                                QMessageBox, QScrollArea, QInputDialog,
-                               QGroupBox, QSizePolicy, QBoxLayout, QTabWidget)
+                               QGroupBox, QSizePolicy, QBoxLayout, QTabWidget,
+                               QDialog, QDialogButtonBox, QTableWidget,
+                               QTableWidgetItem, QHeaderView)
 from .wheel_controls import (WheelGuardComboBox as QComboBox,
     WheelGuardDoubleSpinBox as QDoubleSpinBox, WheelGuardSlider as QSlider)
 
@@ -206,6 +208,14 @@ class NarrationPanel(QScrollArea):
             'Revise e corrija o texto antes de usá-lo na clonagem PT-BR.')
         self.transcribe_reference.clicked.connect(self._transcribe_reference)
         layout.addWidget(self.transcribe_reference)
+        self.pronunciation_dictionary=QPushButton('Dicionário de pronúncia PT-BR…')
+        self.pronunciation_dictionary.setToolTip(
+            'Cadastre nomes e termos próprios desta referência vocal. As regras '
+            'só alteram a cópia enviada ao sintetizador; roteiro e legendas ficam intactos.')
+        self.pronunciation_dictionary.clicked.connect(self._edit_pronunciation_dictionary)
+        layout.addWidget(self.pronunciation_dictionary)
+        self._responsive_buttons.append((self.pronunciation_dictionary,
+            'Dicionário de pronúncia PT-BR','Pronúncia PT-BR'))
         self._responsive_buttons.append((self.transcribe_reference,
             'Transcrever referência','Transcrever referência'))
         self.install_qwen = QPushButton('⬇ Preparar Qwen3 local (download explícito)')
@@ -1408,6 +1418,103 @@ class NarrationPanel(QScrollArea):
             self.verify_last.setDisabled(True)
             self.status.setText('Verificando o texto do WAV com Parakeet TDT v3 ONNX INT8/CPU…')
             self.on_verify_last(self.last_audio, self.last_spoken_text)
+
+    def _edit_pronunciation_dictionary(self):
+        selected = self.voice.currentData()
+        profile_id = self._voice_profile_id(selected)
+        if profile_id:
+            try:
+                reference = self.voice_profiles.get(profile_id)['sample_path']
+            except (OSError, ValueError, KeyError) as exc:
+                QMessageBox.warning(self, 'Dicionário de pronúncia', str(exc))
+                return
+        elif selected == '__custom__':
+            reference = self.sample_path.text().strip()
+        else:
+            reference = ''
+        if not reference or not Path(reference).is_file():
+            QMessageBox.information(self, 'Dicionário de pronúncia',
+                'Escolha uma amostra ou perfil local antes de editar as pronúncias.')
+            return
+        from berofel.services.voice_intelligence.pronunciation_dictionary import PronunciationDictionary
+        try:
+            dictionary = PronunciationDictionary(reference)
+            entries = dictionary.load()
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, 'Dicionário de pronúncia', str(exc))
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Pronúncia PT-BR desta voz')
+        dialog.resize(900, 420)
+        layout = QVBoxLayout(dialog)
+        help_text = QLabel(
+            'Ajustes locais por conteúdo da referência. A transcrição, o roteiro e as legendas não são alterados.')
+        help_text.setWordWrap(True)
+        layout.addWidget(help_text)
+        table = QTableWidget(0, 7, dialog)
+        table.setHorizontalHeaderLabels(['Termo original', 'Forma falada', 'Idioma',
+            'Fonética opcional', 'Contexto opcional', 'Diferenciar maiúsculas', 'Ativo'])
+        table.setAlternatingRowColors(True)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(table)
+
+        def set_check(row, column, checked):
+            item = QTableWidgetItem()
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+            table.setItem(row, column, item)
+
+        def add_row(value=None):
+            value = value or {'original': '', 'spoken_form': '', 'language': 'pt-br',
+                              'phonetic_form': '', 'context': '',
+                              'case_sensitive': False, 'enabled': True}
+            row = table.rowCount()
+            table.insertRow(row)
+            for column, key in enumerate(('original', 'spoken_form', 'language',
+                                          'phonetic_form', 'context')):
+                table.setItem(row, column, QTableWidgetItem(str(value.get(key, ''))))
+            set_check(row, 5, value.get('case_sensitive') is True)
+            set_check(row, 6, value.get('enabled', True) is True)
+
+        for entry in entries:
+            add_row(entry)
+        actions = QHBoxLayout()
+        add_button = QPushButton('＋ Adicionar termo')
+        remove_button = QPushButton('− Remover selecionados')
+        actions.addWidget(add_button); actions.addWidget(remove_button)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+        add_button.clicked.connect(lambda: add_row())
+
+        def remove_selected():
+            for row in sorted({index.row() for index in table.selectionModel().selectedRows()}, reverse=True):
+                table.removeRow(row)
+        remove_button.clicked.connect(remove_selected)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save |
+                                   QDialogButtonBox.StandardButton.Cancel, parent=dialog)
+        layout.addWidget(buttons)
+        buttons.rejected.connect(dialog.reject)
+
+        def save_dictionary():
+            try:
+                rows = []
+                for row in range(table.rowCount()):
+                    text = [table.item(row, col).text().strip() if table.item(row, col) else ''
+                            for col in range(5)]
+                    rows.append({'original': text[0], 'spoken_form': text[1],
+                        'language': text[2] or 'pt-br', 'phonetic_form': text[3],
+                        'context': text[4],
+                        'case_sensitive': table.item(row, 5).checkState() == Qt.CheckState.Checked,
+                        'enabled': table.item(row, 6).checkState() == Qt.CheckState.Checked})
+                dictionary.save([row for row in rows if row['original'] or row['spoken_form']])
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(dialog, 'Dicionário de pronúncia', str(exc))
+                return
+            dialog.accept()
+        buttons.accepted.connect(save_dictionary)
+        dialog.exec()
 
     def set_quality_check_busy(self, busy: bool):
         self.verify_last.setDisabled(bool(busy) or not bool(self.last_spoken_text))

@@ -11,6 +11,7 @@
 - A tela de narração explica que Qwen3-TTS Base não inclui locutores pré-gravados; perfis autorizados são locais e não são distribuídos pelo instalador.
 - O cronômetro da limpeza automática agora encerra quando a análise retorna, antes da janela de revisão. A aplicação posterior das sugestões continua sendo uma tarefa cronometrada separadamente.
 - Testes de regressão para textos acima de 1.700 caracteres, divisão sem perda de palavras e consolidação dos trechos em WAV contínuo.
+- Adicionado dicionário de pronúncia PT-BR editável por referência vocal. Regras privadas em JSON local alteram somente a cópia falada enviada ao Qwen; roteiro, transcrição e legendas permanecem intactos. Correspondência contextual é local à ocorrência, substituições não encadeiam e textos longos aplicam o dicionário uma única vez antes de dividir em trechos.
 
 # 0.10.0-alpha.4 — instalação sem janela de terminal
 

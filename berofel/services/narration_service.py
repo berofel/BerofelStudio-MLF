@@ -13,6 +13,9 @@ from typing import Callable
 
 from .ai_cache import digest
 from .voice_intelligence.text_normalizer import NORMALIZER_VERSION, normalize_pt_br
+from .voice_intelligence.pronunciation_dictionary import (
+    PronunciationDictionary, apply_pronunciations,
+)
 
 LANGUAGES = (
     # Qwen3-TTS exposes the language token Portuguese (no dialect-specific
@@ -222,7 +225,8 @@ def _generate_long_narration(request: NarrationRequest, chunks: list[str],
                 if progress and total:
                     progress((part - 1) * total + done, len(chunks) * total)
             part = generate_narration(part_request, progress=part_progress,
-                runner=runner, control=control, stage=stage, audio_chunk=audio_chunk)
+                runner=runner, control=control, stage=stage, audio_chunk=audio_chunk,
+                _prepared_text=True)
             path = str(part.get('path', ''))
             if not path or not Path(path).is_file():
                 raise RuntimeError(f'A síntese do trecho {index}/{len(chunks)} não criou um WAV válido.')
@@ -251,13 +255,26 @@ def _generate_long_narration(request: NarrationRequest, chunks: list[str],
 
 def generate_narration(request: NarrationRequest, progress: Callable | None = None,
                        runner: Callable | None = None, control=None,
-                       stage=None, audio_chunk: Callable | None = None) -> dict:
+                       stage=None, audio_chunk: Callable | None = None,
+                       _prepared_text: bool = False) -> dict:
     """Generate a non-destructive, local WAV using the sole supported TTS engine."""
     if request.engine not in _TEXT_CHUNK_CHARS:
         raise ValueError('O BerofelStudio usa exclusivamente Qwen3-TTS Base para narração.')
     source_text = request.text
-    speech_text = (normalize_pt_br(source_text).spoken
-                   if request.language == 'portuguese' else source_text.strip())
+    pronunciation_terms: tuple[str, ...] = ()
+    if _prepared_text:
+        # Long narration already normalized the full source before splitting;
+        # applying pronunciation rules again to each chunk can cascade aliases.
+        speech_text = source_text
+    else:
+        pronunciation_text = source_text
+        if request.language == 'portuguese' and request.voice:
+            dictionary = PronunciationDictionary(request.voice)
+            entries = dictionary.load()
+            pronunciation_text, pronunciation_terms = apply_pronunciations(
+                source_text, entries, language=request.language)
+        speech_text = (normalize_pt_br(pronunciation_text).spoken
+                       if request.language == 'portuguese' else source_text.strip())
     if speech_text != request.text:
         from dataclasses import replace
         request = replace(request, text=speech_text)
@@ -268,6 +285,7 @@ def generate_narration(request: NarrationRequest, progress: Callable | None = No
         result = _generate_long_narration(request, chunks, progress, runner,
                                           control, stage, audio_chunk)
         result.update({'source_text': source_text, 'spoken_text': speech_text,
+                       'pronunciation_terms_applied': pronunciation_terms,
                        'text_normalizer_version': NORMALIZER_VERSION})
         return result
     if request.engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced'):
@@ -287,5 +305,6 @@ def generate_narration(request: NarrationRequest, progress: Callable | None = No
         result = generate_local_clone(request,progress=progress,runner=runner,
                                       control=control,stage=stage)
     result.update({'source_text': source_text, 'spoken_text': speech_text,
+                   'pronunciation_terms_applied': pronunciation_terms,
                    'text_normalizer_version': NORMALIZER_VERSION})
     return result

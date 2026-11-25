@@ -17,6 +17,9 @@ from berofel.services.voice_intelligence.quality_inspector import (
     inspect_generated_wav_with_parakeet,
 )
 from berofel.services.voice_intelligence.acoustic_analyzer import analyze_pcm_f32le
+from berofel.services.voice_intelligence.pronunciation_dictionary import (
+    PronunciationDictionary, apply_pronunciations,
+)
 from berofel.services.narration_service import NarrationRequest, generate_narration
 
 
@@ -63,6 +66,70 @@ class PortugueseSpeechNormalizerTests(TestCase):
         result = normalize_pt_br(text)
         self.assertEqual(result.spoken, text)
         self.assertEqual(normalize_pt_br(result.spoken).spoken, result.spoken)
+
+
+class PronunciationDictionaryTests(TestCase):
+    def test_dictionary_is_private_per_reference_content_and_atomic_json(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            first = root / 'voice-a.wav'; first.write_bytes(b'authorized sample A')
+            same = root / 'renamed.wav'; same.write_bytes(b'authorized sample A')
+            other = root / 'voice-b.wav'; other.write_bytes(b'authorized sample B')
+            dictionary = PronunciationDictionary(first, directory=root / 'dict')
+            dictionary.save([{'original': 'Berofel', 'spoken_form': 'Berofél',
+                              'language': 'pt-br', 'phonetic_form': '',
+                              'context': '', 'case_sensitive': False, 'enabled': True}])
+            self.assertEqual(dictionary.load()[0]['spoken_form'], 'Berofél')
+            self.assertEqual(PronunciationDictionary(same, directory=root / 'dict').load(),
+                             dictionary.load())
+            self.assertEqual(PronunciationDictionary(other, directory=root / 'dict').load(), [])
+            self.assertEqual(list((root / 'dict').glob('*.tmp')), [])
+
+    def test_context_disabled_and_boundaries_are_respected_without_mutation(self):
+        source = 'O Qwen instalou o QwenX; Berofel aparece no Windows.'
+        entries = [
+            {'original': 'Qwen', 'spoken_form': 'kuên', 'context': 'instalou',
+             'enabled': True},
+            {'original': 'Berofel', 'spoken_form': 'Berofél', 'context': 'Linux',
+             'enabled': True},
+        ]
+        spoken, applied = apply_pronunciations(source, entries)
+        self.assertEqual(spoken, 'O kuên instalou o QwenX; Berofel aparece no Windows.')
+        self.assertEqual(applied, ('Qwen',))
+        self.assertEqual(source, 'O Qwen instalou o QwenX; Berofel aparece no Windows.')
+
+    def test_context_is_local_and_replacements_do_not_cascade(self):
+        source = ('ProdutoX aparece aqui. ' + ('trecho neutro ' * 20) +
+                  'contexto especial: ProdutoX.')
+        entries = [
+            {'original': 'ProdutoX', 'spoken_form': 'ProdutoY',
+             'context': 'contexto especial', 'enabled': True},
+            {'original': 'ProdutoY', 'spoken_form': 'ProdutoZ',
+             'enabled': True},
+        ]
+        spoken, applied = apply_pronunciations(source, entries)
+        self.assertEqual(spoken,
+            'ProdutoX aparece aqui. ' + ('trecho neutro ' * 20) +
+            'contexto especial: ProdutoY.')
+        self.assertEqual(applied, ('ProdutoX',))
+
+    def test_case_sensitive_entry_only_matches_exact_case(self):
+        text, applied = apply_pronunciations('usb USB Usb', [
+            {'original': 'USB', 'spoken_form': 'u ésse bê', 'case_sensitive': True}
+        ])
+        self.assertEqual(text, 'usb u ésse bê Usb')
+        self.assertEqual(applied, ('USB',))
+
+    def test_duplicate_terms_and_oversized_values_are_rejected(self):
+        entries = [{'original': 'SSD', 'spoken_form': 'ésse', 'context': ''},
+                   {'original': 'ssd', 'spoken_form': 'dê', 'context': ''}]
+        with tempfile.TemporaryDirectory() as folder:
+            sample = Path(folder) / 'voice.wav'; sample.write_bytes(b'x')
+            with self.assertRaises(ValueError):
+                PronunciationDictionary(sample, directory=Path(folder) / 'dict').save(entries)
+        with self.assertRaises(ValueError):
+            apply_pronunciations('a', [{'original': 'x' * 161,
+                                        'spoken_form': 'y'}])
 
 
 class PureCCapabilityTests(TestCase):
@@ -230,6 +297,35 @@ class NarrationNormalizationIntegrationTests(TestCase):
             self.assertEqual(result['source_text'], request.text)
             self.assertEqual(result['spoken_text'], captured['text'])
             self.assertEqual(result['text_normalizer_version'], NORMALIZER_VERSION)
+
+    def test_profile_pronunciation_is_applied_only_to_tts_text(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            reference = root / 'voice.wav'
+            with wave.open(str(reference), 'wb') as audio:
+                audio.setnchannels(1); audio.setsampwidth(2); audio.setframerate(24000)
+                audio.writeframes(b'\x01\x00' * 240)
+            dictionary = PronunciationDictionary(reference, directory=root / 'pronunciations')
+            dictionary.save([{'original': 'Berofel', 'spoken_form': 'Berofél',
+                              'language': 'pt-br', 'context': 'editor'}])
+            output = root / 'result.wav'
+            with wave.open(str(output), 'wb') as audio:
+                audio.setnchannels(1); audio.setsampwidth(2); audio.setframerate(24000)
+                audio.writeframes(b'\x01\x00' * 240)
+            request = NarrationRequest(text='O editor Berofel está pronto.',
+                voice=str(reference), language='portuguese', consent=True,
+                reference_text='fala autorizada', reference_text_reviewed=True)
+            captured = {}
+            def backend(effective_request, **_kwargs):
+                captured['text'] = effective_request.text
+                return {'path': str(output), 'duration': .01, 'cache_hit': False}
+            with patch('berofel.services.voice_intelligence.pronunciation_dictionary._default_root',
+                       return_value=root / 'pronunciations'), \
+                 patch('berofel.services.qwen3_tts_local.generate_local_clone', backend):
+                result = generate_narration(request)
+            self.assertEqual(captured['text'], 'O editor Berofél está pronto.')
+            self.assertEqual(result['source_text'], request.text)
+            self.assertEqual(result['pronunciation_terms_applied'], ('Berofel',))
 
     def test_english_is_not_rewritten(self):
         with tempfile.TemporaryDirectory() as folder:
