@@ -24,6 +24,19 @@ Usei o vídeo de gameplay de 1h20 previamente indicado pelo usuário, sem modifi
 
 `Total medido = FFmpeg + carga Silero + carga Parakeet + VAD/ASR`. No cenário completo, o RTF incluindo esses custos foi 0,0217. Os PCM temporários foram apagados automaticamente e o vídeo não foi reescrito. Os tempos vieram de uma execução por tamanho; não são p50/p95, CPU física foi ocultada pelo WMI e não houve comparação com Faster-Whisper nem com a implementação anterior. A contagem de palavras não mede precisão: sem transcrição humana alinhada não há WER/CER válido, e não foi feita avaliação auditiva do texto reconhecido. O teste comprova que a rota streaming concluiu o áudio completo em CPU sem manter o PCM inteiro em RAM; não comprova qualidade da transcrição nem a edição/renderização automática do vídeo.
 
+### Varredura de threads no mesmo recorte real de cinco minutos
+
+Extraí novamente os primeiros 300 s do mesmo vídeo (FFmpeg 0,33 s; Windows provavelmente já mantinha páginas do arquivo em cache). Silero ficou em 1 thread. Para cada configuração, carreguei um modelo Parakeet ONNX INT8 com o número de threads indicado e executei três transcrições completas do mesmo WAV, incluindo a VAD. O modelo foi reutilizado dentro das três repetições e removido antes da configuração seguinte. Cada repetição devolveu 367 palavras e 10 blocos VAD, mas isso não é avaliação de acurácia.
+
+| Threads Parakeet | Carga do modelo | VAD+ASR mediana (n=3) | Máximo observado | RTF mediano | Pico RSS observado |
+|---:|---:|---:|---:|---:|---:|
+| 2 | 4,281 s | 8,156 s | 8,188 s | 0,02719 | 1.015,0 MiB |
+| 4 | 4,407 s | **6,937 s** | 7,094 s | **0,02312** | 1.019,9 MiB |
+| 6 | 4,359 s | 7,171 s | 7,282 s | 0,02390 | 1.025,1 MiB |
+| 8 | 4,391 s | 7,859 s | 8,047 s | 0,02620 | 1.029,8 MiB |
+
+Quatro threads venceram neste recorte; seis threads ficaram cerca de 3,4% mais lentas na mediana e oito, cerca de 13,3%. Isso sustenta manter o padrão atual de quatro threads do ASR, sem forçar seis ou oito. São somente três repetições em um conteúdo, não uma calibração universal. O p95 não é reportado: com n=3, a implementação nearest-rank o reduziria ao máximo observado. O RSS é do mesmo processo durante configurações sequenciais; arenas ONNX podem permanecer alocadas, portanto não é uma comparação isolada de memória por thread. O nome/contagem de CPU não foi acessível via WMI. Nenhuma configuração foi alterada no produto.
+
 Ambiente Windows do aplicativo, Ryzen 7 5700G (8C/16T), 16 GB RAM, execução CPU local; referência vocal autorizada local de 3 s; síntese Pure C 0.6B, seis threads; um único texto PT-BR curto por backend. Foram usadas saídas WAV novas, sem cache de áudio. A checagem textual dos WAVs foi feita pelo Parakeet TDT v3 ONNX INT8/CPU já instalado. Os arquivos temporários foram removidos após a análise.
 
 | Backend | Tempo total | Duração WAV | RTF total | Inicialização/modelo | Resultado Parakeet |
