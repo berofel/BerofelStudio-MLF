@@ -112,11 +112,11 @@ EXE e seu `.sha256` saem em `dist/`, diretório ignorado pelo Git.
 ## Publicar no GitHub
 
 O workflow `.github/workflows/build-windows-installer.yml` executa a suíte no
-Windows antes de compilar. Em pushes de `main`, tags e execuções manuais, instala
-o pacote em um runner limpo, abre a janela Qt, confere o atalho, verifica que
-dados em `%LOCALAPPDATA%\BFS` sobrevivem à desinstalação e remove o aplicativo.
-Cria artefatos em PRs para `main` e pushes em
-`main`, `feat/*` e `fix/*`; só publica Release quando uma tag `v*` for enviada
+Windows antes de compilar. Em pushes nas branches `main`, `feat/*` e `fix/*`,
+tags e execuções manuais, instala o pacote em um runner limpo, abre a janela Qt,
+confere o atalho, verifica que dados em `%LOCALAPPDATA%\BFS` sobrevivem à
+desinstalação e remove o aplicativo. Cria artefatos em PRs para `main` e só
+publica Release quando uma tag `v*` for enviada
 e corresponder à versão declarada no código. Tags alpha/beta/rc são
 pré-releases; tags sem sufixo pré-release são estáveis. Cada release contém o
 EXE versionado, um alias estável e seus checksums. Fluxo de publicação:
