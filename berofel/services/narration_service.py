@@ -274,8 +274,13 @@ def generate_narration(request: NarrationRequest, progress: Callable | None = No
     if request.engine not in _TEXT_CHUNK_CHARS:
         raise ValueError('O BerofelStudio usa exclusivamente Qwen3-TTS Base para narração.')
     source_text = request.text
+    # Long narration recursively enters this function once per bounded Qwen
+    # request. The whole-script interpretation is attached by the outer call;
+    # repeating the deterministic linguistic pass for every chunk wastes CPU
+    # and can produce inconsistent per-chunk metadata.
     interpretation = (plan_narrative_interpretation(source_text)
-                      if request.language == 'portuguese' else None)
+                      if request.language == 'portuguese' and not _prepared_text
+                      else None)
     pronunciation_terms: tuple[str, ...] = ()
     if _prepared_text:
         # Long narration already normalized the full source before splitting;

@@ -1,5 +1,6 @@
 ## Próxima atualização (ainda não publicada)
 
+- Roteiros longos agora calculam o plano narrativo PT-BR uma única vez para o texto completo; as chamadas sequenciais por trecho não repetem a análise determinística nem substituem o plano global. Regressão coberta por teste de contagem de chamadas.
 - A verificação de referência agora inclui descritores de espectro/MFCC e periodicidade ACF limitados a 120 quadros, com atualização de cache `SPECTRAL_FEATURE_VERSION=2`. O diálogo Qt os identifica como diagnósticos, não como identidade, qualidade MOS ou gatilho de DSP; continuam fora do ranking até existir calibração com referências rotuladas.
 - Teste da referência autorizada de 6,06 s: análise completa 1,257 s; 120 quadros espectrais, 13 MFCCs; medidas registradas no relatório. Síntese Qt real Pure C INT8/6 threads gerou WAV de 7,52 s em 25,930 s sem autoplay. A suíte completa passou com 590 testes e 6 ignorados em 65,854 s.
 - Adicionado planejador determinístico PT-BR por sentença para anotar emoção, valência/ativação heurísticas, estado narrativo e alvos prosódicos relativos no resultado da geração. É diagnóstico/planejamento: não altera áudio nem a chave do cache, pois o Pure C instalado não tem controle prosódico por sentença validado. O fluxo de inspeção continua exclusivamente no Parakeet TDT v3 ONNX INT8/CPU.

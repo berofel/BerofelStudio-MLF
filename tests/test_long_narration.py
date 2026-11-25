@@ -78,6 +78,36 @@ class LongNarrationTests(TestCase):
                 self.assertEqual(audio.getnframes(), len(calls) * 24000)
                 self.assertEqual(audio.getframerate(), 24000)
 
+    def test_long_script_interpretation_is_planned_once_for_whole_text(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            reference = root / 'voice.wav'
+            self._write_wav(reference, frames=240)
+            text = 'Hoje vamos apresentar o editor. ' * 90
+            request = NarrationRequest(text=text, voice=str(reference),
+                language='portuguese', consent=True, engine='qwen3-tts-purec-int8',
+                project_path=str(root / 'project.bfs'))
+            calls = []
+
+            def fake_backend(req, **_kwargs):
+                calls.append(req.text)
+                out = Path(req.project_path).parent / f'{len(calls)}.wav'
+                self._write_wav(out, frames=24000)
+                return {'path': str(out), 'duration': 1.0, 'cache_hit': False,
+                        'prompt_cache_hit': False, 'generation_seconds': 0.5,
+                        'conditioning_mode': 'speaker-embedding-only'}
+
+            purec = types.ModuleType('berofel.services.qwen3_purec_tts')
+            purec.generate_purec_clone = fake_backend
+            with patch('berofel.services.narration_service.plan_narrative_interpretation',
+                       return_value={'version': 'test'}) as planner, \
+                 patch.dict(sys.modules, {'berofel.services.qwen3_purec_tts': purec}):
+                result = generate_narration(request)
+
+            self.assertGreater(len(calls), 1)
+            planner.assert_called_once_with(text)
+            self.assertEqual(result['narrative_interpretation'], {'version': 'test'})
+
     @staticmethod
     def _write_wav(path, frames):
         with wave.open(str(path), 'wb') as audio:
