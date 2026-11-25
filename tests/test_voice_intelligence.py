@@ -534,6 +534,28 @@ class ParakeetQualityInspectionTests(TestCase):
             self.assertTrue(result['audio_digitally_silent'])
             self.assertIn('Parakeet não foi iniciado', result['verification_skipped_reason'])
             self.assertEqual(result['recognized_text'], '')
+            self.assertIsNone(result['provider'])
+            self.assertEqual(result['backend'], 'not_run')
+
+    def test_very_quiet_nonzero_wav_is_warned_but_still_checked_by_parakeet(self):
+        with tempfile.TemporaryDirectory() as folder:
+            audio = Path(folder) / 'voice.wav'
+            audio.write_bytes(b'RIFF' + b'0' * 64)
+            calls = []
+            def ffmpeg_runner(command, **_kwargs):
+                with wave.open(command[-1], 'wb') as wav:
+                    wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(16000)
+                    wav.writeframes(struct.pack('<h', 2) * 1600)
+                return Mock(returncode=0, stdout='', stderr='')
+            def parakeet(path):
+                calls.append(Path(path))
+                return {'text':'voz baixa reconhecida','words':[]}
+            result = inspect_generated_wav_with_parakeet(audio, 'voz baixa reconhecida',
+                ffmpeg='ffmpeg', runner=ffmpeg_runner, transcriber=parakeet)
+            self.assertEqual(len(calls), 1)
+            self.assertFalse(result['audio_digitally_silent'])
+            self.assertIsNone(result['verification_skipped_reason'])
+            self.assertTrue(any('extremamente baixo' in item for item in result['audio_warnings']))
 
     def test_pcm16_inspector_reports_clipping_and_uses_bounded_reads(self):
         with tempfile.TemporaryDirectory() as folder:

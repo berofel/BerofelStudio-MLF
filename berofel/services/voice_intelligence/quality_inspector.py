@@ -142,10 +142,15 @@ def inspect_pcm16_wav(path: str | Path, *, block_seconds: float = 1.0) -> dict:
     peak_norm = peak / 32768.0
     rms_dbfs = 20 * math.log10(max(rms, 1e-12))
     peak_dbfs = 20 * math.log10(max(peak_norm, 1e-12))
-    digitally_silent = peak <= 32  # abaixo de aproximadamente -60 dBFS
+    # Only exact digital silence skips ASR. A very quiet but nonzero voice can
+    # still contain useful speech, so low-level audio is warned about, not
+    # silently withheld from Parakeet.
+    digitally_silent = peak == 0
     warnings = []
     if digitally_silent:
-        warnings.append("O WAV está digitalmente silencioso ou quase silencioso.")
+        warnings.append("O WAV contém silêncio digital (todas as amostras são zero).")
+    elif peak <= 32:
+        warnings.append("O pico do WAV está extremamente baixo; confira o nível e a inteligibilidade.")
     if clipped / count >= .001:
         warnings.append("Há amostras próximas do clipping; confira o áudio manualmente.")
     if rms_dbfs < -45 and not digitally_silent:
@@ -238,8 +243,9 @@ def inspect_generated_wav_with_parakeet(
             "recognized_text": recognized,
             "verification_skipped_reason": verification_skipped_reason,
             "asr_model": "Parakeet TDT v3 ONNX INT8",
-            "provider": "CPUExecutionProvider",
-            "backend": str(result.get("backend") or "onnxruntime-cpu"),
+            "provider": (None if verification_skipped_reason else "CPUExecutionProvider"),
+            "backend": str(result.get("backend") or
+                           ("not_run" if verification_skipped_reason else "onnxruntime-cpu")),
             "review_required": True,
             "metric_note": "Heuristic text edit rates; not a perceptual MOS or identity score.",
         }
