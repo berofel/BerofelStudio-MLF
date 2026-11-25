@@ -197,14 +197,118 @@ def transcribe_samples(samples, duration: float, *, speech_spans=None, model=Non
 
 
 def transcribe_file(path: str | Path, *, model=None, vad=None, speech_spans=None,
-                    threads: int = 6) -> dict:
-    samples, duration = read_pcm16_mono_16k(path)
-    # One explicit conversion to float32 is needed by ONNX Runtime; no model
-    # object or source media is retained after the worker process ends.
+                    threads: int = 6, vad_chunk_seconds: float = 30.0) -> dict:
+    """Transcribe a WAV with bounded PCM memory and one resident model.
+
+    VAD scans the complete file in fixed-size blocks when no spans are passed.
+    Recognition then seeks to each padded speech span and reads at most one
+    20-second inference window at once. Precomputed source-time spans remain
+    supported, so the editor can share its cached Silero pass.
+    """
     import numpy as np
-    audio = np.frombuffer(samples, dtype=np.int16).astype(np.float32) / 32768.0
-    return transcribe_samples(audio, duration, speech_spans=speech_spans,
-                              model=model, vad=vad, threads=threads)
+    if vad_chunk_seconds <= 0:
+        raise ValueError("vad_chunk_seconds precisa ser positivo")
+    path = Path(path)
+    try:
+        source = wave.open(str(path), "rb")
+    except (OSError, wave.Error) as exc:
+        raise ValueError(f"Não foi possível abrir o WAV do Parakeet: {exc}") from exc
+    with source:
+        channels, width, rate = source.getnchannels(), source.getsampwidth(), source.getframerate()
+        if (channels, width, rate) != (1, 2, SAMPLE_RATE):
+            raise ValueError("O Parakeet exige WAV PCM16 mono a 16000 Hz.")
+        total_frames = source.getnframes()
+        duration = total_frames / rate
+        vad_windows = 0
+        if speech_spans is None:
+            vad = vad or load_vad(threads=1)
+            speech_spans = []
+            chunk_frames = max(1, int(vad_chunk_seconds * rate))
+            offset_frames = 0
+            while offset_frames < total_frames:
+                source.setpos(offset_frames)
+                raw = source.readframes(min(chunk_frames, total_frames - offset_frames))
+                usable = len(raw) - len(raw) % 2
+                if not usable:
+                    break
+                pcm = np.frombuffer(raw[:usable], dtype="<i2")
+                audio = pcm.astype(np.float32) / 32768.0
+                block_duration = len(audio) / rate
+                for span in detect_speech(audio, vad=vad, max_speech_seconds=MAX_SPEECH_SECONDS):
+                    start = offset_frames / rate + float(span["start"])
+                    end = min(duration, offset_frames / rate + float(span["end"]))
+                    if end > start:
+                        speech_spans.append({"start": start, "end": end})
+                offset_frames += len(audio)
+                vad_windows += 1
+            # VAD padding can overlap at block boundaries. Merge overlap only;
+            # do not bridge an actual pause or alter word-time source offsets.
+            merged = []
+            for span in sorted(speech_spans, key=lambda item: float(item.get("start", 0))):
+                start = max(0.0, min(duration, float(span.get("start", 0))))
+                end = max(start, min(duration, float(span.get("end", 0))))
+                if end <= start:
+                    continue
+                if merged and start <= merged[-1]["end"]:
+                    merged[-1]["end"] = max(merged[-1]["end"], end)
+                else:
+                    merged.append({"start": start, "end": end})
+            speech_spans = merged
+        else:
+            # Normalize and validate user/cache spans before using wave.setpos.
+            normalized_spans = []
+            for span in speech_spans:
+                try:
+                    start = max(0.0, min(duration, float(span["start"])))
+                    end = max(start, min(duration, float(span["end"])))
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if end > start:
+                    normalized_spans.append({"start": start, "end": end})
+            speech_spans = normalized_spans
+        if model is None and speech_spans:
+            model = load_model(threads=threads)
+        words, segments = [], []
+        for region_index, span in enumerate(speech_spans):
+            start, end = span["start"], span["end"]
+            cursor = start
+            piece_index = 0
+            while cursor < end - .001:
+                piece_end = min(end, cursor + MAX_SPEECH_SECONDS)
+                left = max(0, min(total_frames, int(cursor * rate)))
+                right = max(left, min(total_frames, int(piece_end * rate)))
+                if right - left < rate // 10:
+                    cursor = piece_end
+                    piece_index += 1
+                    continue
+                source.setpos(left)
+                raw = source.readframes(right - left)
+                usable = len(raw) - len(raw) % 2
+                if usable != (right - left) * 2:
+                    raise ValueError("WAV incompleto durante leitura de uma janela de fala.")
+                pcm = np.frombuffer(raw, dtype="<i2")
+                audio = pcm.astype(np.float32) / 32768.0
+                result = model.recognize(audio, sample_rate=SAMPLE_RATE)
+                actual_duration = len(audio) / rate
+                region_words = _word_groups(getattr(result, "tokens", None),
+                    getattr(result, "timestamps", None), left / rate, actual_duration)
+                ids = []
+                for word in region_words:
+                    word["id"] = f"p{region_index}_{piece_index}_{len(words)}"
+                    ids.append(word["id"])
+                    words.append(word)
+                text = str(getattr(result, "text", "") or "").strip()
+                if text:
+                    segments.append({"start": round(left / rate, 3),
+                        "end": round(right / rate, 3), "text": text, "word_ids": ids})
+                cursor = piece_end
+                piece_index += 1
+    return {"words": words, "segments": segments, "language": "multilingual-auto",
+            "model": "parakeet-tdt-0.6b-v3-int8", "duration": float(duration),
+            "backend": "onnxruntime-cpu", "threads": int(threads),
+            "timestamp_kind": "onnx-asr-token-frame", "vad_windows": vad_windows,
+            "memory_strategy": "streamed_pcm_windows",
+            "model_loaded": model is not None}
 
 
 def summarize_model_files(path: str | Path | None = None) -> dict:

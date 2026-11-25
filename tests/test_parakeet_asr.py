@@ -93,10 +93,37 @@ class ParakeetAdapterTests(unittest.TestCase):
 
     def test_file_transcription_uses_supplied_precomputed_spans(self):
         model=FakeModel()
-        result=transcribe_file(self.wav,model=model,
-            speech_spans=[{'start':0.,'end':1.}],threads=6)
+        with patch('berofel.services.parakeet_asr.read_pcm16_mono_16k',
+                   side_effect=AssertionError('whole-file PCM loader must not be used')):
+            result=transcribe_file(self.wav,model=model,
+                speech_spans=[{'start':0.,'end':1.}],threads=6)
         self.assertTrue(result['words'])
         self.assertEqual(model.calls,[(16000,16000)])
+        self.assertEqual(result['memory_strategy'],'streamed_pcm_windows')
+        self.assertEqual(result['vad_windows'],0)
+        self.assertTrue(result['model_loaded'])
+
+    def test_file_without_cached_spans_runs_vad_in_bounded_blocks_and_maps_offsets(self):
+        model=FakeModel()
+        vad=FakeVad()
+        with patch('berofel.services.parakeet_asr.read_pcm16_mono_16k',
+                   side_effect=AssertionError('whole-file PCM loader must not be used')):
+            result=transcribe_file(self.wav,model=model,vad=vad,threads=6,
+                                   vad_chunk_seconds=1.0)
+        self.assertEqual(result['vad_windows'],2)
+        self.assertEqual(len(model.calls),2)
+        self.assertEqual(model.calls,[(6400,16000),(6400,16000)])
+        self.assertAlmostEqual(result['words'][0]['start'],.2)
+        self.assertAlmostEqual(result['words'][2]['start'],1.2)
+
+    def test_no_speech_does_not_load_the_parakeet_model(self):
+        with patch('berofel.services.parakeet_asr.detect_speech',return_value=[]), \
+             patch('berofel.services.parakeet_asr.load_model',
+                   side_effect=AssertionError('no speech should skip model load')):
+            result=transcribe_file(self.wav,vad=FakeVad(),threads=6)
+        self.assertEqual(result['words'],[])
+        self.assertFalse(result['model_loaded'])
+        self.assertEqual(result['backend'],'onnxruntime-cpu')
 
 
 if __name__=='__main__': unittest.main()

@@ -38,6 +38,8 @@ Não há arquivos `dir_*.bin` no diretório de assets consultado. O adaptador ca
 
 O ASR desta integração é exclusivamente **Parakeet TDT v3 ONNX INT8 em CPU**. Faster-Whisper não é usado para conferir referência nem narração. Os testes sem dependências de áudio/UI são executados com:
 
+O adaptador `transcribe_file` lê PCM16 em janelas. Se a pipeline já fornece spans Silero em tempo local ao WAV do trecho, eles são reutilizados sem um segundo VAD. Se não fornece, Silero percorre o arquivo em blocos de 30 s; o Parakeet só é carregado quando existem regiões de fala, e cada região é buscada no WAV e inferida em janelas de até 20 s. Isso limita PCM transitório e mantém um único modelo residente por chamada. O resultado marca `memory_strategy=streamed_pcm_windows`, `vad_windows` e `model_loaded`; offsets permanecem no tempo do arquivo recebido. A versão anterior carregava o WAV inteiro em PCM e float32.
+
 ```powershell
 python -m unittest tests.test_voice_intelligence -v
 python -m unittest tests.test_qwen3_tts_local.QwenLocalCloneTests.test_reference_window_selection_avoids_leading_silence_and_searches_full_file -v

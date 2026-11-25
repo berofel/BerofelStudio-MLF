@@ -70,6 +70,25 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             finally:
                 panel.close()
 
+    def test_quality_inspection_distinguishes_silent_wav_from_parakeet_result(self):
+        with patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
+             patch('berofel.services.qwen3_purec_tts.is_ready',return_value=False):
+            panel=NarrationPanel()
+            try:
+                panel.set_quality_result({
+                    'audio_rms_dbfs':-240.0,'audio_peak_dbfs':-240.0,
+                    'audio_clipped_fraction':0.0,'audio_warnings':['WAV silencioso.'],
+                    'verification_skipped_reason':'Parakeet não foi iniciado porque o WAV está silencioso.',
+                    'word_error_rate':1.0,'character_error_rate':1.0,
+                    'recognized_text':'','review_required':True,
+                })
+                status=panel.status.text()
+                self.assertIn('comparação textual não executada',status)
+                self.assertIn('Parakeet não foi iniciado',status)
+                self.assertNotIn('WER 100.0%',status)
+            finally:
+                panel.close()
+
     def test_purec_turbo_thread_budget_persists_between_panels(self):
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
              patch('berofel.services.qwen3_purec_tts.is_ready',return_value=True):

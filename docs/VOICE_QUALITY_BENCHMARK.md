@@ -8,6 +8,10 @@ Em 25/11/2026, no ambiente virtual do aplicativo (Python 3.12, NumPy 2.5.4; iden
 
 ## Execução exploratória real — 25/11/2026
 
+### Parakeet em janelas com WAV real autorizado
+
+Após trocar o adaptador de arquivo para leitura por regiões, fiz uma verificação local em uma referência vocal já autorizada: o extrator escolheu uma janela de 3,0 s, FFmpeg preparou PCM16 mono 16 kHz, e `transcribe_file` executou sem spans VAD pré-calculados. Parakeet TDT v3 INT8 + Silero ONNX rodaram em CPU; a chamada completa (VAD de um bloco, carga dos modelos e ASR) levou 6,05 s, identificou seis palavras e retornou `memory_strategy=streamed_pcm_windows`. O texto não foi gravado neste relatório. É um smoke test real de uma janela curta, não benchmark de throughput ou comparação com a versão antiga; não medi RAM. Nenhum Whisper foi chamado.
+
 Ambiente Windows do aplicativo, Ryzen 7 5700G (8C/16T), 16 GB RAM, execução CPU local; referência vocal autorizada local de 3 s; síntese Pure C 0.6B, seis threads; um único texto PT-BR curto por backend. Foram usadas saídas WAV novas, sem cache de áudio. A checagem textual dos WAVs foi feita pelo Parakeet TDT v3 ONNX INT8/CPU já instalado. Os arquivos temporários foram removidos após a análise.
 
 | Backend | Tempo total | Duração WAV | RTF total | Inicialização/modelo | Resultado Parakeet |
