@@ -1,6 +1,6 @@
 # 0.10.0-alpha.3 — instalador atualizável
 
-- O manifesto de instalação principal inclui NumPy, usado diretamente por serviços de áudio, clipe e narração; a ausência foi detectada na coleta da suíte em Windows limpo.
+- O manifesto principal inclui NumPy e SciPy, usados diretamente pelos serviços de áudio, clipe e preparo de referências do Qwen; a ausência foi detectada na coleta da suíte em Windows limpo.
 - O instalador Windows consulta as Releases públicas do GitHub antes de instalar. Se existir uma versão SemVer mais nova com EXE e checksum, baixa ambos, valida o SHA-256 e inicia o setup atualizado antes de alterar a instalação existente.
 - Falha de rede ou de validação oferece uma escolha explícita para continuar com o setup já baixado; `/NOUPDATECHECK` permite instalação manual/rollback.
 - O build publica nomes versionados e um alias estável para a página de Releases; tags de release precisam corresponder à versão declarada no código.
