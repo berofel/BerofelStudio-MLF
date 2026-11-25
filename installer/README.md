@@ -2,9 +2,10 @@
 
 ## Baixar para outro computador
 
-O instalador de teste fica na página de [Releases do GitHub](https://github.com/berofel/BerofelStudio-MLF/releases).
-Baixe `BerofelStudio-<versão>-Setup-x64.exe` e o arquivo `.sha256` da mesma
-versão. No PowerShell, confira o download antes de abrir:
+O instalador mais recente fica na página de [Releases do GitHub](https://github.com/berofel/BerofelStudio-MLF/releases).
+O link permanente para o EXE da release estável mais recente é
+[BerofelStudio-Setup-x64.exe](https://github.com/berofel/BerofelStudio-MLF/releases/latest/download/BerofelStudio-Setup-x64.exe).
+Para conferir manualmente, baixe também o `.sha256` correspondente:
 
 ```powershell
 Get-FileHash .\BerofelStudio-<versão>-Setup-x64.exe -Algorithm SHA256
@@ -16,6 +17,16 @@ os componentes Parakeet TDT v3 ONNX INT8/CPU e Qwen3-TTS para instalar os motore
 com o editor. A opção de atalho da Área de Trabalho fica selecionada por padrão.
 O setup instala por usuário, sem copiar projetos, mídias ou perfis vocais do
 computador que produziu o instalador.
+
+Todo setup versionado consulta as Releases públicas antes de alterar o editor.
+Se houver uma versão SemVer mais nova no canal daquele setup, ele baixa o EXE e
+o checksum, valida a origem esperada, tamanho e SHA-256, e inicia o setup
+atualizado. O canal alpha acompanha pré-releases; um setup estável não troca
+para alpha/beta. Sem rede, sem release instalável ou diante de checksum inválido,
+o arquivo suspeito é recusado e o instalador informa o problema antes de oferecer
+continuar com o setup já baixado. `/NOUPDATECHECK` desativa a verificação para
+rollback/manual. A atualização não remove projetos, mídia, perfis ou modelos,
+que ficam fora da pasta do aplicativo.
 
 ## O que significa “instalador único”
 
@@ -100,18 +111,25 @@ EXE e seu `.sha256` saem em `dist/`, diretório ignorado pelo Git.
 
 ## Publicar no GitHub
 
-O workflow `.github/workflows/build-windows-installer.yml` compila no Windows
-quando acionado manualmente e publica EXE + checksum em Releases quando uma tag
-`v*` for enviada. Fluxo de release:
+O workflow `.github/workflows/build-windows-installer.yml` executa a suíte no
+Windows antes de compilar. Em pushes de `main`, tags e execuções manuais, instala
+o pacote em um runner limpo, abre a janela Qt, confere o atalho, verifica que
+dados em `%LOCALAPPDATA%\BFS` sobrevivem à desinstalação e remove o aplicativo.
+Cria artefatos em PRs para `main` e pushes em
+`main`, `feat/*` e `fix/*`; só publica Release quando uma tag `v*` for enviada
+e corresponder à versão declarada no código. Tags alpha/beta/rc são
+pré-releases; tags sem sufixo pré-release são estáveis. Cada release contém o
+EXE versionado, um alias estável e seus checksums. Fluxo de publicação:
 
 ```powershell
 git status --short
-git tag v0.10.0-alpha.1 <commit-validado>
-git push origin v0.10.0-alpha.1
+git tag v0.10.0 <commit-validado>
+git push origin v0.10.0
 ```
 
 O workflow só cria a Release a partir da tag e não faz push de código, não
-altera `main` e não usa force push. Antes de uma tag pública, testar o
+altera `main` e não usa force push. Push de código é uma ação separada e deve
+seguir `docs/VERSIONAMENTO_E_GITHUB.md`. Antes de uma tag pública, testar o
 instalador em Windows limpo (incluindo instalação, inicialização, update e
 desinstalação) e confirmar as licenças/redistribuição dos downloads. Não
 chamar uma Release de pronta para venda enquanto essa validação não ocorrer.

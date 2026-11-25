@@ -1,6 +1,6 @@
 # BerofelStudio-MLF
 
-> **Versão de testes local 0.10.0-alpha.2:** instalador Windows único automatiza a instalação do editor, dependências e componentes de IA escolhidos; a janela, o cabeçalho e os atalhos usam a marca Berofel Studio. A instalação inicial requer internet; confira os limites e o passo a passo em [Instalador Windows](installer/README.md). A validação em máquina limpa ainda está pendente.
+> **Versão de testes local 0.10.0-alpha.3:** o instalador Windows consulta a Release mais recente publicada, valida SHA-256 e encaminha instalações antigas para a versão atual. O instalador continua sendo um bootstrapper online; confira os limites e o passo a passo em [Instalador Windows](installer/README.md). A validação em máquina limpa ainda está pendente.
 
 O `ABRIR_BEROFELSTUDIO.bat` dentro desta pasta inicializa o código local, exibe o caminho e a versão detectada, confere os módulos da interface e prioriza esta cópia. No pacote de trabalho, use também o atalho da raiz `C:\Users\Berofel\Desktop\BerofelStudio_codigo_base_alpha\ABRIR_BEROFELSTUDIO.bat`: ele localiza launchers válidos, lê a versão de cada fonte e escolhe a maior, inclusive quando a atualização está em outra pasta de versão. Execute `ABRIR_BEROFELSTUDIO.bat --verificar` para conferir o launcher sem abrir a janela.
 >
@@ -8,7 +8,7 @@ O `ABRIR_BEROFELSTUDIO.bat` dentro desta pasta inicializa o código local, exibe
 
 > **Hotfix 0.9.1 (Windows):** veja `docs/CORRECAO_091_WHISPER_QWEN.md` para testar o conserto de `metadata_errors` no Whisper e a busca de releases do llama.cpp para Qwen. Não é preciso reinstalar os modelos já baixados.
 
-# BerofelStudio 0.10.0-alpha.2 — editor multitrilha com IA local
+# BerofelStudio 0.10.0-alpha.3 — editor multitrilha com IA local
 
 > **Versão de testes local para Windows.** A interface foi reorganizada a partir das referências do editor antigo e conectada ao motor multitrilha atual. A linha de voz usa exclusivamente Qwen3-TTS Base 0.6B, em um worker CPU persistente; referências autorizadas são copiadas para perfis privados e o `voice_clone_prompt` é mantido em cache versionado para reutilização. Narração rápida e clonagem detalhada usam a mesma API e o mesmo checkpoint. Pocket TTS foi retirado dos instaladores/atalhos ativos, sem apagar caches e áudios preexistentes do usuário. EQ/pitch/velocidade, timeline e exportação permanecem independentes da inferência TTS. Veja o benchmark e os limites da validação real em `docs/BENCHMARK_QWEN3_TTS_20261118.md`.
 

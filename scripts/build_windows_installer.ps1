@@ -1,6 +1,7 @@
 param(
     [string]$CompilerPath = '',
-    [string]$OutputDirectory = ''
+    [string]$OutputDirectory = '',
+    [string]$ExpectedVersion = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,6 +33,24 @@ $versionText = Get-Content -LiteralPath (Join-Path $repo 'berofel\__init__.py') 
 $versionMatch = [regex]::Match($versionText, "__version__\s*=\s*'([^']+)'")
 if (-not $versionMatch.Success) { throw 'Não foi possível ler berofel.__version__.' }
 $version = $versionMatch.Groups[1].Value
+if ($ExpectedVersion) {
+    $expected = $ExpectedVersion.TrimStart('v')
+    if ($expected -cne $version) {
+        throw "A tag $ExpectedVersion nao corresponde a berofel.__version__ $version."
+    }
+}
+$versionParts = [regex]::Match($version, '^(\d+)\.(\d+)\.(\d+)(?:-(?:alpha|beta|rc)\.(\d+))?$')
+if (-not $versionParts.Success) { throw "Versao nao suportada pelo recurso de versao do Windows: $version" }
+$revision = if ($versionParts.Groups[4].Success) { [int]$versionParts.Groups[4].Value } else { 0 }
+foreach ($part in @($versionParts.Groups[1].Value,$versionParts.Groups[2].Value,
+                    $versionParts.Groups[3].Value,[string]$revision)) {
+    if ([int]$part -gt 65535) { throw "Componente da versao excede o limite do Windows: $part" }
+}
+$fileVersion = '{0}.{1}.{2}.{3}' -f $versionParts.Groups[1].Value,
+    $versionParts.Groups[2].Value,$versionParts.Groups[3].Value,$revision
+$channelDefine = if ($versionParts.Groups[4].Success -or $version -match '-(alpha|beta|rc)(\.|-)') {
+    '/DAPP_ALLOW_PRERELEASE=1'
+} else { $null }
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $buildId = [guid]::NewGuid().ToString('N')
 $archive = Join-Path $tempRoot ("BerofelStudio-$buildId.zip")
@@ -66,6 +85,8 @@ try {
         'scripts\instalar_ffmpeg.ps1',
         'scripts\instalar_ia.ps1',
         'scripts\instalar_qwen3_tts_local.ps1',
+        'scripts\check_latest_release.ps1',
+        'scripts\smoke_installed_app.py',
         'scripts\diagnostico_motor.py',
         'scripts\verificar.py'
     )
@@ -93,8 +114,10 @@ try {
         "/DAPP_SOURCE=`"$stageFull`"",
         "/DOUTPUT_DIR=`"$OutputDirectory`"",
         "/DAPP_VERSION=$version",
-        'installer\BerofelStudio.nsi'
+        "/DAPP_FILE_VERSION=$fileVersion"
     )
+    if ($channelDefine) { $compilerArgs += $channelDefine }
+    $compilerArgs += 'installer\BerofelStudio.nsi'
     Push-Location -LiteralPath $stageFull
     try {
         & $CompilerPath @compilerArgs
@@ -110,9 +133,15 @@ try {
         throw 'O instalador ultrapassa o limite de arquivo do GitHub Releases. Pesos grandes devem ser baixados pelo bootstrapper.'
     }
     $hash = Get-FileHash -LiteralPath $installer -Algorithm SHA256
-    Set-Content -LiteralPath ($installer + '.sha256') -Encoding ascii -Value ("{0}  {1}" -f $hash.Hash.ToLowerInvariant(), (Split-Path -Leaf $installer))
+    $hashText = "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), (Split-Path -Leaf $installer)
+    Set-Content -LiteralPath ($installer + '.sha256') -Encoding ascii -Value $hashText
+    $stableInstaller = Join-Path $OutputDirectory 'BerofelStudio-Setup-x64.exe'
+    Copy-Item -LiteralPath $installer -Destination $stableInstaller -Force
+    Set-Content -LiteralPath ($stableInstaller + '.sha256') -Encoding ascii -Value (
+        "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), (Split-Path -Leaf $stableInstaller))
     Write-Host "Instalador: $installer"
     Write-Host "SHA-256: $($hash.Hash)"
+    Write-Host "Atalho estavel para GitHub Releases: $stableInstaller"
 } finally {
     if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
     if (Test-Path -LiteralPath $stageFull) {

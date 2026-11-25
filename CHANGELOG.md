@@ -1,3 +1,11 @@
+# 0.10.0-alpha.3 — instalador atualizável
+
+- O instalador Windows consulta as Releases públicas do GitHub antes de instalar. Se existir uma versão SemVer mais nova com EXE e checksum, baixa ambos, valida o SHA-256 e inicia o setup atualizado antes de alterar a instalação existente.
+- Falha de rede ou de validação oferece uma escolha explícita para continuar com o setup já baixado; `/NOUPDATECHECK` permite instalação manual/rollback.
+- O build publica nomes versionados e um alias estável para a página de Releases; tags de release precisam corresponder à versão declarada no código.
+- O workflow Windows testa a suíte, compila e faz instalação limpa em runner Windows antes de publicar: valida dependências, abertura da janela Qt, atalho, preservação de dados e desinstalação. Dispara em PRs para `main`, pushes em `main`/branches `feat/*` e `fix/*`, e tags versionadas.
+- A instalação segue online e os modelos continuam opcionais/de fontes externas; checksum não substitui assinatura Authenticode, que ainda não está disponível.
+
 # Preparação do instalador Windows único — 24/11/2026
 
 - Preparação da prévia `0.10.0-alpha.2`: a janela Qt agora prefere o mesmo ICO multirresolução que identifica o instalador e os atalhos do Windows; o cabeçalho continua renderizando o SVG-fonte.
@@ -7,7 +15,7 @@
 - Criado instalador NSIS por usuário, bootstrap idempotente do editor, dependências fixadas, FFmpeg validado por SHA-256 e seleção de Whisper Base/Silero e Qwen3-TTS Base.
 - Criado workflow GitHub para compilar no Windows, publicar EXE+SHA-256 em Releases via tag e anexar artefato em execução manual. NSIS usa o compressor zlib para manter uma licença compatível com distribuição comercial.
 - Limite documentado: o EXE baixa Python, bibliotecas e modelos na instalação; não é offline. Qwen 0.6B (~2,5 GB) e modelos privados não entram em Git/GitHub.
-- A compilação NSIS passou no runner Windows do GitHub Actions e o EXE+SHA-256 foi gerado como artefato de build. A instalação completa em uma máquina limpa ainda não foi validada; a primeira publicação será prerelease para testes.
+- A compilação NSIS passou no runner Windows do GitHub Actions e o EXE+SHA-256 foi gerado como artefato de build. A instalação completa em uma máquina limpa ainda não foi validada; a publicação pública depende de sincronizar o código local atual com o remoto.
 
 # Limpeza automática modular local
 

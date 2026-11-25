@@ -44,7 +44,11 @@ Se a escrita remota estiver indisponível, mantenha os commits locais, registre 
 
 ## Releases
 
-Use a versão definida em `berofel/__init__.py` como fonte de verdade. Antes de publicar uma release, atualize o changelog e a documentação, rode os testes e valide os artefatos instaláveis. Crie uma tag versionada somente sobre o commit validado, por exemplo `v0.10.0-alpha.2`; publique-a apenas quando houver autorização e acesso. Não descreva um build como portátil/autossuficiente sem testar a instalação limpa.
+Use a versão definida em `berofel/__init__.py` como fonte de verdade. Antes de publicar uma release, atualize o changelog e a documentação, rode os testes e valide os artefatos instaláveis. `vX.Y.Z` publica estável; `vX.Y.Z-alpha.N`, `-beta.N` e `-rc.N` publicam pré-release. A tag precisa apontar para um commit validado e corresponder exatamente à versão do código.
+
+O workflow Windows roda testes em PRs para `main`, pushes em `main`, `feat/*` e `fix/*`, e tags `v*`. Push em branch gera somente artefato de CI; somente a tag publica uma Release. Cada Release inclui EXE versionado, `BerofelStudio-Setup-x64.exe` e SHA-256 dos dois. O instalador compara a própria versão com a mais nova publicada em seu canal e encaminha para o setup novo depois de validar o checksum. O canal estável ignora pré-releases; builds alpha acompanham alphas/betas/RCs.
+
+Link permanente para distribuição estável: <https://github.com/berofel/BerofelStudio-MLF/releases/latest/download/BerofelStudio-Setup-x64.exe>. A API pública de Releases fornece metadados/assets do updater. O instalador segue online e não é autossuficiente/offline; checksum não substitui assinatura Authenticode para distribuição profissional.
 
 ## Política de arquivos
 
