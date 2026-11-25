@@ -16,7 +16,9 @@ from berofel.services.voice_intelligence.quality_inspector import (
     calculate_temporal_coverage, calculate_text_error_rates,
     inspect_generated_wav_with_parakeet,
 )
-from berofel.services.voice_intelligence.acoustic_analyzer import analyze_pcm_f32le
+from berofel.services.voice_intelligence.acoustic_analyzer import (
+    analyze_pcm_f32le, analyze_pitch_yin_f32le,
+)
 from berofel.services.voice_intelligence.pronunciation_dictionary import (
     PronunciationDictionary, apply_pronunciations,
 )
@@ -232,6 +234,39 @@ class AcousticWindowAnalysisTests(TestCase):
             analyze_pcm_f32le(b'\x00\x00\x80\x7f')
         with self.assertRaises(ValueError):
             analyze_pcm_f32le(b'\x00\x00\x00\x00', sample_rate=0)
+
+    def test_yin_pitch_estimate_tracks_a_known_voiced_tone(self):
+        import numpy as np
+        rate = 16000
+        time = np.arange(rate * 2, dtype=np.float32) / rate
+        signal = .2 * np.sin(2 * np.pi * 145.0 * time)
+        result = analyze_pitch_yin_f32le(signal.astype('<f4').tobytes(),
+                                         sample_rate=rate)
+        self.assertEqual(result['status'], 'measured')
+        self.assertAlmostEqual(result['f0_median_hz'], 145.0, delta=3.0)
+        self.assertGreaterEqual(result['confidence_median'], .70)
+        self.assertIsNone(result['identity_score'])
+        self.assertGreater(result['voiced_frame_count'], 0)
+
+    def test_yin_does_not_report_zero_pitch_for_silence_or_invalid_pcm(self):
+        import numpy as np
+        silence = np.zeros(16000, dtype='<f4').tobytes()
+        result = analyze_pitch_yin_f32le(silence)
+        self.assertEqual(result['status'], 'unvoiced_or_low_confidence')
+        self.assertIsNone(result['f0_median_hz'])
+        with self.assertRaises(ValueError):
+            analyze_pitch_yin_f32le(np.array([np.nan] * 1000, dtype='<f4').tobytes())
+
+    def test_yin_requires_multiple_voiced_frames_before_reporting_summary(self):
+        import numpy as np
+        rate = 16000
+        time = np.arange(round(rate * .1), dtype=np.float32) / rate
+        signal = .2 * np.sin(2 * np.pi * 145.0 * time)
+        result = analyze_pitch_yin_f32le(signal.astype('<f4').tobytes(),
+                                         sample_rate=rate)
+        self.assertEqual(result['status'], 'insufficient_voiced_coverage')
+        self.assertIsNone(result['f0_median_hz'])
+        self.assertLess(result['voiced_frame_count'], 3)
 
 
 class ParakeetQualityInspectionTests(TestCase):

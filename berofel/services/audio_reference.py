@@ -303,6 +303,17 @@ def inspect_voice_reference(voice: str | Path) -> dict:
         acoustic_features = analyze_pcm_f32le(
             np.asarray(signal, dtype=np.float32).tobytes(),
             sample_rate=int(rate), frame_ms=20)
+        from .voice_intelligence.acoustic_analyzer import analyze_pitch_yin_f32le
+        try:
+            pitch_features = analyze_pitch_yin_f32le(
+                np.asarray(signal, dtype='<f4').tobytes(), sample_rate=int(rate))
+        except (RuntimeError, ValueError, OverflowError):
+            # Pitch is diagnostic only. A missing/unsupported optional
+            # measurement must not prevent inspection or voice preparation.
+            pitch_features = {'status': 'unavailable', 'f0_median_hz': None,
+                              'confidence_median': None,
+                              'voiced_frame_count': 0, 'sampled_frame_count': 0,
+                              'identity_score': None}
         warnings=[]
         if duration<3: warnings.append('Amostra curta; grave ao menos 3 segundos de fala contínua.')
         selected_start, _window_length, active_fraction = _reference_window(source)
@@ -330,4 +341,5 @@ def inspect_voice_reference(voice: str | Path) -> dict:
                 'reference_quality_confidence':quality.confidence,
                 'reference_quality_components':quality.components,
                 'acoustic_features':acoustic_features,
+                'pitch_features':pitch_features,
                 'warnings':warnings}

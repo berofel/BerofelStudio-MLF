@@ -14,6 +14,8 @@ A seleção da janela de referência continua limitada ao máximo aceito pelo co
 
 `acoustic_analyzer.py` acrescenta medições baratas por quadros de 20 ms (RMS, pico, crest factor, clipping, taxa de cruzamento por zero e percentis do nível). A caixa de verificação local mostra esses indicadores junto ao trecho escolhido. Uma estimativa de contraste entre quadros quietos/ativos só é relatada como proxy de baixa confiança; SNR permanece indisponível sem uma referência de ruído confiável. Esses recursos não alteram os pesos do seletor até haver validação em referências rotuladas.
 
+A mesma verificação agora estima F0 descritiva usando a diferença normalizada cumulativa YIN em no máximo 60 quadros de 40 ms distribuídos pelo trecho condicionado. O relatório mostra mediana, p10–p90, MAD em semitons, confiança mediana e quantidade de quadros aceitos apenas quando há pelo menos três quadros vozeados confiáveis. Quadros abaixo do limiar ou amostras com cobertura insuficiente não viram “0 Hz” nem recebem resumo enganoso. A medida é auxiliar para inspecionar pitch; não identifica locutor, mede emoção ou prova fidelidade do clone, e não é enviada ao Qwen nem altera o ranking/cache. Se NumPy ou a medição falhar, a verificação dos demais indicadores continua.
+
 `quality_inspector.py` oferece checagem manual do texto sintetizado usando somente Parakeet TDT v3 ONNX INT8/CPU. WER/CER-like são taxas de edição textual aproximadas para diagnóstico, não MOS, qualidade de pronúncia nem similaridade vocal. Para reduzir divergência de formatação, o cálculo normaliza números/datas/unidades para a forma falada em uma cópia comparativa; o texto reconhecido exibido e o roteiro original não são alterados. Quando word timestamps estão disponíveis, também relata o intervalo entre a última palavra reconhecida e o fim do WAV; um intervalo grande pede escuta manual e não declara truncamento. A checagem requer FFmpeg e Parakeet local e adiciona custo de inferência; permanece sob ação explícita do usuário.
 
 ## Capacidades Pure C observadas
@@ -31,9 +33,13 @@ python -m unittest tests.test_voice_intelligence -v
 python -m unittest tests.test_qwen3_tts_local.QwenLocalCloneTests.test_reference_window_selection_avoids_leading_silence_and_searches_full_file -v
 ```
 
-O Python reduzido do sistema não contém todas as dependências do app; por isso foi usado o ambiente virtual completo instalado em `%LOCALAPPDATA%\\BFS\\venv`. Nele, a suíte `python -m unittest discover -s tests -q` passou em 568 testes e ignorou 5, em 66,886 s. O ASR real Parakeet TDT v3 ONNX INT8/CPU transcreveu uma referência vocal local curta de 3 s (seis palavras reconhecidas; 7,56 s de execução). Uma geração Pure C real curta foi executada em cada preset de seis threads; detalhes, RTFs exploratórios e limitações estão em `VOICE_QUALITY_BENCHMARK.md`. Também passou o teste de seleção de janela que exercita FFmpeg e PCM.
+O Python reduzido do sistema não contém todas as dependências do app; por isso foi usado o ambiente virtual completo instalado em `%LOCALAPPDATA%\\BFS\\venv`. Na execução mais recente, a suíte `python -m unittest discover -s tests -q` passou em **571 testes e ignorou 5**, em 66,026 s. O ASR real Parakeet TDT v3 ONNX INT8/CPU transcreveu uma referência vocal local curta de 3 s (seis palavras reconhecidas; 7,56 s de execução). Uma geração Pure C real curta foi executada em cada preset de seis threads; detalhes, RTFs exploratórios e limitações estão em `VOICE_QUALITY_BENCHMARK.md`. Também passou o teste de seleção de janela que exercita FFmpeg e PCM.
 
 Essas medições não constituem avaliação auditiva, benchmark estatístico ou validação de fidelidade vocal. GUI, reprodução manual, referência longa e perfil frio/quente repetido ainda precisam de validação. Acesso de escrita do processo sandbox ao cache de perfil padrão foi negado pelo ACL; a inferência foi concluída usando caminhos de cache/log temporários, sem alterar ACLs e sem incluir áudio privado no repositório.
+
+O YIN foi medido separadamente em PCM sintético (tom de 145 Hz, 30 s, 1,92 MB): 60 quadros amostrados, F0 mediana 145 Hz, execução de 0,0332 s no ambiente local. É microbenchmark determinístico, não benchmark de gravação humana, qualidade nem processamento end-to-end.
+
+Na inspeção da referência autorizada local disponível, o arquivo tinha 6,06 s; a janela analisada tinha 3,00 s. A tarefa levou 1,12 s, mas só 1 de 7 quadros amostrados passou pelos critérios de voz/confiança. O sistema corretamente não exibiu F0 agregado. Isso valida o fail-safe em uma amostra real curta; não valida estabilidade de F0 em voz contínua, nem identidade.
 
 ## Limitações e próximos passos de validação
 

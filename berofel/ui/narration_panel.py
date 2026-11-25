@@ -1032,6 +1032,7 @@ class NarrationPanel(QScrollArea):
 
     def _show_voice_reference_report(self,report):
         features=report.get('acoustic_features') or {}
+        pitch=report.get('pitch_features') or {}
         lines=[f'Duração do arquivo: {report.get("source_duration",report["duration"]):.2f} s',
                f'Trecho usado para condicionar a voz: {report["duration"]:.2f} s',
                f'Início do trecho escolhido: {report.get("selected_start",0):.2f} s',
@@ -1050,6 +1051,20 @@ class NarrationPanel(QScrollArea):
                 f'{features.get("frame_rms_dbfs_p50",0):.1f} / '
                 f'{features.get("frame_rms_dbfs_p90",0):.1f} dBFS',
                 'SNR: não estimado (sem trecho de ruído de referência confiável)'])
+        if pitch.get('status') == 'measured' and pitch.get('f0_median_hz') is not None:
+            lines.append(
+                f'F0 descritiva: mediana {pitch["f0_median_hz"]:.1f} Hz '
+                f'(p10–p90 {pitch["f0_p10_hz"]:.1f}–{pitch["f0_p90_hz"]:.1f} Hz); '
+                f'confiança YIN mediana {pitch["confidence_median"]:.2f}, '
+                f'{pitch["voiced_frame_count"]}/{pitch["sampled_frame_count"]} quadros vozeados')
+            lines.append('F0 descreve pitch nesta amostra; não identifica a pessoa nem comprova fidelidade da clonagem.')
+        elif pitch.get('status') == 'unvoiced_or_low_confidence':
+            lines.append('F0 não estimada com confiança suficiente; não foi tratada como pitch zero.')
+        elif pitch.get('status') == 'insufficient_voiced_coverage':
+            lines.append(
+                f'F0 não resumida: somente {pitch.get("voiced_frame_count",0)} quadros '
+                f'vozeados confiáveis de {pitch.get("sampled_frame_count",0)}; '
+                'grave uma referência com fala mais contínua para obter essa medida.')
         if report['warnings']:
             lines.extend(['','Recomendações:',*('• '+item for item in report['warnings'])])
         else:

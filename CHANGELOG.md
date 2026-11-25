@@ -16,7 +16,8 @@
 - A geração Pure C e o backend nativo calculam hashes de gravações por blocos de 1 MiB, evitando materializar referências vocais longas integralmente na RAM durante a preparação das chaves de cache.
 - Mensagens dos instaladores Windows e fixtures de regressão passaram a identificar Parakeet TDT v3/Silero como o ASR local; nenhuma rota de Whisper foi adicionada.
 - Corrigida a reavaliação acústica da janela de referência: os candidatos pré-ranqueados agora são convertidos para os registros esperados pelo ranqueador PCM, evitando falha quando FFmpeg mede candidatos reais.
-- Suíte no venv completo do aplicativo: 568 aprovados, 5 ignorados. Uma síntese curta real por preset (Mixed e INT8, seis threads) e checagem Parakeet CPU foram registradas como medições exploratórias, sem alegar avaliação perceptiva ou superioridade estatística.
+- Suíte no venv completo do aplicativo: 571 aprovados, 5 ignorados. Uma síntese curta real por preset (Mixed e INT8, seis threads) e checagem Parakeet CPU foram registradas como medições exploratórias, sem alegar avaliação perceptiva ou superioridade estatística.
+- A verificação técnica da referência vocal agora exibe F0 descritiva via YIN, com confiança, faixa robusta e exclusão de quadros não vozeados/duvidosos; o dado não altera x-vector, seleção ou síntese. Testes determinísticos e microbenchmark sintético de 30 s documentados em `VOICE_INTELLIGENCE_2_0.md`.
 
 # 0.10.0-alpha.4 — instalação sem janela de terminal
 

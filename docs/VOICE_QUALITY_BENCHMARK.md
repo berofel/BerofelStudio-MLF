@@ -28,5 +28,5 @@ O cache padrão de perfil sob `%LOCALAPPDATA%\\BFS` não era gravável pelo proc
 5. Para texto, usar Parakeet local para rascunho comparativo, corrigir manualmente a referência e reportar WER/CER. Transcrição automática isolada não é ground truth.
 6. Para identidade e naturalidade, comparar clipes com loudness alinhado em teste auditivo cego. Não substituir avaliação humana por similaridade de x-vector.
 
-Os testes unitários do pacote não comprovam qualidade acústica. A suíte completa foi executada no ambiente virtual instalado do app com `python -m unittest discover -s tests -q`: **568 testes passaram e 5 foram ignorados**, em 66,886 s. Os cinco skips permanecem skips e não são contados como aprovados. A execução ocorreu antes da última correção local em `audio_reference.py`; o teste direcionado dessa correção passou, e a suíte completa será repetida antes do commit.
+Os testes unitários do pacote não comprovam qualidade acústica. A suíte completa foi executada no ambiente virtual instalado do app com `python -m unittest discover -s tests -q`: **571 testes passaram e 5 foram ignorados**, em 66,026 s. Os cinco skips permanecem skips e não são contados como aprovados. A correção do ranqueamento acústico e o estimador YIN passaram também nos testes direcionados.
 
