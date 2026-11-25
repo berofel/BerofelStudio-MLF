@@ -24,20 +24,22 @@ Não há arquivos `dir_*.bin` no diretório de assets consultado. O adaptador at
 
 ## Execução e validação
 
-Os testes sem dependências de áudio/UI são executados com:
+O ASR desta integração é exclusivamente **Parakeet TDT v3 ONNX INT8 em CPU**. Faster-Whisper não é usado para conferir referência nem narração. Os testes sem dependências de áudio/UI são executados com:
 
 ```powershell
 python -m unittest tests.test_voice_intelligence -v
 python -m unittest tests.test_qwen3_tts_local.QwenLocalCloneTests.test_reference_window_selection_avoids_leading_silence_and_searches_full_file -v
 ```
 
-O runtime Python disponível durante esta etapa não contém NumPy, SciPy, PySide6, Pillow, ONNX Runtime ou `onnx-asr`. Portanto não foi possível executar síntese Qwen real, ASR Parakeet real, inspeção acústica PCM com dependências completas, GUI, reprodução ou benchmark de tempo/RAM. Não há resultados auditivos ou RTF novos a declarar. A suíte completa executou 438 testes: 57 erros por dependências ausentes ou módulos dependentes delas e 119 skips; os testes executáveis não indicaram falhas de asserção. Isso não é uma aprovação da suíte completa.
+O Python reduzido do sistema não contém todas as dependências do app; por isso foi usado o ambiente virtual completo instalado em `%LOCALAPPDATA%\\BFS\\venv`. Nele, a suíte `python -m unittest discover -s tests -q` passou em 568 testes e ignorou 5, em 66,886 s. O ASR real Parakeet TDT v3 ONNX INT8/CPU transcreveu uma referência vocal local curta de 3 s (seis palavras reconhecidas; 7,56 s de execução). Uma geração Pure C real curta foi executada em cada preset de seis threads; detalhes, RTFs exploratórios e limitações estão em `VOICE_QUALITY_BENCHMARK.md`. Também passou o teste de seleção de janela que exercita FFmpeg e PCM.
+
+Essas medições não constituem avaliação auditiva, benchmark estatístico ou validação de fidelidade vocal. GUI, reprodução manual, referência longa e perfil frio/quente repetido ainda precisam de validação. Acesso de escrita do processo sandbox ao cache de perfil padrão foi negado pelo ACL; a inferência foi concluída usando caminhos de cache/log temporários, sem alterar ACLs e sem incluir áudio privado no repositório.
 
 ## Limitações e próximos passos de validação
 
-* Instalar o conjunto de dependências já definido pelos manifestos do aplicativo em ambiente de teste; não foi adicionada dependência nesta etapa.
-* Rodar `python -m pytest -q` no ambiente de desenvolvimento completo e validar a interface real.
-* Sintetizar frases PT-BR com ambos os presets Pure C e inspecionar auditivamente clonagem, sotaque, omissões e final de WAV.
+* Repetir medições várias vezes em condições controladas e medir RAM/CPU de pico.
+* Rodar a validação da interface real.
+* Inspecionar auditivamente clonagem, sotaque, omissões e final de WAV, idealmente em avaliação cega.
 * Comparar janelas selecionadas com amostras autorizadas e rótulos humanos antes de calibrar pesos.
 * Validar a checagem Parakeet no WAV, com transcrição de referência e amostras reais. O próprio ASR pode errar e uma boa transcrição não comprova identidade vocal.
 * Emotion direction, ICL, grafts, qualidade perceptual, ajustes DSP automáticos e regeneração seletiva permanecem fora do escopo validado desta etapa.

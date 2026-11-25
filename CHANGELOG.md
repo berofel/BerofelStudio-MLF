@@ -6,7 +6,7 @@
 - O relatório de verificação de referência exibe crest factor, ZCR e percentis RMS do trecho condicionado, identificando SNR como não estimado quando não há uma referência de ruído válida.
 - A verificação opcional do WAV com Parakeet informa a lacuna entre a última palavra reconhecida e o fim do arquivo, pedindo revisão auditiva para finais com intervalo grande; timestamps não são tratados como prova de truncamento.
 - A comparação textual do Parakeet normaliza números e unidades em uma cópia interna para não penalizar `45%` versus “quarenta e cinco por cento”; a transcrição mostrada permanece intacta.
-- Voice Intelligence 2.0 (etapa inicial): normalização de fala PT-BR sem alterar o texto de origem/legendas, seleção de referência vocal com ranking VAD e análise PCM limitada aos melhores candidatos, chaves de cache versionadas e inspeção de texto da narração opcional usando exclusivamente Parakeet TDT v3 ONNX INT8/CPU. A validação real de áudio e GUI segue pendente neste ambiente sem ONNX Runtime/onnx-asr, NumPy/SciPy e PySide6.
+- Voice Intelligence 2.0 (etapa inicial): normalização de fala PT-BR sem alterar o texto de origem/legendas, seleção de referência vocal com ranking VAD e análise PCM limitada aos melhores candidatos, chaves de cache versionadas e inspeção de texto da narração opcional usando exclusivamente Parakeet TDT v3 ONNX INT8/CPU. Validação local com Parakeet e geração Pure C em ambos os presets documentada em `docs/VOICE_QUALITY_BENCHMARK.md`; avaliação auditiva, GUI e benchmark estatístico ainda pendentes.
 - Narração longa: removido o teto de 2.048 tokens por solicitação do Qwen Original; textos extensos são divididos em limites de frase/palavra e unidos em um WAV único, sem impor limite de caracteres no campo. A rota Pure C usa trechos sequenciais por não expor orçamento de tokens na API empacotada.
 - A tela de narração explica que Qwen3-TTS Base não inclui locutores pré-gravados; perfis autorizados são locais e não são distribuídos pelo instalador.
 - O cronômetro da limpeza automática agora encerra quando a análise retorna, antes da janela de revisão. A aplicação posterior das sugestões continua sendo uma tarefa cronometrada separadamente.
@@ -15,6 +15,8 @@
 - O manifesto de capacidades Pure C agora identifica `--emo-ref` e seus requisitos como opções da CLI, sem inferir suporte HTTP. O binário instalado anuncia esses argumentos, mas o adaptador de narração ainda não os envia; controles neurais de emoção continuam indisponíveis até validação da API e da saída real.
 - A geração Pure C e o backend nativo calculam hashes de gravações por blocos de 1 MiB, evitando materializar referências vocais longas integralmente na RAM durante a preparação das chaves de cache.
 - Mensagens dos instaladores Windows e fixtures de regressão passaram a identificar Parakeet TDT v3/Silero como o ASR local; nenhuma rota de Whisper foi adicionada.
+- Corrigida a reavaliação acústica da janela de referência: os candidatos pré-ranqueados agora são convertidos para os registros esperados pelo ranqueador PCM, evitando falha quando FFmpeg mede candidatos reais.
+- Suíte no venv completo do aplicativo: 568 aprovados, 5 ignorados. Uma síntese curta real por preset (Mixed e INT8, seis threads) e checagem Parakeet CPU foram registradas como medições exploratórias, sem alegar avaliação perceptiva ou superioridade estatística.
 
 # 0.10.0-alpha.4 — instalação sem janela de terminal
 

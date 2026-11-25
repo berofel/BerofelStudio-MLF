@@ -137,7 +137,12 @@ def _best_reference_window(path: str, size: int, mtime_ns: int) -> tuple[float, 
     # Only compare acoustic scores on candidates actually measured; otherwise
     # unmeasured windows would receive an artificial advantage from absent
     # penalty terms. If every PCM scan failed, retain the VAD-only ranking.
-    ranked = rank_reference_candidates(shortlist, acoustics) if acoustics else preliminary
+    shortlist_records = [{
+        'start': item.start, 'duration': item.duration,
+        'active_seconds': item.active_seconds,
+        'active_fraction': item.active_fraction,
+    } for item in shortlist]
+    ranked = rank_reference_candidates(shortlist_records, acoustics) if acoustics else preliminary
     selected = ranked[0]
     return selected.start, selected.duration, selected.active_fraction
 
