@@ -5,6 +5,7 @@ Referências consultadas em 25/11/2026. Branches `main` são mutáveis; o binár
 | Técnica / componente | Fonte e versão | Licença observada | Uso local e evidência |
 |---|---|---|---|
 | Normalização textual PT-BR | Regras locais, versão `NORMALIZER_VERSION=2` | Código do projeto | `text_normalizer.py`; testes determinísticos; sem modelo |
+| Medidas acústicas por quadro | RMS, pico, crest factor, ZCR e percentis; versão `ACOUSTIC_FEATURE_VERSION=1` | Fórmulas DSP padrão; implementação própria | `acoustic_analyzer.py`; fixtures PCM curtas; SNR continua explicitamente indisponível |
 | Seleção acústica de referência | Regras locais; VAD existente e FFmpeg instalado | Código do projeto / FFmpeg distribuído separadamente | `audio_reference.py`; shortlist VAD + PCM; ainda sem benchmark humano |
 | ASR de verificação | NVIDIA Parakeet TDT 0.6B v3 e export ONNX INT8 do repositório `istupakov/parakeet-tdt-0.6b-v3-onnx`, revisão `8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce` | NVIDIA indica CC-BY-4.0; preservar atribuição/termos do modelo | Adaptador existente `parakeet_asr.py`; CPUExecutionProvider; não foi feita inferência nesta sessão |
 | Pesos Qwen3-TTS 0.6B Base | Model card oficial Qwen | Apache-2.0 conforme model card | Peso local existente; não incluso no Git; síntese não executada |

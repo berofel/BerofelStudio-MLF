@@ -3,10 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from functools import lru_cache
-from array import array
-import math
 import re
-import sys
 import tempfile
 import subprocess
 import threading
@@ -39,31 +36,11 @@ def _candidate_acoustic_metrics(source: Path, binary: str,
     pcm = getattr(result, 'stdout', b'') or b''
     if result.returncode or len(pcm) < 16000 * 4:
         return None
-    usable = len(pcm) - len(pcm) % 4
-    samples = array('f')
-    samples.frombytes(pcm[:usable])
-    if not samples:
+    try:
+        from .voice_intelligence.acoustic_analyzer import analyze_pcm_f32le
+        return analyze_pcm_f32le(pcm, sample_rate=16000, frame_ms=20)
+    except (ValueError, OverflowError):
         return None
-    if sys.byteorder != 'little':
-        samples.byteswap()
-    square_sum = 0.0
-    peak = 0.0
-    quiet = clipped = 0
-    for sample in samples:
-        value = float(sample)
-        if not math.isfinite(value):
-            return None
-        absolute = abs(value)
-        square_sum += value * value
-        peak = max(peak, absolute)
-        quiet += absolute < .005
-        clipped += absolute >= .999
-    rms = math.sqrt(square_sum / len(samples))
-    return {'rms_dbfs': 20 * math.log10(max(rms, 1e-12)),
-            'peak_dbfs': 20 * math.log10(max(peak, 1e-12)),
-            'near_silence_fraction': quiet / len(samples),
-            'clipped_fraction': clipped / len(samples),
-            'sample_count': len(samples)}
 
 
 @lru_cache(maxsize=32)

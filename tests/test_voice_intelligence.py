@@ -15,6 +15,7 @@ from berofel.services.voice_intelligence.reference_selector import rank_referenc
 from berofel.services.voice_intelligence.quality_inspector import (
     calculate_text_error_rates, inspect_generated_wav_with_parakeet,
 )
+from berofel.services.voice_intelligence.acoustic_analyzer import analyze_pcm_f32le
 from berofel.services.narration_service import NarrationRequest, generate_narration
 
 
@@ -116,6 +117,29 @@ class ReferenceWindowRankingTests(TestCase):
             {'start': 0, 'duration': 30, 'active_seconds': 10, 'active_fraction': .8}
         ])[0]
         self.assertEqual(score.confidence, 'limited')
+
+
+class AcousticWindowAnalysisTests(TestCase):
+    def test_reports_frame_features_without_claiming_calibrated_snr(self):
+        from array import array
+        # Quiet lead-in followed by a clipped, voiced-like test tone.
+        samples = array('f', [0.0] * 1600)
+        samples.extend([1.0 if index % 2 else -1.0 for index in range(1600)])
+        features = analyze_pcm_f32le(samples.tobytes())
+        self.assertAlmostEqual(features['duration_seconds'], .2)
+        self.assertGreater(features['crest_factor_db'], 0)
+        self.assertGreater(features['clipped_fraction'], 0)
+        self.assertGreater(features['zero_crossing_rate'], .4)
+        self.assertIsNone(features['snr_db'])
+        self.assertEqual(features['snr_confidence'], 'unavailable_without_noise_reference')
+
+    def test_rejects_invalid_pcm_and_parameters(self):
+        with self.assertRaises(ValueError):
+            analyze_pcm_f32le(b'')
+        with self.assertRaises(ValueError):
+            analyze_pcm_f32le(b'\x00\x00\x80\x7f')
+        with self.assertRaises(ValueError):
+            analyze_pcm_f32le(b'\x00\x00\x00\x00', sample_rate=0)
 
 
 class ParakeetQualityInspectionTests(TestCase):
