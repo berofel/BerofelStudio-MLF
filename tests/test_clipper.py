@@ -127,6 +127,8 @@ class ClipperTests(unittest.TestCase):
         self.assertTrue(marked)
         self.assertTrue(any('Possíveis sinais de ironia' in reason
                             for candidate in marked for reason in candidate['reasons']))
+        self.assertTrue(all('discourse_score' in candidate for candidate in candidates))
+        self.assertTrue(any(candidate['discourse_cues'] for candidate in candidates))
         self.assertIn('irony_candidates',result['stats'])
 
     def test_candidate_metadata_includes_text_tiling_topic_boundaries(self):

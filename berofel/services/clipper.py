@@ -22,10 +22,10 @@ from .ai_cache import digest, source_identity
 from .clip_audio_signals import (FrameFeatures, align_events_to_conversation,
     detect_energy_events, extract_frames_from_chunks, score_clip,
     select_diverse_clips)
-from .discourse_features import analyze_irony, discourse_role, text_tiling_boundaries
+from .discourse_features import analyze_discourse, discourse_role, text_tiling_boundaries
 from .ffmpeg import ffmpeg_path, media_info
 
-CLIPPER_VERSION = 3
+CLIPPER_VERSION = 4
 FEATURE_RATE = 16_000
 FEATURE_FRAME_MS = 20
 CACHE_SCHEMA = 1
@@ -487,24 +487,40 @@ def _candidate_spans(words: Sequence[Mapping], options: ClipperOptions) -> list[
 
         previous_text=''
         following_text=''
+        previous_speaker=None
+        following_speaker=None
+        candidate_speakers={word.get('speaker_id') for word in subset
+                            if word.get('speaker_id') is not None}
+        speaker_id=next(iter(candidate_speakers)) if len(candidate_speakers)==1 else None
         if start_turn is not None and start_turn>0:
             previous_turn=turns[start_turn-1]
             if start/1000.-float(previous_turn['end_ms'])/1000.<=4.0:
                 previous_text=previous_turn['text']
+                previous_speaker=previous_turn.get('speaker_id')
         if end_turn is not None and end_turn+1<len(turns):
             following_turn=turns[end_turn+1]
             if float(following_turn['start_ms'])/1000.-end/1000.<=4.0:
                 following_text=following_turn['text']
-        irony=analyze_irony(text,previous=previous_text,following=following_text)
+                following_speaker=following_turn.get('speaker_id')
+        discourse=analyze_discourse(text,previous=previous_text,following=following_text,
+            speaker_id=speaker_id,previous_speaker=previous_speaker,
+            following_speaker=following_speaker)
+        irony=discourse['irony']
         if irony['suspected']:
             reasons.append('Possíveis sinais de ironia/contraste: '
                            + '; '.join(irony['evidence'][:3]))
+        existing_cues=set(irony['evidence'])
+        reasons.extend(cue for cue in discourse['cues'] if cue not in existing_cues)
+        if discourse['speaker_context_excluded']:
+            reasons.append('Contexto de locutor diferente conhecido foi excluído da comparação')
         figurative_score=(float(irony['score']) if irony['suspected'] else 0.)
         if dialogue_start or dialogue_end:
             reasons.append('Pergunta e resposta próximas mantidas no mesmo clipe')
         candidates.append({'start_ms':int(start),'end_ms':int(end),'text':text,
             'words':subset,'context_score':context,'hook_score':hook,
             'boundary_score':boundary,'figurative_score':figurative_score,
+            'discourse_score':float(discourse['editorial_score']),
+            'discourse_cues':list(discourse['cues']),
             'irony_suspected':bool(irony['suspected']),
             'irony_score':float(irony['score']),
             'irony_evidence':list(irony['evidence']),
@@ -648,6 +664,8 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                 'irony_suspected':bool(candidate.get('irony_suspected',False)),
                 'irony_score':float(candidate.get('irony_score',0.)),
                 'irony_evidence':list(candidate.get('irony_evidence',[])),
+                'discourse_score':float(candidate.get('discourse_score',0.)),
+                'discourse_cues':list(candidate.get('discourse_cues',[])),
                 'topic_shift_before':float(candidate.get('topic_shift_before',0.)),
                 'topic_shift_after':float(candidate.get('topic_shift_after',0.)),
                 'topic_shift_internal':float(candidate.get('topic_shift_internal',0.)),

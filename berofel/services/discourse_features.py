@@ -24,7 +24,7 @@ _STOP = frozenset("""
 """.split())
 _POSITIVE = frozenset("""
     otimo otima otimos otimas excelente perfeito perfeita maravilhoso
-    maravilhosa incrivel incriveis fantastico fantastica sensacional
+    maravilhosa maravilha incrivel incriveis fantastico fantastica sensacional
     lindo linda adorei amei parabens parabéns genial sucesso funciona funcionou
     resolveu certo bom boa legal show
 """.split())
@@ -37,11 +37,17 @@ _NEGATIVE = frozenset("""
 """.split())
 _IRONY_MARKERS = (
     (('so', 'que', 'nao'), 'marcador explícito “só que não”', .85),
-    (('ironia',), 'menção explícita a ironia', .90),
-    (('sarcasmo',), 'menção explícita a sarcasmo', .90),
     (('aham', 'sei'), 'resposta convencional potencialmente irônica', .58),
     (('confia',), '“confia” pode funcionar como marcador de ironia', .52),
 )
+_IRONY_MENTION = re.compile(
+    r"\b(?:(?:isso|isto)\s+(?:e|foi)|foi|era|seria|com|falando com|"
+    r"estou sendo|estava sendo)\s+(?:uma\s+)?"
+    r"(?:ironia|sarcasmo|ironic[oa])\b")
+_IRONY_DENIAL = re.compile(
+    r"\b(?:nao\s+(?:e|foi|era|estou sendo)|sem)\s+(?:uma\s+)?"
+    r"(?:ironia|sarcasmo|ironic[oa])\b|\b(?:falo|estou falando)\s+serio\b")
+_NEGATORS = frozenset(('nao', 'nem', 'nunca', 'jamais'))
 _CONTRAST = frozenset(('mas porém porem só so embora apesar entretanto contudo'.split()))
 _RESOLUTION = frozenset("""
     resolveu resolvido resolveu-se funcionou funcionando consegui conseguiu
@@ -51,6 +57,36 @@ _QUESTION_START = frozenset(('quem quando onde como qual quanto'.split()))
 _REVEAL_START = frozenset(('descobri descobrimos percebi percebemos resultado segredo afinal'.split()))
 _CONCLUSION_START = frozenset(('resumindo concluindo conclusão conclusao enfim finalmente'.split()))
 _ANSWER_START = frozenset(('porque por isso então entao a resposta isso significa quer dizer'.split()))
+_REACTION_PATTERNS = (
+    (('nossa',), 'reação textual: “nossa”', .66),
+    (('caramba',), 'reação textual: “caramba”', .72),
+    (('eita',), 'reação textual: “eita”', .70),
+    (('meu', 'deus'), 'reação textual: “meu Deus”', .76),
+    (('nao', 'acredito'), 'reação textual de surpresa', .78),
+    (('olha', 'isso'), 'chamada de atenção para um evento', .64),
+    (('que', 'isso'), 'reação textual: “que isso”', .62),
+    (('meu', 'amigo'), 'reação coloquial potencialmente enfática', .48),
+)
+_HUMOR_MARKERS = frozenset((
+    'haha', 'hahaha', 'kkkk', 'kkk', 'rs', 'zoeira', 'brincadeira', 'piada', 'meme'))
+_RHETORICAL_PATTERNS = (
+    ('quem', 'nunca'), ('so', 'eu', 'que'), ('so', 'eu'),
+    ('nao', 'e', 'possivel'), ('vai', 'me', 'dizer', 'que'),
+)
+_REPAIR_MARKERS = (
+    ('na', 'verdade'), ('ou', 'melhor'), ('quer', 'dizer'), ('corrigindo',),
+    ('pera',), ('espera',), ('vamos', 'de', 'novo'), ('falei', 'errado'),
+)
+
+
+def _is_negated(tokens: Sequence[str], index: int) -> bool:
+    """Check a short negation scope without crossing an explicit contrast."""
+    for previous in reversed(tokens[max(0, index - 3):index]):
+        if previous in _CONTRAST:
+            break
+        if previous in _NEGATORS:
+            return True
+    return False
 
 
 def normalize_tokens(text: object) -> tuple[str, ...]:
@@ -65,8 +101,19 @@ def content_terms(text: object) -> Counter[str]:
 
 
 def _polarity(tokens: Sequence[str]) -> int:
-    positive = sum(token in _POSITIVE for token in tokens)
-    negative = sum(token in _NEGATIVE for token in tokens)
+    positive = negative = 0
+    for index, token in enumerate(tokens):
+        if token not in _POSITIVE and token not in _NEGATIVE:
+            continue
+        # Curto escopo determinístico para “não funcionou” e “nunca foi bom”.
+        negated = _is_negated(tokens, index)
+        polarity = -1 if token in _NEGATIVE else 1
+        if negated:
+            polarity *= -1
+        if polarity > 0:
+            positive += 1
+        else:
+            negative += 1
     return (1 if positive > negative else -1 if negative > positive else 0)
 
 
@@ -81,9 +128,11 @@ def analyze_irony(text: object, *, previous: object = '', following: object = ''
     tokens = normalize_tokens(raw)
     prev_tokens = normalize_tokens(previous)
     next_tokens = normalize_tokens(following)
+    normalized = ' '.join(tokens)
     evidence: list[str] = []
     score = 0.0
     explicit = False
+    denied_mention = bool(_IRONY_DENIAL.search(normalized))
     for pattern, label, weight in _IRONY_MARKERS:
         if any(tokens[i:i + len(pattern)] == pattern
                for i in range(max(0, len(tokens) - len(pattern) + 1))):
@@ -91,21 +140,44 @@ def analyze_irony(text: object, *, previous: object = '', following: object = ''
             score = max(score, weight)
             explicit = explicit or weight >= .8
 
-    own_positive = any(token in _POSITIVE for token in tokens)
-    own_negative = any(token in _NEGATIVE for token in tokens)
+    if _IRONY_MENTION.search(normalized) and not denied_mention:
+        evidence.append('autodescrição explícita da fala como irônica/sarcástica')
+        score = max(score, .82)
+        explicit = True
+    elif denied_mention:
+        evidence.append('menção a ironia/sarcasmo negada ou fala marcada como séria')
+
+    positive_positions: list[int] = []
+    negative_positions: list[int] = []
+    for index, token in enumerate(tokens):
+        if token not in _POSITIVE and token not in _NEGATIVE:
+            continue
+        negated = _is_negated(tokens, index)
+        is_positive = token in _POSITIVE
+        if negated:
+            is_positive = not is_positive
+        (positive_positions if is_positive else negative_positions).append(index)
+    own_positive = bool(positive_positions)
+    own_negative = bool(negative_positions)
     marked_contrast = bool(set(tokens) & _CONTRAST) or bool(re.search(r'[:,…—]', raw))
-    if own_positive and own_negative and marked_contrast:
+    if own_positive and own_negative:
         evidence.append('avaliação positiva e resultado negativo na mesma fala')
-        evidence.append('elogio junto de falha ou resultado adverso')
-        score += .56
+        if marked_contrast:
+            evidence.append('elogio junto de falha ou resultado adverso')
+            score += .56
+        elif min(positive_positions) < max(negative_positions):
+            evidence.append('elogio antecede evento adverso, sem depender da pontuação')
+            score += .42
 
     surrounding = prev_tokens + next_tokens
     surrounding_polarity = _polarity(surrounding)
     current_polarity = _polarity(tokens)
-    contextual_clash = ((own_positive and surrounding_polarity < 0) or
-                        (own_negative and surrounding_polarity > 0))
-    if ((current_polarity and surrounding_polarity and current_polarity != surrounding_polarity)
-            or contextual_clash):
+    contextual_clash = bool(
+        surrounding_polarity < 0 and own_positive or
+        surrounding_polarity > 0 and own_negative or
+        current_polarity and surrounding_polarity and
+        current_polarity != surrounding_polarity)
+    if contextual_clash:
         evidence.append('polaridade da fala contrasta com o contexto vizinho')
         score += .29
 
@@ -132,6 +204,9 @@ def analyze_irony(text: object, *, previous: object = '', following: object = ''
         score = max(0.0, score - .30)
         evidence.append('marcador de resolução reduz suspeita de ironia')
 
+    if denied_mention and not explicit:
+        score = max(0.0, score - .15)
+
     score = min(.98, score)
     independent = len(set(evidence))
     suspected = explicit or (score >= .55 and independent >= 2)
@@ -140,6 +215,74 @@ def analyze_irony(text: object, *, previous: object = '', following: object = ''
         'suspected': suspected,
         'evidence': tuple(evidence),
         'note': 'sinais heurísticos; intenção irônica não é confirmada pelo texto',
+    }
+
+
+def _contains_pattern(tokens: Sequence[str], pattern: Sequence[str]) -> bool:
+    return any(tokens[index:index + len(pattern)] == tuple(pattern)
+               for index in range(max(0, len(tokens) - len(pattern) + 1)))
+
+
+def analyze_discourse(text: object, *, previous: object = '', following: object = '',
+                      speaker_id: object = None, previous_speaker: object = None,
+                      following_speaker: object = None) -> dict:
+    """Collect local, explainable editorial cues for a transcript candidate.
+
+    Known speaker changes exclude that neighbor from irony comparison. Humor,
+    surprise and rhetorical-question flags remain clues, never semantic
+    verdicts, cut commands or predictions of clip performance.
+    """
+    raw = str(text or '')
+    tokens = normalize_tokens(raw)
+    excluded_speakers: list[str] = []
+    if (speaker_id is not None and previous_speaker is not None and
+            speaker_id != previous_speaker):
+        previous = ''
+        excluded_speakers.append('anterior')
+    if (speaker_id is not None and following_speaker is not None and
+            speaker_id != following_speaker):
+        following = ''
+        excluded_speakers.append('posterior')
+
+    irony = analyze_irony(raw, previous=previous, following=following)
+    reaction_score = 0.0
+    cues: list[str] = []
+    for pattern, label, weight in _REACTION_PATTERNS:
+        if _contains_pattern(tokens, pattern):
+            reaction_score = max(reaction_score, weight)
+            cues.append(label)
+
+    humor_marker = any(token in _HUMOR_MARKERS for token in tokens)
+    if humor_marker:
+        cues.append('marcador textual de riso, brincadeira ou humor potencial')
+    rhetorical_question = ('?' in raw and any(
+        _contains_pattern(tokens, pattern) for pattern in _RHETORICAL_PATTERNS))
+    if rhetorical_question:
+        cues.append('pergunta retórica possível; conferir entonação e contexto')
+    repair_marker = any(_contains_pattern(tokens, pattern)
+                        for pattern in _REPAIR_MARKERS)
+    if repair_marker:
+        cues.append('marcador textual de correção ou reinício')
+    if irony['suspected']:
+        cues.extend(irony['evidence'][:3])
+
+    humor_score = .45 if humor_marker else 0.0
+    rhetorical_score = .65 if rhetorical_question else 0.0
+    repair_score = .45 if repair_marker else 0.0
+    editorial_score = max(
+        reaction_score, humor_score, rhetorical_score, repair_score,
+        float(irony['score']) if irony['suspected'] else 0.0)
+    return {
+        'role': discourse_role(raw),
+        'irony': irony,
+        'reaction_score': round(reaction_score, 3),
+        'humor_marker': humor_marker,
+        'rhetorical_question': rhetorical_question,
+        'repair_marker': repair_marker,
+        'editorial_score': round(editorial_score, 3),
+        'cues': tuple(dict.fromkeys(cues)),
+        'speaker_context_excluded': tuple(excluded_speakers),
+        'note': 'sinais textuais locais; não confirmam intenção, humor nem potencial de viralização',
     }
 
 

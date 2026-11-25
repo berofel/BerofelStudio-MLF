@@ -334,10 +334,12 @@ def score_clip(
         audio = 0.0
         audio_available = False
     figurative = float(np.clip(candidate.get('figurative_score', 0.0), 0, 1))
+    discourse = float(np.clip(candidate.get('discourse_score', 0.0), 0, 1))
     if 'figurative_score' in candidate:
         # Optional, intentionally small contribution from the deterministic
-        # context analyzer. A suspected irony cue is not a virality probability.
-        semantic = 0.55*context + 0.35*hook + 0.10*figurative
+        # context analyzer. A suspected irony/reaction cue is not a virality
+        # probability; keep the contribution small and preserve total weight.
+        semantic = 0.50*context + 0.32*hook + 0.10*figurative + 0.08*discourse
     else:
         semantic = 0.6*context + 0.4*hook
     # Graceful degradation: when speech-verified audio is absent, do not punish
@@ -373,6 +375,8 @@ def score_clip(
         reasons.append("Gancho contextual forte")
     if figurative >= .55:
         reasons.append("Possíveis sinais de ironia/figura de linguagem; conferir no áudio")
+    if discourse >= .62:
+        reasons.append("Sinais discursivos de reação, humor, pergunta retórica ou reinício; conferir no áudio")
     if not verified:
         reasons.append("Áudio não verificado; nota baseada no texto e limites")
     return {
@@ -381,6 +385,7 @@ def score_clip(
         "semantic_score": round(semantic, 3),
         "audio_score": round(audio, 3) if audio_available else None,
         "figurative_score": round(figurative, 3) if 'figurative_score' in candidate else None,
+        "discourse_score": round(discourse, 3) if 'discourse_score' in candidate else None,
         "audio_available": audio_available,
         "boundary_score": round(boundary, 3),
         "reasons": reasons,

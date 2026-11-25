@@ -33,6 +33,16 @@ class ClipAudioTests(unittest.TestCase):
         self.assertGreater(result['score'], 85)
         self.assertIsNone(result['audio_score'])
 
+    def test_discourse_signal_is_small_and_reported_in_editorial_ranking(self):
+        base = dict(start_ms=0, end_ms=10000, context_score=.7,
+                    hook_score=.6, boundary_score=.8, figurative_score=0.)
+        plain = score_clip(base, [])
+        enriched = score_clip(dict(base, discourse_score=.8), [])
+        self.assertGreater(enriched['score'], plain['score'])
+        self.assertLess(enriched['score'] - plain['score'], 6.)
+        self.assertEqual(enriched['discourse_score'], .8)
+        self.assertTrue(any('Sinais discursivos' in item for item in enriched['reasons']))
+
     def test_clipping_flag(self):
         frames = extract_frames_from_chunks([np.ones(16000, dtype=np.float32)], 16000)
         self.assertGreater(float(frames.clip_fraction.mean()), .99)
