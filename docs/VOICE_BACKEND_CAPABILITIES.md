@@ -16,6 +16,17 @@ O módulo `berofel.services.voice_intelligence.capabilities` consulta os recurso
 | `--emo-ref` / `--emo-ref-text` na inicialização do servidor | Servidor persistente gerou WAV distinto do servidor sem referência, com as mesmas solicitações HTTP | Integração experimental do editor; hash diferente não demonstra melhora emocional nem preservação de identidade |
 | ASR de revisão | Parakeet TDT v3 ONNX INT8, CPUExecutionProvider | Não é medida de identidade vocal |
 
+### Inventário local do ASR BVI
+
+No ambiente medido em 25/11/2026, a rota ativa é `nemo-parakeet-tdt-0.6b-v3`, arquivo ONNX INT8 obtido do repositório `istupakov/parakeet-tdt-0.6b-v3-onnx` na revisão `8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce`. O instalador exige `onnx-asr==0.12.0`; runtime instalado: ONNX Runtime 1.31.1, provider explicitamente `CPUExecutionProvider`, NumPy 2.5.4. O manifesto local de instalação confirma o modelo/quantização/provider e arquivos:
+
+| Arquivo | Bytes | SHA-256 |
+|---|---:|---|
+| `encoder-model.int8.onnx` | 652.183.999 | `6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09` |
+| `decoder_joint-model.int8.onnx` | 18.202.004 | `eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70` |
+
+Silero VAD também usa ONNX Runtime com `CPUExecutionProvider`, normalmente em uma thread. A execução de 1h20 documentada em `VOICE_QUALITY_BENCHMARK.md` usou quatro threads Parakeet e streaming por regiões. Esses identificadores descrevem somente a instalação medida; outra máquina deve validar seu manifesto local e não presumir os mesmos builds.
+
 Na verificação do executável local em 25/11/2026, `--help` anunciou `--emo-ref` e `--emo-ref-text` (WAV mono 24 kHz com transcrição), além de `--emotion-strength`. Em teste one-shot, `--emo-ref` produziu WAV válido, mas a execução levou 11,564 s para 4,32 s de áudio; a baseline sem essa opção levou 5,222 s para 4,24 s. Foi uma única repetição por condição e não houve escuta; os tempos incluem inicialização do processo/modelo, portanto são exploratórios.
 
 O servidor persistente foi testado separadamente: duas requisições idênticas, com seed 42, uma neutra e outra com campo HTTP `emotion: joy`, retornaram status 200 e o mesmo SHA-256 de WAV (`2fbcd01b…e825f2ed5`). O campo HTTP não teve efeito observável nesta build. Já `--emo-ref` e `--emo-ref-text` foram testados na inicialização de um servidor persistente, e a solicitação pelo endpoint local produziu outro WAV válido. O editor agora oferece esse caminho apenas como opção experimental: referência emocional é carregada no início do servidor, a transcrição deve ser revisada, e trocar o exemplo reinicia o servidor. Não há controle de intensidade nem seleção de emoção isolada; o efeito perceptivo ainda não foi avaliado. A receita Pure C para 0.6B separa o caminho pequeno da receita do modelo maior ([emotion 0.6B](https://github.com/gabriele-mastrapasqua/qwen3-tts/blob/main/docs/emotion-06b-recipe.md)); a documentação atual da API descreve um campo `emotion` ([serving API](https://github.com/gabriele-mastrapasqua/qwen3-tts/blob/main/docs/serving/api.md)). Essa diferença reforça a necessidade de qualificar cada executável instalado, cujo build/source permanece desconhecido.
