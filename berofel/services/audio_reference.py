@@ -294,6 +294,10 @@ def inspect_voice_reference(voice: str | Path) -> dict:
         quiet=np.abs(signal)<.005
         silence=float(np.mean(quiet))
         audible_signal_seconds=float(np.count_nonzero(~quiet)/float(rate))
+        from .voice_intelligence.acoustic_analyzer import analyze_pcm_f32le
+        acoustic_features = analyze_pcm_f32le(
+            np.asarray(signal, dtype=np.float32).tobytes(),
+            sample_rate=int(rate), frame_ms=20)
         warnings=[]
         if duration<3: warnings.append('Amostra curta; grave ao menos 3 segundos de fala contínua.')
         selected_start, _window_length, active_fraction = _reference_window(source)
@@ -320,4 +324,5 @@ def inspect_voice_reference(voice: str | Path) -> dict:
                 'reference_quality_score':round(quality.score,4),
                 'reference_quality_confidence':quality.confidence,
                 'reference_quality_components':quality.components,
+                'acoustic_features':acoustic_features,
                 'warnings':warnings}

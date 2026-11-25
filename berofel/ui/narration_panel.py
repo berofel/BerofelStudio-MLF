@@ -1021,6 +1021,7 @@ class NarrationPanel(QScrollArea):
             f'{details}\n\nA gravação original será preservada; você pode escolher outra amostra.')
 
     def _show_voice_reference_report(self,report):
+        features=report.get('acoustic_features') or {}
         lines=[f'Duração do arquivo: {report.get("source_duration",report["duration"]):.2f} s',
                f'Trecho usado para condicionar a voz: {report["duration"]:.2f} s',
                f'Início do trecho escolhido: {report.get("selected_start",0):.2f} s',
@@ -1031,6 +1032,14 @@ class NarrationPanel(QScrollArea):
                f'Pico: {report["peak_dbfs"]:.1f} dBFS',
                f'Trecho quase silencioso: {report["silence_fraction"]:.0%}',
                f'Amostras saturadas: {report["clipped_fraction"]:.2%}']
+        if features:
+            lines.extend([
+                f'Crest factor: {features.get("crest_factor_db",0):.1f} dB',
+                f'ZCR mediana por quadro: {features.get("frame_zcr_p50",0) or 0:.3f}',
+                f'RMS p10/p50/p90: {features.get("frame_rms_dbfs_p10",0):.1f} / '
+                f'{features.get("frame_rms_dbfs_p50",0):.1f} / '
+                f'{features.get("frame_rms_dbfs_p90",0):.1f} dBFS',
+                'SNR: não estimado (sem trecho de ruído de referência confiável)'])
         if report['warnings']:
             lines.extend(['','Recomendações:',*('• '+item for item in report['warnings'])])
         else:
