@@ -13,6 +13,7 @@ from typing import Callable
 
 from .ai_cache import digest
 from .voice_intelligence.text_normalizer import NORMALIZER_VERSION, normalize_pt_br
+from .voice_intelligence.narrative_interpreter import plan_narrative_interpretation
 from .voice_intelligence.pronunciation_dictionary import (
     PronunciationDictionary, apply_pronunciations,
 )
@@ -273,6 +274,8 @@ def generate_narration(request: NarrationRequest, progress: Callable | None = No
     if request.engine not in _TEXT_CHUNK_CHARS:
         raise ValueError('O BerofelStudio usa exclusivamente Qwen3-TTS Base para narração.')
     source_text = request.text
+    interpretation = (plan_narrative_interpretation(source_text)
+                      if request.language == 'portuguese' else None)
     pronunciation_terms: tuple[str, ...] = ()
     if _prepared_text:
         # Long narration already normalized the full source before splitting;
@@ -299,7 +302,8 @@ def generate_narration(request: NarrationRequest, progress: Callable | None = No
                                           control, stage, audio_chunk)
         result.update({'source_text': source_text, 'spoken_text': speech_text,
                        'pronunciation_terms_applied': pronunciation_terms,
-                       'text_normalizer_version': NORMALIZER_VERSION})
+                       'text_normalizer_version': NORMALIZER_VERSION,
+                       'narrative_interpretation': interpretation})
         return result
     if request.engine in ('qwen3-tts-native-q4','qwen3-tts-native-q4-balanced'):
         from .qwen3_native_tts import generate_native_clone
@@ -319,5 +323,6 @@ def generate_narration(request: NarrationRequest, progress: Callable | None = No
                                       control=control,stage=stage)
     result.update({'source_text': source_text, 'spoken_text': speech_text,
                    'pronunciation_terms_applied': pronunciation_terms,
-                   'text_normalizer_version': NORMALIZER_VERSION})
+                   'text_normalizer_version': NORMALIZER_VERSION,
+                   'narrative_interpretation': interpretation})
     return result

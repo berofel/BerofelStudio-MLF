@@ -22,6 +22,9 @@ from berofel.services.voice_intelligence.acoustic_analyzer import (
 from berofel.services.voice_intelligence.pronunciation_dictionary import (
     PronunciationDictionary, apply_pronunciations,
 )
+from berofel.services.voice_intelligence.narrative_interpreter import (
+    plan_narrative_interpretation,
+)
 from berofel.services.narration_service import NarrationRequest, generate_narration
 from berofel.services.ai_cache import file_sha256
 
@@ -70,6 +73,37 @@ class PortugueseSpeechNormalizerTests(TestCase):
         self.assertEqual(result.spoken, text)
         self.assertEqual(normalize_pt_br(result.spoken).spoken, result.spoken)
 
+
+class DeterministicNarrativeInterpreterTests(TestCase):
+    def test_detects_clear_ptbr_emotion_and_narrative_states(self):
+        plan = plan_narrative_interpretation(
+            'Como isso aconteceu? Finalmente conseguimos! Por fim, o projeto ficou pronto.')
+        self.assertEqual(plan['method'], 'deterministic_pt_br_rules')
+        self.assertEqual([item['narrative_state'] for item in plan['sentences']],
+                         ['question', 'development', 'conclusion'])
+        self.assertEqual(plan['sentences'][1]['emotion'], 'joy')
+        self.assertGreater(plan['sentences'][1]['arousal'], .4)
+        self.assertEqual(plan['prosody_application'],
+                         'analysis_only_backend_capability_unverified')
+
+    def test_negation_does_not_misclassify_happy_as_joy(self):
+        plan = plan_narrative_interpretation('Eu não estava feliz com o resultado.')
+        self.assertNotEqual(plan['sentences'][0]['emotion'], 'joy')
+        self.assertTrue(any('negated' in item for item in plan['sentences'][0]['evidence']))
+
+    def test_ambiguous_and_empty_text_fall_back_neutrally(self):
+        self.assertEqual(plan_narrative_interpretation('A janela está aberta.')['sentences'][0]['emotion'],
+                         'neutral')
+        empty = plan_narrative_interpretation('  ')
+        self.assertEqual(empty['sentence_count'], 0)
+        self.assertEqual(empty['sentences'], [])
+
+    def test_planner_preserves_source_character_offsets(self):
+        source = 'Dr. Silva chegou.  Segunda pergunta?'
+        plan = plan_narrative_interpretation(source)
+        self.assertEqual(plan['sentence_count'], 2)
+        for item in plan['sentences']:
+            self.assertEqual(item['text'], source[item['start']:item['end']])
 
 class StreamingFileHashTests(TestCase):
     def test_incremental_sha256_matches_standard_hash(self):
@@ -377,6 +411,8 @@ class NarrationNormalizationIntegrationTests(TestCase):
             self.assertEqual(result['source_text'], request.text)
             self.assertEqual(result['spoken_text'], captured['text'])
             self.assertEqual(result['text_normalizer_version'], NORMALIZER_VERSION)
+            self.assertEqual(result['narrative_interpretation']['method'],
+                             'deterministic_pt_br_rules')
 
     def test_profile_pronunciation_is_applied_only_to_tts_text(self):
         with tempfile.TemporaryDirectory() as folder:

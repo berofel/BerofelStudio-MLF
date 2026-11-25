@@ -1,5 +1,7 @@
 ## Próxima atualização (ainda não publicada)
 
+- Adicionado planejador determinístico PT-BR por sentença para anotar emoção, valência/ativação heurísticas, estado narrativo e alvos prosódicos relativos no resultado da geração. É diagnóstico/planejamento: não altera áudio nem a chave do cache, pois o Pure C instalado não tem controle prosódico por sentença validado. O fluxo de inspeção continua exclusivamente no Parakeet TDT v3 ONNX INT8/CPU.
+- Validação desta etapa: 584 testes passaram e 6 foram ignorados em 66,952 s; teste Qt com síntese real Pure C INT8/6 threads passou em 24,674 s, WAV com duração medida de 7,28 s e player parado. O benchmark sintético do planejador (100.000 caracteres, 2.679 frases, cinco execuções) mediu mediana de 1,4875 s e pico `tracemalloc` de 4,497 MiB; CPU/RAM do host não puderam ser consultadas via WMI.
 - Normalização PT-BR do narrador: datas com dia inexistente ficam intactas, horários usam formas brasileiras naturais (incluindo 1h30, meia-noite e meio-dia) e as chaves de cache avançam para o normalizador v2.
 - A seleção inteligente da janela vocal agora incrementa a versão de preparação do perfil para invalidar x-vectors/condicionamentos calculados pela regra anterior.
 - Adicionado analisador leve de PCM em quadros de 20 ms para RMS, pico, crest factor, clipping, cruzamentos por zero e distribuição de nível. Ele não finge medir SNR sem amostras de ruído confiáveis e ainda não muda o ranking vocal sem calibração.
