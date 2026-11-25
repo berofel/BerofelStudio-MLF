@@ -48,6 +48,14 @@ class PortugueseSpeechNormalizerTests(TestCase):
         self.assertEqual(result.spoken, text)
         self.assertFalse(result.replacements)
 
+    def test_time_forms_are_grammatical_and_invalid_dates_stay_numeric(self):
+        text = normalize_pt_br('1h30, 0h30, 12h30, 31/02/2026 e 29/02/2024')
+        self.assertIn('uma hora e trinta minutos', text.spoken)
+        self.assertIn('meia-noite e meia', text.spoken)
+        self.assertIn('meio-dia e meia', text.spoken)
+        self.assertIn('31/02/2026', text.spoken)
+        self.assertIn('vinte e nove de fevereiro de dois mil e vinte e quatro', text.spoken)
+
     def test_normalization_is_idempotent_and_keeps_regular_words(self):
         text = 'Você está falando com a gente. O ônibus chegou agora.'
         result = normalize_pt_br(text)

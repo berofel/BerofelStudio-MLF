@@ -11,9 +11,10 @@ are intentionally left alone.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import calendar
 import re
 
-NORMALIZER_VERSION = 1
+NORMALIZER_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,12 @@ def _date(match: re.Match[str]) -> str:
     day, month, year = (int(match.group(key)) for key in ("day", "month", "year"))
     if not 1 <= day <= 31 or not 1 <= month <= 12:
         return match.group(0)
+    # Validate against the actual month when the year has four digits. For a
+    # two-digit year the century is unknown; permit Feb 29 without guessing it.
+    days_in_month = (29 if month == 2 and len(match.group("year")) == 2
+                     else calendar.monthrange(year, month)[1])
+    if day > days_in_month:
+        return match.group(0)
     # A two-digit year stays a year value; it is not expanded to a century.
     day_text = "primeiro" if day == 1 else _integer(day)
     year_text = _integer(year) if year >= 1000 else _digits(f"{year:02d}")
@@ -128,14 +135,22 @@ def _time(match: re.Match[str]) -> str:
     minute = int(match.group("minute") or "0")
     if hour > 23 or minute > 59:
         return match.group(0)
-    hour_text = ("meia-noite" if hour == 0 and minute == 0 else
-                 "meio-dia" if hour == 12 and minute == 0 else
+    if hour == 0 and minute == 0:
+        return "meia-noite"
+    if hour == 12 and minute == 0:
+        return "meio-dia"
+    if hour == 0 and minute == 30:
+        return "meia-noite e meia"
+    if hour == 12 and minute == 30:
+        return "meio-dia e meia"
+    hour_text = ("meio-dia" if hour == 12 else
                  "uma" if hour == 1 else _integer(hour))
     if hour not in (0, 12) and hour % 10 == 2:
         hour_text = hour_text.removesuffix("dois") + "duas"
-    if minute == 0:
-        return f"{hour_text} hora" if hour == 1 else f"{hour_text} horas"
-    return f"{hour_text} horas e {_integer(minute)} minutos"
+    hour_unit = "hora" if hour == 1 else "horas"
+    minute_unit = "minuto" if minute == 1 else "minutos"
+    return (f"{hour_text} {hour_unit}" if minute == 0 else
+            f"{hour_text} {hour_unit} e {_integer(minute)} {minute_unit}")
 
 
 _PATTERN = re.compile(
