@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import hashlib
 import json
+import inspect
 from pathlib import Path
 import subprocess
 
@@ -844,8 +845,9 @@ class NarrationPanel(QScrollArea):
                 'Preparando voz e motor local em segundo plano para acelerar a primeira narração...')
             thread_count=(self.purec_threads.currentData()
                           if engine=='qwen3-tts-purec-mixed' else None)
-            self.on_prepare_voice(reference,profile.get('reference_text',''),
-                                  profile.get('name',''),thread_count)
+            self._prepare_voice(reference,profile.get('reference_text',''),
+                                profile.get('name',''),thread_count,
+                                profile_id=profile_id)
         except (OSError,ValueError,KeyError):
             # Generation remains available and will surface its own detailed
             # error if the saved profile cannot be prepared.
@@ -1173,6 +1175,28 @@ class NarrationPanel(QScrollArea):
         prefix='voice-profile:'
         return value[len(prefix):] if value.startswith(prefix) else ''
 
+    def _prepare_voice(self, reference, reference_text, name='', thread_count=None,
+                       *, profile_id=None):
+        """Call configured profile preparers with backward-compatible arguments."""
+        callback=self.on_prepare_voice
+        if callback is None:
+            return
+        try:
+            parameters=inspect.signature(callback).parameters
+            # Only an explicit parameter opts into this extra metadata; a
+            # generic **kwargs test double or third-party callback should see
+            # the historical call shape unchanged.
+            supports_metadata='profile_id' in parameters
+        except (TypeError,ValueError):
+            supports_metadata=False
+        args=(reference,reference_text,name)
+        if thread_count is not None:
+            args+=(thread_count,)
+        if supports_metadata and profile_id:
+            callback(*args,profile_id=profile_id)
+        else:
+            callback(*args)
+
     def _append_voice_profile_items(self,select_data=None):
         selected=select_data if select_data is not None else self.voice.currentData()
         self.voice.blockSignals(True)
@@ -1221,13 +1245,27 @@ class NarrationPanel(QScrollArea):
             profile=self.voice_profiles.create(name,source,self.language.currentData() or 'portuguese',
                                                reference_text,authorized=True,
                                                reference_text_reviewed=reviewed)
+            # Reuse the already completed inspection if this exact source
+            # revision was checked. Saving a profile must not trigger another
+            # full audio scan just to persist its descriptive measurements.
+            try:
+                source_path=Path(source).expanduser().resolve()
+                stat=source_path.stat()
+                cached_report=self._voice_reference_quality_cache.get(
+                    (str(source_path),stat.st_size,stat.st_mtime_ns))
+                if cached_report:
+                    self.voice_profiles.save_acoustic_fingerprint(
+                        profile['id'],cached_report)
+            except (OSError,ValueError,KeyError):
+                pass
             data=f'voice-profile:{profile["id"]}'
             self._append_voice_profile_items(data)
             self.multivoice_panel.refresh_profiles()
             self._update_custom()
             self.status.setText(f'Perfil “{profile["name"]}” salvo em pasta privada local. A amostra original foi preservada.')
             if self.on_prepare_voice:
-                self.on_prepare_voice(profile['sample_path'],reference_text,profile['name'])
+                self._prepare_voice(profile['sample_path'],reference_text,
+                                    profile['name'],profile_id=profile['id'])
         except (OSError,ValueError,KeyError) as exc:
             QMessageBox.warning(self,'Perfil de voz',str(exc))
 
@@ -1256,7 +1294,8 @@ class NarrationPanel(QScrollArea):
             self.status.setText(
                 f'Transcrição de “{profile["name"]}” atualizada. A gravação original foi preservada.')
             if self.on_prepare_voice and self.clone_engine.currentData()=='qwen3-tts-local':
-                self.on_prepare_voice(profile['sample_path'],profile['reference_text'],profile['name'])
+                self._prepare_voice(profile['sample_path'],profile['reference_text'],
+                                    profile['name'],profile_id=profile_id)
         except (OSError,ValueError,KeyError) as exc:
             QMessageBox.warning(self,'Perfil de voz',str(exc))
 

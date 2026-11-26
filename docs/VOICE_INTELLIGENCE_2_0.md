@@ -54,6 +54,14 @@ O botão **Comparar identidade vocal · experimental** aparece habilitado após 
 
 Essa ação é manual porque é custosa: uma execução local em referência autorizada, Pure C INT8/6 threads, gerou 5,12 s de fala em 8,925 s e levou mais 10,370 s para extração/comparação de x-vectors. A comparação executa serialmente, mantém no máximo um servidor Qwen residente, preserva os dados de perfil/estilo/backend/threads ativos e restaura o servidor ao final. Se não havia servidor antes, o temporário é encerrado. Os WAVs e o escore derivados da voz não são gravados na documentação/Git. A tarefa roda sem reprodução automática. Não foi feita calibração com várias vozes ou pares anotados; portanto a métrica não deve ser interpretada como comprovação de clonagem fiel.
 
+### Metadados locais de identidade e gravação
+
+Perfis existentes continuam no manifesto v1 e abrem sem migração destrutiva. Quando a referência já foi inspecionada na sessão antes de salvar o perfil, suas medições descritivas podem ser guardadas em `voices/intelligence/<profile-id>.json`, em um sidecar versionado, escrita atômica e vinculado ao SHA-256 da amostra privada. Essa gravação não chama novamente FFmpeg, Silero, Parakeet ou Qwen. O relatório separa medições acústicas da identidade; não afirma SNR calibrado e não usa F0 como identificador.
+
+Quando a preparação do perfil Pure C retorna o caminho do x-vector existente, o sidecar registra somente formato, dimensão, hash do arquivo binário, chave do cache e identificador/model key do modelo. O vetor continua no cache privado Pure C; não há cópia para o diretório de perfis. A associação exige que o SHA-256 da referência usada na preparação seja igual ao SHA-256 do áudio do perfil. Não há threshold calibrado para similaridade. Se o cache do vetor deixar de existir ou o hash mudar, a leitura omite o vínculo; a narração e o perfil original seguem válidos.
+
+Os metadados podem incluir estatísticas acústicas já disponíveis, mas não PCM, caminho de origem, roteiro, embeddings serializados ou conteúdo de áudio. A inspeção só é persistida se já estava em cache de sessão no momento do salvamento; não há custo novo no fluxo de criar perfil. A associação do x-vector ocorre após a preparação Pure C local. Esse registro melhora proveniência e validação de cache, não melhora por si só a fidelidade vocal.
+
 O cache dos vetores fica no diretório privado já usado pelo Pure C. Em instalações normais, esse caminho pertence ao usuário do aplicativo. Em sandbox, a validação deve apontar o cache/log para uma pasta temporária gravável; uma falha de permissão no cache privado não é falha acústica do Qwen.
 
 O ASR desta integração é exclusivamente **Parakeet TDT v3 ONNX INT8 em CPU**. Faster-Whisper não é usado para conferir referência nem narração. Os testes sem dependências de áudio/UI são executados com:

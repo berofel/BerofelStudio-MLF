@@ -288,7 +288,9 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
             return {'path': str(destination), 'cache_hit': True,
                     'profile_prepare_seconds': 0.0, 'model_load_seconds': model_load,
                     'engine': engine,
-                    'emotion_by_example': emotion_path is not None}
+                    'emotion_by_example': emotion_path is not None,
+                    'voice_sha256': source_hash,
+                    'model_key': _model_key(exe, model)}
         if stage:
             stage('Pure C • preparando perfil vocal local reutilizável')
         started = time.perf_counter()
@@ -332,7 +334,9 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
     return {'path': str(destination), 'cache_hit': False,
             'profile_prepare_seconds': elapsed, 'model_load_seconds': model_load,
             'engine': engine,
-            'emotion_by_example': emotion_path is not None}
+            'emotion_by_example': emotion_path is not None,
+            'voice_sha256': source_hash,
+            'model_key': _model_key(exe, model)}
 
 
 def compare_generated_voice_identity(reference: str, generated: str, *,

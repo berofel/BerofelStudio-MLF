@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -13,6 +14,7 @@ from uuid import uuid4
 
 
 PROFILE_SCHEMA_VERSION = 1
+PROFILE_INTELLIGENCE_SCHEMA_VERSION = 1
 PROFILE_EXTENSIONS = {'.wav', '.mp3', '.flac', '.ogg', '.m4a'}
 _PROFILE_ID = re.compile(r'^[0-9a-f]{32}$')
 
@@ -37,6 +39,7 @@ class VoiceProfileManager:
         self.directory = Path(directory).expanduser().resolve()
         self.samples = self.directory / 'samples'
         self.manifest = self.directory / 'profiles.json'
+        self.intelligence = self.directory / 'intelligence'
         # Profile samples can be long recordings. Verify the full digest once
         # per stable file identity in this manager instead of rereading every
         # voice whenever the UI refreshes its profile list.
@@ -215,6 +218,147 @@ class VoiceProfileManager:
         self._write(profiles)
         return self.get(str(profile_id))
 
+    def save_acoustic_fingerprint(self, profile_id: str, report: dict) -> dict:
+        """Persist a compact acoustic summary tied to the exact private sample.
+
+        This stores measurements already produced by ``audio_reference``;
+        it never starts an analysis, stores PCM/transcript/path, or treats
+        acoustic traits as proof of speaker identity.
+        """
+        profile = self.get(str(profile_id))
+        if not isinstance(report, dict):
+            raise ValueError('Relatório acústico inválido.')
+        def finite(value):
+            if value is None or isinstance(value, (str, bool, int)):
+                return value
+            if isinstance(value, float):
+                if not math.isfinite(value):
+                    return None
+                return value
+            if isinstance(value, dict):
+                return {str(key): finite(item) for key, item in list(value.items())[:64]
+                        if isinstance(key, (str, int, float))}
+            if isinstance(value, (list, tuple)):
+                return [finite(item) for item in value[:32]]
+            return None
+
+        fields = ('duration', 'source_duration', 'selected_start', 'active_fraction',
+                  'sample_rate', 'rms_dbfs', 'audible_signal_seconds', 'peak_dbfs',
+                  'clipped_fraction', 'silence_fraction', 'reference_quality_score',
+                  'reference_quality_confidence', 'reference_quality_components',
+                  'acoustic_features', 'pitch_features', 'spectral_features')
+        summary = {key: finite(report[key]) for key in fields if key in report}
+        payload = {
+            'schema_version': PROFILE_INTELLIGENCE_SCHEMA_VERSION,
+            'profile_id': str(profile_id),
+            'sample_sha256': profile['sample_sha256'],
+            'measurements': summary,
+            'interpretation': {
+                'acoustic_traits_are_identity_proof': False,
+                'snr_is_calibrated': False,
+                'pitch_is_speaker_identity': False,
+            },
+        }
+        self._write_intelligence(str(profile_id), payload)
+        return payload
+
+    def bind_purec_fingerprint(self, profile_id: str, vector_path: str | Path,
+                               *, engine: str, source_sha256: str,
+                               model_id: str = 'qwen3-tts-0.6b-base',
+                               model_key: str = '') -> dict:
+        """Bind metadata to the existing validated Pure C x-vector cache.
+
+        The vector stays in its existing private cache and is not copied into
+        the profile store. Only its digest, format, and dimensions are saved.
+        """
+        profile = self.get(str(profile_id))
+        if not source_sha256 or source_sha256 != profile['sample_sha256']:
+            raise ValueError('O x-vector não corresponde ao áudio deste perfil.')
+        vector = Path(vector_path).expanduser().resolve()
+        from .qwen3_purec_tts import _profile_cache_root
+        try:
+            vector.relative_to(_profile_cache_root().resolve())
+        except ValueError as exc:
+            raise ValueError('O x-vector precisa estar no cache privado Pure C.') from exc
+        from .voice_intelligence.speaker_fingerprint import (
+            VECTOR_DIMENSION, VECTOR_FORMAT, read_purec_xvector,
+        )
+        read_purec_xvector(vector)
+        current = self.get_voice_intelligence(str(profile_id)) or {
+            'schema_version': PROFILE_INTELLIGENCE_SCHEMA_VERSION,
+            'profile_id': str(profile_id),
+            'sample_sha256': profile['sample_sha256'],
+            'measurements': {},
+            'interpretation': {
+                'acoustic_traits_are_identity_proof': False,
+                'snr_is_calibrated': False,
+                'pitch_is_speaker_identity': False,
+            },
+        }
+        current['purec_identity_vector'] = {
+            'format': VECTOR_FORMAT,
+            'dimension': VECTOR_DIMENSION,
+            'sha256': self._hash_file(vector),
+            'cache_key': vector.stem,
+            'model_id': str(model_id),
+            'model_key': str(model_key),
+            'engine': str(engine),
+            'calibrated_similarity_threshold': None,
+        }
+        self._write_intelligence(str(profile_id), current)
+        return current
+
+    def get_voice_intelligence(self, profile_id: str) -> dict | None:
+        """Read sidecar only when schema, ID, and sample hash still match."""
+        profile = self.get(str(profile_id))
+        path = self._intelligence_path(str(profile_id))
+        try:
+            payload = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if (not isinstance(payload, dict) or
+                payload.get('schema_version') != PROFILE_INTELLIGENCE_SCHEMA_VERSION or
+                payload.get('profile_id') != str(profile_id) or
+                payload.get('sample_sha256') != profile['sample_sha256']):
+            return None
+        vector_meta = payload.get('purec_identity_vector')
+        if isinstance(vector_meta, dict):
+            try:
+                from .qwen3_purec_tts import _profile_cache_root
+                vector_path = (_profile_cache_root() /
+                               f"{vector_meta['cache_key']}.bin").resolve()
+                vector_path.relative_to(_profile_cache_root().resolve())
+                if (not vector_path.is_file() or
+                        self._hash_file(vector_path) != vector_meta.get('sha256')):
+                    payload.pop('purec_identity_vector', None)
+            except (OSError, KeyError, ValueError):
+                payload.pop('purec_identity_vector', None)
+        return payload
+
+    def _intelligence_path(self, profile_id: str) -> Path:
+        if not _PROFILE_ID.fullmatch(profile_id):
+            raise ValueError('Identificador inválido no perfil de voz.')
+        return self.intelligence / f'{profile_id}.json'
+
+    def _write_intelligence(self, profile_id: str, payload: dict) -> None:
+        path = self._intelligence_path(profile_id)
+        self.intelligence.mkdir(parents=True, exist_ok=True)
+        fd, temporary_name = tempfile.mkstemp(prefix='.voice-intelligence-', suffix='.json',
+                                              dir=self.intelligence)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as stream:
+                json.dump(payload, stream, ensure_ascii=False, indent=2,
+                          sort_keys=True, allow_nan=False)
+                stream.write('\n')
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary_name, path)
+        finally:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+
     def rename(self, profile_id: str, new_name: str) -> str:
         new_name = self._normalize_name(new_name)
         profiles = self._read()
@@ -239,6 +383,10 @@ class VoiceProfileManager:
             raise ValueError('O perfil aponta para um arquivo fora da pasta privada.') from exc
         self._write(profiles)
         self._verified_samples.pop(str(sample), None)
+        try:
+            self._intelligence_path(str(profile_id)).unlink(missing_ok=True)
+        except OSError:
+            pass
         try:
             sample.unlink(missing_ok=True)
         except OSError:

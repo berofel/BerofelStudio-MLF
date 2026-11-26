@@ -2130,7 +2130,8 @@ class MainWindow(QMainWindow):
             lambda:panel.set_reference_transcription_busy(False))
 
     def prepare_narration_voice(self,reference: str,reference_text: str,name: str='',
-                                thread_count: int | None = None):
+                                thread_count: int | None = None,
+                                profile_id: str | None = None):
         """Warm the shared Base model and prepare a reusable profile prompt."""
         if self._ai_busy or self.active_task is not None:
             self.narration_panel.status.setText(
@@ -2172,6 +2173,16 @@ class MainWindow(QMainWindow):
             self._ai_busy=True
             self.narration_panel.busy(True)
             def purec_ready(result):
+                if profile_id and result.get('path'):
+                    try:
+                        self.narration_panel.voice_profiles.bind_purec_fingerprint(
+                            profile_id,result['path'],engine=engine,
+                            source_sha256=result.get('voice_sha256',''),
+                            model_key=result.get('model_key',''))
+                    except (OSError,ValueError,KeyError):
+                        # The existing voice cache remains usable; profile
+                        # metadata is descriptive and must not block narration.
+                        pass
                 cached='já estava preparado' if result.get('cache_hit') else 'preparado e armazenado localmente'
                 self.narration_panel.status.setText(
                     f'Perfil Pure C {cached}. A voz será reutilizada enquanto o modelo estiver ativo.')

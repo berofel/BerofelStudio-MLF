@@ -141,5 +141,64 @@ class VoiceProfileManagerTests(unittest.TestCase):
                 manager.create('Perfil serializado',source)
             self.assertEqual(source.read_bytes(),b'safe'+b'x'*200)
 
+    def test_acoustic_summary_is_private_versioned_and_bound_to_sample_hash(self):
+        import math
+        with tempfile.TemporaryDirectory(prefix='bfs_voice_fingerprint_') as folder:
+            root=Path(folder);source=root/'voice.wav';source.write_bytes(b'RIFF'+b'a'*300)
+            manager=VoiceProfileManager(root/'profiles')
+            profile=manager.create('Perfil local',source,authorized=True)
+            saved=manager.save_acoustic_fingerprint(profile['id'],{
+                'duration':12.0,'rms_dbfs':-20.0,'absolute_source_path':'C:/private.wav',
+                'reference_text':'private words','pitch_features':{'f0_median_hz':145.0},
+                'acoustic_features':{'snr_db':None,'snr_confidence':'unavailable'},
+                'reference_quality_components':{'duration':0.7},
+                'unexpected_nan':math.nan,
+            })
+            reopened=VoiceProfileManager(root/'profiles').get_voice_intelligence(profile['id'])
+            self.assertEqual(saved,reopened)
+            self.assertEqual(reopened['measurements']['pitch_features']['f0_median_hz'],145.0)
+            self.assertNotIn('absolute_source_path',json.dumps(reopened))
+            self.assertNotIn('private words',json.dumps(reopened))
+            self.assertNotIn('unexpected_nan',json.dumps(reopened))
+            self.assertFalse(reopened['interpretation']['pitch_is_speaker_identity'])
+            self.assertTrue((root/'profiles'/'intelligence'/f"{profile['id']}.json").is_file())
+
+    def test_purec_vector_metadata_validates_existing_cache_without_copying_vector(self):
+        import struct
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(prefix='bfs_profile_vector_') as folder:
+            root=Path(folder);source=root/'voice.wav';source.write_bytes(b'RIFF'+b'a'*300)
+            cache=root/'qwen_cache';cache.mkdir()
+            vector=cache/('a'*64+'.bin')
+            vector.write_bytes(struct.pack('<1024f',1.0,*([0.0]*1023)))
+            manager=VoiceProfileManager(root/'profiles')
+            profile=manager.create('Perfil local',source)
+            with patch('berofel.services.qwen3_purec_tts._profile_cache_root',return_value=cache):
+                result=manager.bind_purec_fingerprint(profile['id'],vector,
+                    engine='qwen3-tts-purec-int8',
+                    source_sha256=profile['sample_sha256'],model_key='test-model-key')
+            metadata=result['purec_identity_vector']
+            self.assertEqual(metadata['dimension'],1024)
+            self.assertEqual(metadata['cache_key'],vector.stem)
+            self.assertEqual(metadata['model_key'],'test-model-key')
+            self.assertIsNone(metadata['calibrated_similarity_threshold'])
+            self.assertTrue(vector.is_file())
+            self.assertEqual(metadata['sha256'],manager._hash_file(vector))
+            with self.assertRaisesRegex(ValueError,'não corresponde'):
+                manager.bind_purec_fingerprint(profile['id'],vector,
+                    engine='qwen3-tts-purec-int8',source_sha256='0'*64)
+
+    def test_profile_delete_removes_its_fingerprint_metadata_only(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_profile_delete_fingerprint_') as folder:
+            root=Path(folder);source=root/'voice.wav';source.write_bytes(b'RIFF'+b'a'*300)
+            manager=VoiceProfileManager(root/'profiles')
+            profile=manager.create('Perfil local',source)
+            manager.save_acoustic_fingerprint(profile['id'],{'duration':5.0})
+            metadata=root/'profiles'/'intelligence'/f"{profile['id']}.json"
+            self.assertTrue(metadata.is_file())
+            manager.delete(profile['id'])
+            self.assertFalse(metadata.exists())
+            self.assertEqual(source.read_bytes(),b'RIFF'+b'a'*300)
+
 
 if __name__=='__main__':unittest.main()
