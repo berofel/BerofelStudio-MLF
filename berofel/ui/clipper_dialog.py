@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog,
 from .wheel_controls import (WheelGuardComboBox as QComboBox,
     WheelGuardDoubleSpinBox as QDoubleSpinBox, WheelGuardSpinBox as QSpinBox)
 
-from berofel.services.clipper import ClipperOptions
+from berofel.services.clipper import ClipperOptions, suggest_title
 
 
 class ClipperDialog(QDialog):
@@ -79,8 +79,10 @@ class ClipperDialog(QDialog):
         self.end_boundary=QComboBox();self.end_boundary.setMinimumWidth(150)
         boundary_row.addWidget(self.end_boundary,1)
         root.addLayout(boundary_row)
-        self.table=QTableWidget(0,5)
-        self.table.setHorizontalHeaderLabels(('Usar','Nota','Tempo · duração','Texto transcrito','Sinais e avisos'))
+        self.table=QTableWidget(0,6)
+        self.table.setHorizontalHeaderLabels(('Usar','Nota','Tempo · duração',
+                                              'Título sugerido','Texto transcrito',
+                                              'Sinais e avisos'))
         self.table.verticalHeader().hide()
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -91,8 +93,9 @@ class ClipperDialog(QDialog):
         header.setSectionResizeMode(0,QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3,QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(4,QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(5,QHeaderView.ResizeMode.Stretch)
         self.table.cellDoubleClicked.connect(lambda _row,_column:self._preview_current())
         self.table.currentCellChanged.connect(lambda row,*_args:self._load_boundaries(row))
         self.start_boundary.currentIndexChanged.connect(lambda *_:self._boundary_changed('start'))
@@ -168,7 +171,10 @@ class ClipperDialog(QDialog):
                 f"{candidate['score']:.1f}/100 · evidência {coverage:.0%}"))
             self.table.setItem(row,2,QTableWidgetItem(
                 f"{candidate['source_start']:.2f}–{candidate['source_end']:.2f}s  ·  {candidate['duration']:.1f}s"))
-            self.table.setItem(row,3,QTableWidgetItem(candidate.get('text','')))
+            title=str(candidate.get('suggested_title') or suggest_title(candidate.get('text','')))
+            candidate['suggested_title']=title
+            self.table.setItem(row,3,QTableWidgetItem(title))
+            self.table.setItem(row,4,QTableWidgetItem(candidate.get('text','')))
             evidence='; '.join(candidate.get('reasons',[])) or 'Sem evidência textual forte.'
             components=candidate.get('score_components',{})
             labels={'hook':'gancho','context':'contexto','audio':'áudio',
@@ -182,9 +188,10 @@ class ClipperDialog(QDialog):
             if warnings:evidence+='  ⚠ '+'; '.join(warnings)
             if candidate.get('events'):
                 evidence+=f"  ·  {len(candidate['events'])} evento(s) de energia"
-            self.table.setItem(row,4,QTableWidgetItem(evidence))
-            self.table.item(row,3).setToolTip(candidate.get('text',''))
-            self.table.item(row,4).setToolTip(evidence)
+            self.table.setItem(row,5,QTableWidgetItem(evidence))
+            self.table.item(row,3).setToolTip('Título extraído da transcrição; sem geração por IA.')
+            self.table.item(row,4).setToolTip(candidate.get('text',''))
+            self.table.item(row,5).setToolTip(evidence)
         if self._candidates:
             self.table.selectRow(0)
             self._load_boundaries(0)
@@ -270,14 +277,16 @@ class ClipperDialog(QDialog):
         spans=[word for word in candidate.get('word_spans',[])
                if int(word['start_ms'])>=start and int(word['end_ms'])<=end]
         candidate['text']=' '.join(str(word['text']) for word in spans).strip()
+        candidate['suggested_title']=suggest_title(candidate['text'])
         warning='Bordas ajustadas por palavra; a nota original não foi recalculada.'
         if warning not in candidate['warnings']:candidate['warnings'].append(warning)
         row=self.table.currentRow()
         self.table.item(row,0).setData(Qt.ItemDataRole.UserRole,candidate)
         self.table.item(row,2).setText(
             f"{candidate['source_start']:.2f}–{candidate['source_end']:.2f}s  ·  {candidate['duration']:.1f}s")
-        self.table.item(row,3).setText(candidate['text'])
-        self.table.item(row,4).setText('; '.join(candidate['reasons'])+'  ⚠ '+
+        self.table.item(row,3).setText(candidate['suggested_title'])
+        self.table.item(row,4).setText(candidate['text'])
+        self.table.item(row,5).setText('; '.join(candidate['reasons'])+'  ⚠ '+
                                       '; '.join(candidate['warnings']))
 
     def _preview_current(self):

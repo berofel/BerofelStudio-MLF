@@ -56,7 +56,9 @@ _RESOLUTION = frozenset("""
 _QUESTION_START = frozenset(('quem quando onde como qual quanto'.split()))
 _REVEAL_START = frozenset(('descobri descobrimos percebi percebemos resultado segredo afinal'.split()))
 _CONCLUSION_START = frozenset(('resumindo concluindo conclusão conclusao enfim finalmente'.split()))
-_ANSWER_START = frozenset(('porque por isso então entao a resposta isso significa quer dizer'.split()))
+_ANSWER_PREFIXES = (
+    ('porque',), ('por', 'isso'), ('entao',), ('a', 'resposta'),
+    ('isso', 'significa'), ('quer', 'dizer'))
 _REACTION_PATTERNS = (
     (('nossa',), 'reação textual: “nossa”', .66),
     (('caramba',), 'reação textual: “caramba”', .72),
@@ -297,7 +299,7 @@ def discourse_role(text: object) -> str:
         return 'reveal'
     if tokens and tokens[0] in _CONCLUSION_START:
         return 'conclusion'
-    if tokens and tokens[0] in _ANSWER_START:
+    if any(tokens[:len(prefix)] == prefix for prefix in _ANSWER_PREFIXES):
         return 'answer'
     if re.search(r'\b(na verdade|descobri|o segredo|o resultado|aconteceu)\b', value):
         return 'reveal'

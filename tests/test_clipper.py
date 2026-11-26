@@ -10,7 +10,7 @@ from berofel.core.project import Clip
 from berofel.services.clip_audio_signals import extract_frames_from_chunks
 from berofel.services.clipper import (ClipperOptions, _candidate_spans,
     _dialogue_context_bounds, _local_textrank_salience, _normalise_words,
-    analyze_clips, audio_features)
+    analyze_clips, audio_features, suggest_title)
 
 
 def transcript(source, count=180, start=0., step=.2):
@@ -76,6 +76,66 @@ class ClipperTests(unittest.TestCase):
         self.assertEqual(start,0)
         self.assertEqual(end,len(words)-1)
         self.assertTrue(expanded_start)
+
+    def test_question_links_to_answer_by_local_topic_overlap_without_speaker_ids(self):
+        words=[]
+        at=0.
+        for text in ('Como o editor mantém a transcrição?',
+                     'O editor mantém as palavras salvas no projeto.'):
+            for token in text.split():
+                words.append({'id':f'w{len(words)}','start_ms':round(at*1000),
+                    'end_ms':round((at+.22)*1000),'text':token})
+                at+=.3
+            at+=.4
+        question_end=next(i for i,word in enumerate(words)
+                          if word['text'].endswith('?'))
+        start,end,_,expanded_end=_dialogue_context_bounds(
+            words,0,question_end,5000.)
+        self.assertEqual(start,0)
+        self.assertEqual(end,len(words)-1)
+        self.assertTrue(expanded_end)
+
+        answer_start=question_end+1
+        start,end,expanded_start,_=_dialogue_context_bounds(
+            words,answer_start,len(words)-1,5000.)
+        self.assertEqual(start,0)
+        self.assertEqual(end,len(words)-1)
+        self.assertTrue(expanded_start)
+
+    def test_question_does_not_absorb_unrelated_turn_on_one_shared_word(self):
+        words=[]
+        at=0.
+        for text in ('Quem venceu a corrida?',
+                     'A corrida é um esporte muito popular.'):
+            for token in text.split():
+                words.append({'id':f'w{len(words)}','start_ms':round(at*1000),
+                    'end_ms':round((at+.22)*1000),'text':token})
+                at+=.3
+            at+=.4
+        question_end=next(i for i,word in enumerate(words)
+                          if word['text'].endswith('?'))
+        start,end,_,expanded_end=_dialogue_context_bounds(
+            words,0,question_end,5000.)
+        self.assertEqual(start,0)
+        self.assertEqual(end,question_end)
+        self.assertFalse(expanded_end)
+
+    def test_question_links_to_explicit_answer_without_lexical_overlap(self):
+        words=[]
+        at=0.
+        for text in ('Por que a transmissão parou?',
+                     'A resposta é que faltou energia.'):
+            for token in text.split():
+                words.append({'id':f'w{len(words)}','start_ms':round(at*1000),
+                    'end_ms':round((at+.22)*1000),'text':token})
+                at+=.3
+            at+=.4
+        question_end=next(i for i,word in enumerate(words)
+                          if word['text'].endswith('?'))
+        _start,end,_,expanded_end=_dialogue_context_bounds(
+            words,0,question_end,5000.)
+        self.assertEqual(end,len(words)-1)
+        self.assertTrue(expanded_end)
 
     def test_dialogue_turn_index_is_built_once_for_all_candidate_windows(self):
         from berofel.services import clipper as clipper_service
@@ -337,6 +397,15 @@ class ClipperTests(unittest.TestCase):
         self.assertEqual(first,second)
         self.assertGreaterEqual(first,0.)
         self.assertLessEqual(first,1.)
+
+    def test_suggested_title_is_extractive_deterministic_and_length_bounded(self):
+        sentence='O resultado mudou tudo e ninguém esperava essa revelação'
+        transcript_text=('Hoje gravamos uma conversa sobre o editor. '+sentence+
+                         '. Depois explicamos como o projeto funciona.')
+        title=suggest_title(transcript_text)
+        self.assertEqual(title,suggest_title(transcript_text))
+        self.assertIn(title,sentence)
+        self.assertLessEqual(len(suggest_title(transcript_text,24)),24)
 
 
 if __name__=='__main__':

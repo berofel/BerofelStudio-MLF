@@ -47,6 +47,10 @@ _DEPENDENT_OPENERS = {'e', 'mas', 'porque', 'que', 'quando', 'então', 'entao',
     'daí', 'dai', 'porém', 'porem', 'só', 'so', 'depois'}
 _INCOMPLETE_ENDINGS = {'e', 'mas', 'porque', 'que', 'de', 'do', 'da', 'para',
     'com', 'se', 'quando', 'então', 'entao', 'porém', 'porem', 'ou'}
+_ANSWER_CUES = re.compile(
+    r"^(?:porque|por isso|a resposta|isso significa|quer dizer|o motivo|"
+    r"a razão|a raz[aã]o|acontece que|é que|e é por isso|basicamente|"
+    r"na prática|funciona assim|o que ocorre|sim|não|depende)\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -382,6 +386,40 @@ def _text_scores(text: str, words: Sequence[Mapping], utterance_start: bool,
     return context,hook,boundary,reasons
 
 
+def suggest_title(text: object, max_chars: int = 72) -> str:
+    """Choose an existing transcript sentence as a deterministic title cue.
+
+    This is extractive, not generative: title text always comes from the ASR
+    transcript, and the caller retains the complete transcript separately.
+    """
+    raw=' '.join(str(text or '').split())
+    sentences=[part.strip(' \t\r\n\"“”\'') for part in
+               re.split(r'(?<=[.!?])\s+|\s+(?=[—–])',raw) if part.strip()]
+    if not sentences:
+        return ''
+    ranked=[]
+    for index,sentence in enumerate(sentences):
+        terms=content_terms(sentence)
+        role=discourse_role(sentence)
+        score=min(1.,len(terms)/9.)*.42
+        if any(pattern.search(sentence.casefold()) for pattern in _HOOK_PATTERNS):
+            score+=.20
+        if role in ('reveal','conclusion','answer'):
+            score+=.18
+        elif role=='question':
+            score+=.12
+        if 4<=len(terms)<=12:
+            score+=.12
+        if len(terms)<3:
+            score-=.2
+        ranked.append((score,-index,sentence))
+    chosen=max(ranked)[2].strip(' .!?—–')
+    if len(chosen)>max_chars:
+        shortened=chosen[:max_chars-1].rsplit(' ',1)[0].rstrip(' ,:;-')
+        chosen=(shortened or chosen[:max_chars-1]).rstrip()+'…'
+    return chosen
+
+
 def _local_textrank_salience(words: Sequence[Mapping], max_neighbors: int = 8,
                              iterations: int = 12) -> float | None:
     """Small sparse TextRank pass over turns inside one candidate only."""
@@ -481,6 +519,36 @@ def _dialogue_context_index(words: Sequence[Mapping]):
     return turns, by_first, by_last, word_positions
 
 
+def _answers_question(question: Mapping, answer: Mapping,
+                      speaker_changed: bool = False) -> bool:
+    """Conservatively link an adjacent answer to a question.
+
+    Parakeet may have no speaker labels and some transcripts omit answer
+    connectives. In that case, a small content-word overlap can support the
+    link. This is a local editorial cue, never a semantic-equivalence claim.
+    """
+    if question.get('role') != 'question':
+        return False
+    answer_text = str(answer.get('text', '')).strip()
+    if (answer.get('role') == 'answer' or
+            _ANSWER_CUES.match(answer_text)):
+        return True
+    if speaker_changed:
+        return True
+    question_terms = content_terms(question.get('text', ''))
+    answer_terms = content_terms(answer_text)
+    if not question_terms or not answer_terms:
+        return False
+    shared = question_terms.keys() & answer_terms.keys()
+    # Compare the smaller content vocabulary so a concise question can link to
+    # a more detailed answer. Require a majority of that vocabulary to overlap
+    # so one incidental shared noun does not join unrelated turns.
+    smaller = min(sum(question_terms.values()), sum(answer_terms.values()))
+    overlap = sum(min(question_terms[token], answer_terms[token])
+                  for token in shared)
+    return overlap > 0 and overlap / max(1, smaller) >= .55
+
+
 def _dialogue_context_bounds(words: Sequence[Mapping], start_index: int,
                              end_index: int, max_duration_ms: float,
                              turn_index=None) -> tuple[int, int, bool, bool]:
@@ -509,20 +577,16 @@ def _dialogue_context_bounds(words: Sequence[Mapping], start_index: int,
         current = turns[start_turn]
         previous_end = float(previous['end_ms'])
         current_start = float(current['start_ms'])
-        current_text = str(current['text']).strip().lower()
         previous_words = previous['words']
         current_words = current['words']
         changed_speaker = (previous.get('speaker_id') is not None and
             current.get('speaker_id') is not None and
             previous.get('speaker_id') != current.get('speaker_id'))
-        answer_cue = current.get('role') == 'answer' or bool(
-            re.match(r'^(?:porque|por isso|a resposta|isso significa|quer dizer)\b',
-                     current_text))
         current_first = re.sub(r'^\W+|\W+$', '',
                                str(current_words[0]['text']).lower())
         dependent_start = current_first in _DEPENDENT_OPENERS
-        joins_question = (previous.get('role') == 'question' and
-                          (changed_speaker or answer_cue or dependent_start))
+        joins_question = (_answers_question(previous, current, changed_speaker) or
+                          (previous.get('role') == 'question' and dependent_start))
         combined = end_ms - float(previous_words[0]['start_ms'])
         if joins_question and current_start - previous_end <= 1800 and \
                 combined <= max_duration_ms:
@@ -535,15 +599,12 @@ def _dialogue_context_bounds(words: Sequence[Mapping], start_index: int,
         following = turns[end_turn + 1]
         current_end = float(current['end_ms'])
         following_start = float(following['start_ms'])
-        following_text = str(following['text']).strip().lower()
         changed_speaker = (current.get('speaker_id') is not None and
             following.get('speaker_id') is not None and
             current.get('speaker_id') != following.get('speaker_id'))
-        answer_cue = following.get('role') == 'answer' or bool(
-            re.match(r'^(?:porque|por isso|a resposta|isso significa|quer dizer)\b',
-                     following_text))
+        linked_answer = _answers_question(current, following, changed_speaker)
         if current.get('role') == 'question' and \
-                (changed_speaker or answer_cue) and \
+                linked_answer and \
                 following_start - current_end <= 1800:
             following_words = following['words']
             proposed_end = float(following_words[-1]['end_ms'])
@@ -841,6 +902,7 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
             span_right=bisect_right(word_starts,candidate['end_ms']+3000)
             local_words=words[span_left:span_right]
             candidates.append({'id':candidate_id,'clip_id':clip.id,'title':clip.title,
+                'suggested_title':suggest_title(candidate['text']),
                 'source':source,'source_start':candidate['start_ms']/1000.,
                 'source_end':candidate['end_ms']/1000.,
                 'start_ms':candidate['start_ms'],'end_ms':candidate['end_ms'],

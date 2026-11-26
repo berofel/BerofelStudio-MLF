@@ -271,6 +271,8 @@ class ActionsUITests(unittest.TestCase):
                           {'start_ms':3000,'end_ms':4500,'text':'de'},
                           {'start_ms':4500,'end_ms':6000,'text':'teste.'}]}
         dialog.set_results({'candidates':[candidate],'events':[],'stats':{}})
+        self.assertEqual(dialog.table.columnCount(),6)
+        self.assertEqual(dialog.table.item(0,3).text(),'Uma fala de teste')
         self.assertEqual(dialog.selected_candidates(),[])
         dialog.select_all.click()
         self.assertEqual(dialog.selected_candidates()[0]['id'],'candidate-1')
@@ -278,6 +280,7 @@ class ActionsUITests(unittest.TestCase):
         adjusted=dialog.selected_candidates()[0]
         self.assertEqual(adjusted['source_start'],1.1)
         self.assertTrue(adjusted['score_adjusted'])
+        self.assertEqual(dialog.table.item(0,3).text(),adjusted['suggested_title'])
         self.assertTrue(any('nota original não foi recalculada' in warning
                             for warning in adjusted['warnings']))
         previews=[];dialog.preview_requested.connect(previews.append)

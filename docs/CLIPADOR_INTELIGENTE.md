@@ -23,13 +23,14 @@ O modo Rápido só usa tiles de waveform já presentes para o intervalo inteiro.
 ## Etapas existentes e evolução desta versão
 
 1. Normaliza palavras da transcrição e rejeita timestamps inválidos, mantendo tempos absolutos da mídia.
-2. Agrupa falas, detecta perguntas/respostas próximas, mudanças de locutor conhecidas, frases dependentes, ganchos e sinais discursivos.
+2. Agrupa falas, detecta perguntas/respostas próximas, mudanças de locutor conhecidas, frases dependentes, ganchos e sinais discursivos. Uma resposta pode ser ligada sem diarização por marcador explícito ou sobreposição suficiente de termos de conteúdo entre turnos adjacentes; uma palavra compartilhada isolada não basta. A relação é uma heurística local e não afirma equivalência semântica.
 3. Usa coesão lexical por vizinhança, inspirada no princípio de TextTiling, para sugerir possíveis mudanças de tópico.
 4. Constrói janelas a partir de palavras/turnos e ajusta para palavras e fins de frase; não cria timestamps por divisão uniforme de texto.
 5. Detecta aumentos de nível alinhados aos intervalos de palavras. O modo equilibrado usa RMS medido; Rápido usa somente o proxy de pico da waveform.
 6. Calcula uma nota relativa 0–100 e reporta componentes medidos: gancho, contexto, áudio, densidade/novidade lexical, desfecho e densidade de fala. Características ausentes ficam `null`; o ranking renormaliza apenas pesos disponíveis e reporta cobertura. A pontuação não representa probabilidade de viralização.
 7. Seleciona candidatos diversos com supressão de sobreposição e deduplicação lexical conservadora. Informação nova tende a preservar uma versão parcialmente sobreposta.
-8. Apresenta candidatos ao usuário. Nenhum é inserido, cortado ou renderizado automaticamente.
+8. Gera um título sugerido por extração de uma frase existente na transcrição, usando pistas lexicais/estruturais e limite de caracteres; nunca inventa uma frase nem usa modelo generativo. O título é recalculado quando o usuário ajusta os limites do candidato.
+9. Apresenta candidatos ao usuário. Nenhum é inserido, cortado ou renderizado automaticamente.
 
 Perfis disponíveis: Geral, Podcast, Gameplay, Tutorial, Terror, Humor, Debate e Vlog. Cada perfil muda pesos de dimensões realmente disponíveis. Modos disponíveis: Rápido (waveform de timeline em cache), Equilibrado (PCM e regras) e Avançado (PCM, regras e TextRank local). O componente visual continua indisponível e aparece como ausente: ainda não há extração visual conectada ao Clipador. Em Gameplay, ausência de movimento visual reduz a cobertura, não cria um score visual fictício.
 
@@ -70,7 +71,7 @@ Referências consultadas em 25/11/2026; não copiamos código de terceiros:
 
 ## Testes e limites conhecidos
 
-Testes determinísticos existentes cobrem timestamps, bordas, pergunta/resposta, mudanças de tópico, ironia heurística, RMS/picos, cache e deduplicação. Esta alteração acrescenta cobertura de componentes/perfis, leitura de waveform em cache sem decode, tolerância a baixo ganho, distinção entre áudio medido e evento detectado e reutilização de PCM ao mudar perfil. Os 33 testes focados de `test_clip_audio_signals.py` e `test_clipper.py` passaram. A primeira execução da suíte completa encontrou uma regressão Qt: a tarefa consultava `self.timeline.visual_cache`, embora o cache pertença a `self.timeline.view`. A referência foi corrigida e o teste real de despacho Qt passou. A última execução de `python -m unittest discover -s tests -q` passou em **614 testes (608 aprovados, 6 skips)** em 66,335 s. `pytest` não está instalado, mas a suíte existente é `unittest`; não foi instalado outro pacote. `py_compile` dos arquivos alterados e `git diff --check` também passaram.
+Testes determinísticos existentes cobrem timestamps, bordas, pergunta/resposta, mudanças de tópico, ironia heurística, RMS/picos, cache e deduplicação. Esta atualização acrescenta cobertura de título extraído, vínculo pergunta–resposta sem diarização, resposta explicitamente marcada, rejeição de assunto coincidente e correção de frases iniciadas por “A” classificadas como resposta. Os 34 testes de `test_clipper.py` e `test_discourse_features.py` passaram. A primeira execução da suíte completa encontrou uma regressão Qt: a tarefa consultava `self.timeline.visual_cache`, embora o cache pertença a `self.timeline.view`. A referência foi corrigida e o teste real de despacho Qt passou. A execução de `python -m unittest discover -s tests -q` em 25/11/2026 passou em **618 testes (612 aprovados, 6 skips)** em 67,150 s. O teste Qt correspondente também passou em modo offscreen. `pytest` não está instalado, mas a suíte existente é `unittest`; não foi instalado outro pacote. `py_compile` dos arquivos alterados e `git diff --check` também passaram.
 
 ### Benchmark sintético de escala (25/11/2026)
 

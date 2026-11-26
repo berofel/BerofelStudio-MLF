@@ -71,6 +71,8 @@ class DiscourseFeatureTests(unittest.TestCase):
     def test_role_cues_cover_question_answer_reveal_and_conclusion(self):
         cases = [('Como isso aconteceu?', 'question'),
                  ('Porque o arquivo estava corrompido.', 'answer'),
+                 ('A resposta é que o cache já existia.', 'answer'),
+                 ('A corrida foi no domingo.', 'unspecified'),
                  ('Descobri a causa do problema.', 'reveal'),
                  ('Concluindo, o projeto foi salvo.', 'conclusion')]
         for text, expected in cases:
