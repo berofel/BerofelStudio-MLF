@@ -91,6 +91,27 @@ class ClipAudioTests(unittest.TestCase):
         self.assertLess(general['evidence_coverage'], 1.)
         self.assertNotEqual(general['score'], gameplay['score'])
 
+    def test_custom_weights_change_priorities_without_fabricating_missing_audio(self):
+        candidate=dict(start_ms=0,end_ms=10000,context_score=.7,hook_score=.9,
+                       boundary_score=.8,information_score=.2,payoff_score=.3,
+                       rhythm_score=.4)
+        standard=score_clip(candidate,[],profile='Geral')
+        custom=score_clip(candidate,[],profile='Geral',weights_override={
+            'hook':.05,'context':.05,'audio':.40,'value':.20,
+            'payoff':.20,'rhythm':.05,'visual':.05})
+        self.assertLess(custom['score'],standard['score'])
+        self.assertIsNone(custom['components']['audio'])
+        self.assertIsNone(custom['components']['visual'])
+        self.assertLess(custom['evidence_coverage'],standard['evidence_coverage'])
+
+    def test_custom_weights_reject_invalid_values(self):
+        candidate=dict(start_ms=0,end_ms=10000,context_score=.7,hook_score=.9,
+                       boundary_score=.8)
+        for weights in ({'unknown':.5},{'audio':float('nan')},
+                        {'hook':-0.1},{'context':0.0}):
+            with self.subTest(weights=weights), self.assertRaises(ValueError):
+                score_clip(candidate,[],weights_override=weights)
+
     def test_nonoverlap(self):
         ranked = [dict(start_ms=s, end_ms=e, score=p) for s,e,p in
                   [(0,10000,91),(1000,9000,88),(14000,25000,79)]]

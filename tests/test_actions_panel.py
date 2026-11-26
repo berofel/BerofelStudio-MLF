@@ -260,6 +260,14 @@ class ActionsUITests(unittest.TestCase):
         dialog.visual_analysis.setChecked(True)
         self.assertTrue(dialog.options().analyze_visual)
         dialog.visual_analysis.setChecked(False)
+        self.assertIsNone(dialog.options().score_weights)
+        dialog.weight_group.setChecked(True)
+        weights=dialog.options().score_weights
+        self.assertAlmostEqual(sum(weights.values()),1.,places=2)
+        dialog.score_weight_controls['hook'].setValue(100.)
+        self.assertEqual(dialog.options().score_weights['hook'],1.)
+        dialog.profile.setCurrentText('Podcast')
+        self.assertEqual(dialog.score_weight_controls['hook'].value(),20.)
         candidate={'id':'candidate-1','clip_id':'clip-1','title':'Teste',
             'source_start':1.,'source_end':8.,'duration':7.,'score':74.,
             'text':'Uma fala de teste.','reasons':['Fecha em limite de frase'],

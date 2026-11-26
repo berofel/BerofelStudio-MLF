@@ -64,6 +64,7 @@ class ClipperOptions:
     profile: str = 'Geral'
     mode: str = 'Equilibrado'
     analyze_visual: bool = False
+    score_weights: Mapping[str, float] | None = None
 
     def __post_init__(self):
         if not 3 <= float(self.min_seconds) <= 300:
@@ -79,6 +80,14 @@ class ClipperOptions:
             raise ValueError('Perfil do Clipador desconhecido.')
         if self.mode not in ('Rápido','Equilibrado','Avançado'):
             raise ValueError('Modo do Clipador desconhecido.')
+        if self.score_weights is not None:
+            from .clip_audio_signals import CLIP_SCORE_PROFILES
+            allowed=set(CLIP_SCORE_PROFILES['Geral'])
+            weights={str(key):float(value) for key,value in self.score_weights.items()}
+            if (not weights or set(weights)-allowed or
+                    any(not np.isfinite(value) or value < 0. or value > 1.
+                        for value in weights.values()) or not any(weights.values())):
+                raise ValueError('Pesos personalizados devem ser valores finitos entre 0 e 1, com soma positiva.')
 
     def as_dict(self):
         return {'min_seconds': float(self.min_seconds),
@@ -86,7 +95,10 @@ class ClipperOptions:
                 'max_candidates': int(self.max_candidates),
                 'relative_rise_db': float(self.relative_rise_db),
                 'profile': self.profile,'mode':self.mode,
-                'analyze_visual':bool(self.analyze_visual)}
+                'analyze_visual':bool(self.analyze_visual),
+                'score_weights':({str(key):float(value) for key,value in
+                    sorted(self.score_weights.items())}
+                    if self.score_weights is not None else None)}
 
 
 def clipper_cache_dir() -> Path:
@@ -913,7 +925,8 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                 candidate['visual_score']=visual['score']
                 candidate['text_reasons'].append(
                     f"{visual['reason']} ({visual['coverage']:.0%} de cobertura)")
-            ranked=score_clip(candidate,events,frames,opts.profile)
+            ranked=score_clip(candidate,events,frames,opts.profile,
+                weights_override=opts.score_weights)
             candidate_events=[event for event in events
                 if event['start_ms']<candidate['end_ms'] and
                    event['end_ms']>candidate['start_ms']]

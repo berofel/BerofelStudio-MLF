@@ -330,10 +330,16 @@ class ClipperTests(unittest.TestCase):
                                     cache_dir=cache)
                 second=analyze_clips([clip],words,ClipperOptions(3.,4.,5,6.,'Gameplay'),
                                      cache_dir=cache)
+                third=analyze_clips([clip],words,ClipperOptions(3.,4.,5,6.,'Gameplay',
+                    score_weights={'hook':.5,'context':.15,'audio':.1,
+                        'value':.1,'payoff':.1,'rhythm':.05,'visual':0.}),
+                    cache_dir=cache)
         self.assertEqual(decode.call_count,1)
         self.assertTrue(first['candidates'])
         self.assertTrue(second['candidates'])
+        self.assertTrue(third['candidates'])
         self.assertGreaterEqual(second['stats']['cache_hits'],1)
+        self.assertGreaterEqual(third['stats']['cache_hits'],1)
 
     def test_ffmpeg_decodes_audio_in_small_stream_and_persists_reusable_rms_frames(self):
         import wave

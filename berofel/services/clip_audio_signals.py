@@ -339,6 +339,7 @@ def score_clip(
     events: Sequence[Mapping],
     frames: FrameFeatures | None = None,
     profile: str = "Geral",
+    *, weights_override: Mapping[str, float] | None = None,
 ) -> dict:
     """Score a transcript-proposed clip using cheap reusable event features.
 
@@ -388,6 +389,16 @@ def score_clip(
         'visual': candidate.get('visual_score'),
     }
     weights = dict(CLIP_SCORE_PROFILES.get(profile, CLIP_SCORE_PROFILES['Geral']))
+    if weights_override is not None:
+        allowed=set(weights)
+        overrides={str(key):float(value) for key,value in weights_override.items()}
+        if (not overrides or set(overrides)-allowed or
+                any(not np.isfinite(value) or value < 0. or value > 1.
+                    for value in overrides.values()) or not any(overrides.values())):
+            raise ValueError('Custom score weights must be finite values in [0, 1] with positive sum')
+        weights.update(overrides)
+        total_weight=sum(weights.values())
+        weights={key:value/total_weight for key,value in weights.items()}
     if frames is not None and frames.level_kind != 'pcm_rms':
         # The timeline waveform is a quantized 100 ms peak envelope, not RMS.
         # It can support a coarse event cue but receives less ranking weight.

@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QDialog,
-    QCheckBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton,
-    QTableWidget, QTableWidgetItem, QVBoxLayout)
+    QCheckBox, QDoubleSpinBox, QGridLayout, QGroupBox, QHBoxLayout,
+    QHeaderView, QLabel, QMessageBox, QPushButton, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget)
 from .wheel_controls import (WheelGuardComboBox as QComboBox,
     WheelGuardDoubleSpinBox as QDoubleSpinBox, WheelGuardSpinBox as QSpinBox)
 
 from berofel.services.clipper import ClipperOptions, suggest_title
+from berofel.services.clip_audio_signals import CLIP_SCORE_PROFILES
 
 
 class ClipperDialog(QDialog):
@@ -66,6 +68,38 @@ class ClipperDialog(QDialog):
         self.mode.setToolTip('Rápido: waveform em cache; Equilibrado: PCM + regras; Avançado: PCM + TextRank local. Todos reutilizam a transcrição Parakeet.')
         options.addWidget(self.mode)
         root.addLayout(options)
+
+        self.weight_group=QGroupBox('Ajuste avançado de pesos · experimental')
+        self.weight_group.setCheckable(True)
+        self.weight_group.setChecked(False)
+        weight_layout=QVBoxLayout(self.weight_group)
+        weight_note=QLabel('Prioridades relativas do ranking (não são probabilidades). '
+                           'Os demais cálculos e a transcrição em cache são reutilizados.')
+        weight_note.setWordWrap(True)
+        weight_layout.addWidget(weight_note)
+        self.weight_controls=QWidget()
+        weight_grid=QGridLayout(self.weight_controls)
+        self.score_weight_controls={}
+        labels={'hook':'Gancho','context':'Contexto','audio':'Áudio',
+                'value':'Informação','payoff':'Desfecho','rhythm':'Ritmo',
+                'visual':'Visual'}
+        for index,(key,label) in enumerate(labels.items()):
+            row,column=divmod(index,4)
+            cell=QWidget();cell_layout=QVBoxLayout(cell)
+            cell_layout.setContentsMargins(0,0,0,0)
+            cell_layout.addWidget(QLabel(label))
+            spin=QDoubleSpinBox();spin.setRange(0.,100.)
+            spin.setDecimals(0);spin.setSingleStep(5.);spin.setSuffix('%')
+            spin.setToolTip(f'Peso de {label.lower()} neste perfil. Zero desconsidera essa dimensão.')
+            cell_layout.addWidget(spin)
+            weight_grid.addWidget(cell,row,column)
+            self.score_weight_controls[key]=spin
+        weight_layout.addWidget(self.weight_controls)
+        self.weight_controls.setVisible(False)
+        self.weight_group.toggled.connect(self.weight_controls.setVisible)
+        self.profile.currentTextChanged.connect(self._reset_profile_weights)
+        self._reset_profile_weights(self.profile.currentText())
+        root.addWidget(self.weight_group)
 
         visual_row=QHBoxLayout()
         self.visual_analysis=QCheckBox('Análise visual opcional · somente miniaturas já em cache')
@@ -149,7 +183,14 @@ class ClipperDialog(QDialog):
             return None
         return ClipperOptions(self.minimum.value(),self.maximum.value(),
             self.maximum_candidates.value(),self.sensitivity.value(),self.profile.currentText(),
-            self.mode.currentText(),self.visual_analysis.isChecked())
+            self.mode.currentText(),self.visual_analysis.isChecked(),
+            ({key:spin.value()/100. for key,spin in self.score_weight_controls.items()}
+             if self.weight_group.isChecked() else None))
+
+    def _reset_profile_weights(self,profile):
+        weights=CLIP_SCORE_PROFILES.get(profile,CLIP_SCORE_PROFILES['Geral'])
+        for key,spin in self.score_weight_controls.items():
+            spin.setValue(float(weights.get(key,0.))*100.)
 
     def _analyze(self):
         options=self.options()
@@ -162,6 +203,7 @@ class ClipperDialog(QDialog):
         for widget in (self.minimum,self.maximum,self.maximum_candidates,self.sensitivity,
                        self.profile,self.mode,self.visual_analysis):
             widget.setEnabled(not busy)
+        self.weight_group.setEnabled(not busy)
         if busy:self.status.setText('Calculando em segundo plano; você pode continuar editando a timeline.')
 
     def set_results(self,result: dict):
