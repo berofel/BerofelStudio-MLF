@@ -197,15 +197,21 @@ def transcribe_samples(samples, duration: float, *, speech_spans=None, model=Non
 
 
 def transcribe_file(path: str | Path, *, model=None, vad=None, speech_spans=None,
-                    threads: int = 6, vad_chunk_seconds: float = 30.0) -> dict:
+                    threads: int = 6, vad_chunk_seconds: float = 30.0,
+                    control=None) -> dict:
     """Transcribe a WAV with bounded PCM memory and one resident model.
 
     VAD scans the complete file in fixed-size blocks when no spans are passed.
     Recognition then seeks to each padded speech span and reads at most one
     20-second inference window at once. Precomputed source-time spans remain
-    supported, so the editor can share its cached Silero pass.
+    supported, so the editor can share its cached Silero pass. A supplied
+    ProcessControl is checked around VAD blocks and inference windows. ONNX
+    Runtime cannot interrupt a call already in progress; cancellation takes
+    effect immediately after that bounded call returns.
     """
     import numpy as np
+    if control:
+        control.checkpoint()
     if vad_chunk_seconds <= 0:
         raise ValueError("vad_chunk_seconds precisa ser positivo")
     path = Path(path)
@@ -221,11 +227,18 @@ def transcribe_file(path: str | Path, *, model=None, vad=None, speech_spans=None
         duration = total_frames / rate
         vad_windows = 0
         if speech_spans is None:
-            vad = vad or load_vad(threads=1)
+            if vad is None:
+                if control:
+                    control.checkpoint()
+                vad = load_vad(threads=1)
+                if control:
+                    control.checkpoint()
             speech_spans = []
             chunk_frames = max(1, int(vad_chunk_seconds * rate))
             offset_frames = 0
             while offset_frames < total_frames:
+                if control:
+                    control.checkpoint()
                 source.setpos(offset_frames)
                 raw = source.readframes(min(chunk_frames, total_frames - offset_frames))
                 usable = len(raw) - len(raw) % 2
@@ -233,18 +246,21 @@ def transcribe_file(path: str | Path, *, model=None, vad=None, speech_spans=None
                     break
                 pcm = np.frombuffer(raw[:usable], dtype="<i2")
                 audio = pcm.astype(np.float32) / 32768.0
-                block_duration = len(audio) / rate
                 for span in detect_speech(audio, vad=vad, max_speech_seconds=MAX_SPEECH_SECONDS):
                     start = offset_frames / rate + float(span["start"])
                     end = min(duration, offset_frames / rate + float(span["end"]))
                     if end > start:
                         speech_spans.append({"start": start, "end": end})
+                if control:
+                    control.checkpoint()
                 offset_frames += len(audio)
                 vad_windows += 1
             # VAD padding can overlap at block boundaries. Merge overlap only;
             # do not bridge an actual pause or alter word-time source offsets.
             merged = []
             for span in sorted(speech_spans, key=lambda item: float(item.get("start", 0))):
+                if control:
+                    control.checkpoint()
                 start = max(0.0, min(duration, float(span.get("start", 0))))
                 end = max(start, min(duration, float(span.get("end", 0))))
                 if end <= start:
@@ -258,6 +274,8 @@ def transcribe_file(path: str | Path, *, model=None, vad=None, speech_spans=None
             # Normalize and validate user/cache spans before using wave.setpos.
             normalized_spans = []
             for span in speech_spans:
+                if control:
+                    control.checkpoint()
                 try:
                     start = max(0.0, min(duration, float(span["start"])))
                     end = max(start, min(duration, float(span["end"])))
@@ -267,13 +285,21 @@ def transcribe_file(path: str | Path, *, model=None, vad=None, speech_spans=None
                     normalized_spans.append({"start": start, "end": end})
             speech_spans = normalized_spans
         if model is None and speech_spans:
+            if control:
+                control.checkpoint()
             model = load_model(threads=threads)
+            if control:
+                control.checkpoint()
         words, segments = [], []
         for region_index, span in enumerate(speech_spans):
+            if control:
+                control.checkpoint()
             start, end = span["start"], span["end"]
             cursor = start
             piece_index = 0
             while cursor < end - .001:
+                if control:
+                    control.checkpoint()
                 piece_end = min(end, cursor + MAX_SPEECH_SECONDS)
                 left = max(0, min(total_frames, int(cursor * rate)))
                 right = max(left, min(total_frames, int(piece_end * rate)))
@@ -289,6 +315,8 @@ def transcribe_file(path: str | Path, *, model=None, vad=None, speech_spans=None
                 pcm = np.frombuffer(raw, dtype="<i2")
                 audio = pcm.astype(np.float32) / 32768.0
                 result = model.recognize(audio, sample_rate=SAMPLE_RATE)
+                if control:
+                    control.checkpoint()
                 actual_duration = len(audio) / rate
                 region_words = _word_groups(getattr(result, "tokens", None),
                     getattr(result, "timestamps", None), left / rate, actual_duration)
@@ -303,6 +331,8 @@ def transcribe_file(path: str | Path, *, model=None, vad=None, speech_spans=None
                         "end": round(right / rate, 3), "text": text, "word_ids": ids})
                 cursor = piece_end
                 piece_index += 1
+    if control:
+        control.checkpoint()
     return {"words": words, "segments": segments, "language": "multilingual-auto",
             "model": "parakeet-tdt-0.6b-v3-int8", "duration": float(duration),
             "backend": "onnxruntime-cpu", "threads": int(threads),

@@ -13,6 +13,7 @@ from berofel.services.parakeet_asr import (
     _word_groups, detect_speech, load_model, read_pcm16_mono_16k,
     transcribe_file, transcribe_samples,
 )
+from berofel.services.process_control import ProcessCancelled, ProcessControl
 
 
 class FakeModel:
@@ -115,6 +116,37 @@ class ParakeetAdapterTests(unittest.TestCase):
         self.assertEqual(model.calls,[(6400,16000),(6400,16000)])
         self.assertAlmostEqual(result['words'][0]['start'],.2)
         self.assertAlmostEqual(result['words'][2]['start'],1.2)
+
+    def test_cancel_after_vad_block_stops_before_loading_asr_model(self):
+        control=ProcessControl()
+
+        class CancellingVad(FakeVad):
+            def segment_batch(self, batch, lengths, sample_rate, **kwargs):
+                result=super().segment_batch(batch,lengths,sample_rate,**kwargs)
+                control.cancel()
+                return result
+
+        with patch('berofel.services.parakeet_asr.load_model',
+                   side_effect=AssertionError('ASR não deve carregar após cancelar VAD')):
+            with self.assertRaises(ProcessCancelled):
+                transcribe_file(self.wav,vad=CancellingVad(),threads=6,
+                                vad_chunk_seconds=1.,control=control)
+
+    def test_cancel_during_onnx_call_is_observed_before_next_window(self):
+        control=ProcessControl()
+
+        class CancellingModel(FakeModel):
+            def recognize(self, samples, sample_rate):
+                result=super().recognize(samples,sample_rate)
+                control.cancel()
+                return result
+
+        model=CancellingModel()
+        with self.assertRaises(ProcessCancelled):
+            transcribe_file(self.wav,model=model,
+                speech_spans=[{'start':0.,'end':1.}],threads=6,control=control)
+        self.assertEqual(len(model.calls),1)
+        self.assertTrue(control.cancelled)
 
     def test_no_speech_does_not_load_the_parakeet_model(self):
         with patch('berofel.services.parakeet_asr.detect_speech',return_value=[]), \

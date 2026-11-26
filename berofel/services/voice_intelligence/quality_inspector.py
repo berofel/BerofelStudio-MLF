@@ -472,7 +472,8 @@ def inspect_generated_wav_with_parakeet(
                     stage("Parakeet TDT v3 ONNX INT8 · verificando o texto sintetizado")
                 if transcriber is None:
                     from ..parakeet_asr import transcribe_file
-                    result = transcribe_file(normalized, threads=threads)
+                    result = transcribe_file(normalized, threads=threads,
+                                             control=control)
                 else:
                     result = transcriber(normalized)
                 if control:

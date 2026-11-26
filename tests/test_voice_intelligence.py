@@ -834,6 +834,35 @@ class ParakeetQualityInspectionTests(TestCase):
             self.assertFalse(seen['path'].exists())
             self.assertEqual(len(stages), 2)
 
+    def test_inspector_forwards_task_control_to_existing_parakeet_adapter(self):
+        with tempfile.TemporaryDirectory() as folder:
+            audio = Path(folder) / 'voice.wav'
+            audio.write_bytes(b'RIFF' + b'controlled audio' * 4)
+            cache = Path(folder) / 'cache'
+
+            class FakeControl:
+                def __init__(self): self.checkpoints = 0
+                def checkpoint(self): self.checkpoints += 1
+                def run(self, command, **_kwargs):
+                    with wave.open(command[-1], 'wb') as wav:
+                        wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(16000)
+                        wav.writeframes(struct.pack('<h', 4000) * 16000)
+                    return Mock(returncode=0, stdout='', stderr='')
+
+            control = FakeControl()
+            with patch('berofel.services.voice_intelligence.quality_inspector._parakeet_cache_identity',
+                       return_value={'model': 'parakeet-tdt-v3-int8', 'threads': 4}), \
+                 patch('berofel.services.parakeet_asr.transcribe_file',
+                       return_value={'text': 'fala reconhecida', 'segments': [],
+                                     'words': [], 'backend': 'onnxruntime-cpu'}) as parakeet:
+                result = inspect_generated_wav_with_parakeet(
+                    audio, 'fala reconhecida', control=control, ffmpeg='ffmpeg',
+                    threads=4, cache_directory=cache)
+
+            self.assertEqual(result['word_error_rate'], 0)
+            self.assertGreaterEqual(control.checkpoints, 2)
+            self.assertIs(parakeet.call_args.kwargs['control'], control)
+
     def test_inspector_reuses_local_parakeet_asr_by_audio_hash_but_recompares_text(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
