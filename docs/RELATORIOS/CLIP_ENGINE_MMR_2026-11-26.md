@@ -1,7 +1,7 @@
 # Berofel Clip Engine — reranking MMR
 
-Data: 26/11/2026  
-Branch de trabalho: `feat/berofel-voice-intelligence-2`  
+Data: 26/11/2026
+Branch de trabalho: `feat/berofel-clip-engine-mmr`
 
 ## Auditoria confirmada
 
