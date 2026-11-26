@@ -200,6 +200,9 @@ class LongNarrationTests(TestCase):
                 'text':request.text + ' Mudança.'})
             with self.assertRaisesRegex(ValueError, 'roteiro mudou'):
                 load_narration_segment_manifest(result['path'], changed_script)
+            changed_seed = NarrationRequest(**{**request.__dict__, 'seed': 42})
+            with self.assertRaisesRegex(ValueError, 'configurações mudaram'):
+                load_narration_segment_manifest(result['path'], changed_seed)
             with Path(result['path']).open('ab') as stream:
                 stream.write(b'changed')
             with self.assertRaisesRegex(ValueError, 'offsets de trechos'):
@@ -230,6 +233,7 @@ class LongNarrationTests(TestCase):
 
             manifest = json.loads(Path(result['segment_manifest_path']).read_text(
                 encoding='utf-8'))
+            self.assertIsNone(manifest['seed'])
             self.assertGreater(len(calls), 1)
             self.assertNotEqual(result['source_text'], result['spoken_text'])
             self.assertFalse(manifest['source_offsets_available'])

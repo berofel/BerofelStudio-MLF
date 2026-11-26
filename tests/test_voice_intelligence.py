@@ -12,7 +12,9 @@ from unittest.mock import patch, Mock
 from berofel.services.voice_intelligence.text_normalizer import (
     NORMALIZER_VERSION, normalize_pt_br,
 )
-from berofel.services.voice_intelligence.capabilities import inspect_purec_capabilities
+from berofel.services.voice_intelligence.capabilities import (
+    inspect_purec_capabilities, supports_request_seed,
+)
 from berofel.services.voice_intelligence.reference_selector import rank_reference_candidates
 from berofel.services.voice_intelligence.speaker_fingerprint import (
     apply_emotion_direction, read_purec_emotion_direction,
@@ -253,8 +255,28 @@ class PureCCapabilityTests(TestCase):
             self.assertFalse(manifest['http_adapter']['dynamic_voice_per_request'])
             self.assertFalse(manifest['http_adapter']['emotion_per_request_validated'])
             self.assertFalse(manifest['http_adapter']['emotion_by_example_per_request_validated'])
+            self.assertFalse(manifest['http_adapter']['seed_per_request_validated'])
             self.assertFalse(manifest['http_adapter']['emotion_vectors_available'])
             self.assertEqual(manifest['build_id'], 'unknown · AVX2')
+
+    def test_request_seed_capability_is_pinned_to_tested_binary_hash(self):
+        from berofel.services.voice_intelligence import capabilities
+        with tempfile.TemporaryDirectory() as folder:
+            executable = Path(folder) / 'qwen_tts.exe'
+            executable.write_bytes(b'installed build fixture')
+            capabilities._seed_capability_for_file.cache_clear()
+            try:
+                with patch.object(capabilities, '_hash_file',
+                        return_value='3a5f89d923bfdbea29327bd4111ecd651afa3ef448b2643b6ea8ad63dd907d13') as hash_file:
+                    self.assertTrue(supports_request_seed(executable))
+                    self.assertTrue(supports_request_seed(executable))
+                    self.assertEqual(hash_file.call_count, 1)
+                other = Path(folder) / 'other_qwen_tts.exe'
+                other.write_bytes(b'unverified build fixture')
+                with patch.object(capabilities, '_hash_file', return_value='unknown-build'):
+                    self.assertFalse(supports_request_seed(other))
+            finally:
+                capabilities._seed_capability_for_file.cache_clear()
 
     def test_emotion_vectors_are_discovered_and_checked_in_runtime_directory(self):
         with tempfile.TemporaryDirectory() as folder:

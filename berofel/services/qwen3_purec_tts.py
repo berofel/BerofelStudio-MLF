@@ -27,7 +27,8 @@ import numpy as np
 from .ai_cache import digest, file_sha256
 from .narration_service import (LANGUAGES, NarrationRequest, persistent_folder,
                                 _process_flags, validate_request,
-                                validate_clone_conditioning)
+                                validate_clone_conditioning, validate_purec_seed)
+from .voice_intelligence.capabilities import supports_request_seed
 
 ENGINE_ID = 'qwen3-tts-purec-mixed'
 ENGINE_INT8_ID = 'qwen3-tts-purec-int8'
@@ -246,6 +247,22 @@ def _quantization_flag(engine: str) -> list[str]:
     if engine == ENGINE_INT8_ID:
         return ['--int8']
     raise ValueError(f'Perfil de execução Pure C inválido: {engine}')
+
+
+def _generation_payload(request: NarrationRequest) -> bytes:
+    """Build the local request; include a seed only when explicitly requested.
+
+    Seed handling was verified against the installed Pure C server. Keep the
+    default payload unchanged for other builds and normal user generations.
+    """
+    payload = {'text': request.text.strip(),
+               'language': _LANGUAGES[request.language],
+               'temperature': .5, 'top_k': 50, 'top_p': 1.0,
+               'rep_penalty': 1.05}
+    seed = request.seed
+    if seed is not None:
+        payload['seed'] = validate_purec_seed(seed)
+    return json.dumps(payload, ensure_ascii=False).encode('utf-8')
 
 
 def prepare_voice_profile(reference: str, reference_text: str = '',
@@ -567,6 +584,13 @@ def _start_server(profile: Path, control=None,
 def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
                          control=None, stage=None, audio_chunk=None) -> dict:
     global _SERVER_STATE
+    validate_purec_seed(request.seed)
+    if request.seed is not None:
+        executable, _model, _paths = _layout()
+        if not supports_request_seed(executable):
+            raise RuntimeError(
+                'A seed por requisição não foi validada para esta build Pure C. '
+                'Nenhuma síntese foi iniciada.')
     validate_clone_conditioning(request)
     validate_request(request.text, request.voice, request.language, request.consent)
     if request.engine not in PUREC_ENGINES:
@@ -635,10 +659,7 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
         start = time.perf_counter()
         conn = http.client.HTTPConnection('127.0.0.1', port, timeout=1800)
         payload_started = time.perf_counter()
-        normalized_text = request.text.strip()
-        payload = json.dumps({'text': normalized_text, 'language': _LANGUAGES[request.language],
-                              'temperature': .5, 'top_k': 50, 'top_p': 1.0,
-                              'rep_penalty': 1.05}, ensure_ascii=False).encode('utf-8')
+        payload = _generation_payload(request)
         stage_seconds['payload_prepare_seconds'] = time.perf_counter() - payload_started
         try:
             _SERVER_STATE = 'GENERATING'
@@ -724,6 +745,7 @@ def generate_purec_clone(request: NarrationRequest, progress=None, runner=None,
             'emotion_style_cache_key': emotion_style_fingerprint,
             'cache_hit': False, 'profile_cache_hit': bool(profile['cache_hit']),
             'conditioning_mode': 'speaker-embedding-only',
+            'seed': request.seed,
             'profile_prepare_seconds': float(profile['profile_prepare_seconds']),
             'model_load_seconds': float(model_load), 'generation_seconds': generation,
             'first_audio_chunk_seconds': stream_stats['first_audio_chunk_seconds'],

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import json
+from dataclasses import replace
 from pathlib import Path
 import subprocess
 import tempfile
@@ -246,6 +247,44 @@ class PureCTests(unittest.TestCase):
         self.assertEqual(purec._quantization_flag(purec.ENGINE_INT8_ID), ['--int8'])
         with self.assertRaises(ValueError):
             purec._quantization_flag('unsupported')
+
+    def test_generation_seed_is_optional_and_validated_for_purec_payload(self):
+        request = NarrationRequest(text=' Texto de teste ', voice='perfil.wav',
+                                   consent=True, engine=purec.ENGINE_INT8_ID)
+        default_payload = json.loads(purec._generation_payload(request))
+        self.assertNotIn('seed', default_payload)
+        self.assertEqual(default_payload['text'], 'Texto de teste')
+
+        seeded_payload = json.loads(purec._generation_payload(
+            replace(request, seed=42)))
+        self.assertEqual(seeded_payload['seed'], 42)
+        self.assertEqual(seeded_payload['text'], default_payload['text'])
+
+        for invalid_seed in (-1, 2**31, True, 1.5, '42'):
+            with self.subTest(seed=invalid_seed), self.assertRaises(ValueError):
+                purec._generation_payload(
+                    replace(request, seed=invalid_seed))
+
+    def test_seed_is_rejected_for_backends_without_verified_seed_support(self):
+        request = NarrationRequest(text='Teste', voice='profile.wav', consent=True,
+                                   seed=42)
+        with self.assertRaisesRegex(ValueError, 'somente no backend Pure C'):
+            generate_narration(request)
+
+    def test_unverified_purec_build_rejects_seed_before_profile_or_model_work(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            voice = root / 'voice.wav'
+            self._write_test_wav(voice)
+            request = NarrationRequest(text='Teste de seed', voice=str(voice),
+                consent=True, engine=purec.ENGINE_INT8_ID, seed=42)
+            with patch.object(purec, '_layout',
+                              return_value=(root / 'qwen_tts.exe', root / 'model', [])), \
+                 patch.object(purec, 'supports_request_seed', return_value=False), \
+                 patch.object(purec, 'prepare_voice_profile') as prepare:
+                with self.assertRaisesRegex(RuntimeError, 'não foi validada'):
+                    purec.generate_purec_clone(request)
+                prepare.assert_not_called()
 
     def test_style_request_fails_before_preparation_when_binary_lacks_capability(self):
         with tempfile.TemporaryDirectory() as folder:

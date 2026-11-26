@@ -7,6 +7,7 @@ keeps CLI and currently-used HTTP capabilities separate.
 from __future__ import annotations
 
 from hashlib import sha256
+from functools import lru_cache
 import math
 from pathlib import Path
 import re
@@ -15,12 +16,39 @@ import subprocess
 from typing import Callable
 
 
+# This build's request-level seed was confirmed by three real local syntheses:
+# same seed => byte-identical PCM; changed seed => different PCM. Other builds
+# must be revalidated instead of inheriting this capability by assumption.
+_HTTP_SEED_VALIDATED_SHA256 = frozenset({
+    "3a5f89d923bfdbea29327bd4111ecd651afa3ef448b2643b6ea8ad63dd907d13",
+})
+
+
 def _hash_file(path: Path) -> str:
     value = sha256()
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             value.update(block)
     return value.hexdigest()
+
+
+@lru_cache(maxsize=8)
+def _seed_capability_for_file(path_text: str, size: int, mtime_ns: int) -> bool:
+    del size, mtime_ns  # part of the cache key: invalidate after runtime updates
+    try:
+        return _hash_file(Path(path_text)) in _HTTP_SEED_VALIDATED_SHA256
+    except OSError:
+        return False
+
+
+def supports_request_seed(executable: str | Path) -> bool:
+    """Return true only for a Pure C binary whose request seed was tested."""
+    binary = Path(executable).expanduser().resolve()
+    try:
+        stat = binary.stat()
+    except OSError:
+        return False
+    return _seed_capability_for_file(str(binary), stat.st_size, stat.st_mtime_ns)
 
 
 def _valid_emotion_direction(path: Path) -> bool:
@@ -50,6 +78,7 @@ def inspect_purec_capabilities(executable: str | Path, *,
     binary = Path(executable).expanduser().resolve()
     if not binary.is_file():
         raise FileNotFoundError("O executável local Pure C não foi encontrado.")
+    binary_hash = _hash_file(binary)
 
     def invoke(argument: str) -> str:
         try:
@@ -86,7 +115,7 @@ def inspect_purec_capabilities(executable: str | Path, *,
 
     return {
         "schema_version": 1,
-        "binary_sha256": _hash_file(binary),
+        "binary_sha256": binary_hash,
         "binary_size_bytes": binary.stat().st_size,
         "build_id": build_id,
         "model_hint": model_hint,
@@ -119,6 +148,7 @@ def inspect_purec_capabilities(executable: str | Path, *,
             "dynamic_voice_per_request": False,
             "emotion_per_request_validated": False,
             "emotion_by_example_per_request_validated": False,
+            "seed_per_request_validated": binary_hash in _HTTP_SEED_VALIDATED_SHA256,
             "emotion_vectors_available": bool(emotion_assets),
             "paralinguistic_markers_validated": False,
         },

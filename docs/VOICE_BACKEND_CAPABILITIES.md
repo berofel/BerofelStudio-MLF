@@ -8,6 +8,7 @@ O módulo `berofel.services.voice_intelligence.capabilities` consulta os recurso
 | Pure C Mixed CPU | `--quant-mixed-cpu`: Talker INT8 + Code Predictor INT4 | Não equivale a INT8 uniforme |
 | Pure C INT8 | `--int8`: Talker INT8 + Code Predictor INT8; WAV gerado localmente | Uma repetição curta não qualifica desempenho/qualidade geral |
 | Clone por x-vector | `--load-voice`, `--xvector-only` | Voz vinculada à inicialização do servidor |
+| Seed de amostragem no Pure C | Três requisições no serviço canônico: seed 42 repetiu PCM byte a byte; seed 43 mudou o PCM; allowlist SHA-256 3a5f89d923bfdbea29327bd4111ecd651afa3ef448b2643b6ea8ad63dd907d13 | Opcional e ausente por padrão; outras builds falham explicitamente até nova validação |
 | ICL / `.qvoice` | Flags e extensões anunciadas em `--help` | Arquivo compatível não foi exercitado |
 | Campo HTTP `emotion` | Teste local com seed fixo: status 200, mas o WAV resultou byte a byte idêntico ao pedido neutro | O campo não teve efeito observável nesta build do servidor |
 | Direção 0.6B por x-vector (`--emotion joy --emotion-strength`) | Com `dir_joy.bin` upstream em `presets/emovoice`, CLI one-shot e clone x-vector produziram WAV diferente do neutro | Execução fria, sem avaliação auditiva; não é a rota residente do editor |

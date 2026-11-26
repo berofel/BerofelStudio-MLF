@@ -47,6 +47,18 @@ class NarrationRequest:
     # Experimental Pure C 0.6B voice-style transfer. The reference must be
     # authorized and its exact transcript reviewed; normal TTS stays unchanged.
     emotion_by_example: bool = False
+    # Optional reproducibility control for Pure C builds verified to honor it.
+    # None preserves the runtime's existing default sampling behavior.
+    seed: int | None = None
+
+
+def validate_purec_seed(seed: int | None) -> int | None:
+    """Validate the optional signed 31-bit seed accepted by the local server."""
+    if seed is None:
+        return None
+    if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 2**31 - 1:
+        raise ValueError('A seed Pure C deve ser um inteiro entre 0 e 2147483647.')
+    return seed
 
 
 def persistent_folder(project_path: str = '') -> Path:
@@ -292,6 +304,7 @@ def _write_narration_segment_manifest(destination: Path, request: NarrationReque
         'source_offsets_available': source_offsets_available,
         'engine': request.engine,
         'language': request.language,
+        'seed': request.seed,
         'sample_rate': sample_rate,
         'channels': channels,
         'sample_width_bytes': sample_width,
@@ -323,7 +336,7 @@ def _segment_request_signature(request: NarrationRequest) -> str:
     voice_hash = file_sha256(voice) if voice.is_file() else ''
     reference_text_hash = hashlib.sha256(
         str(request.reference_text or '').encode('utf-8')).hexdigest()
-    return digest({
+    inputs = {
         'engine': request.engine,
         'language': request.language,
         'voice_sha256': voice_hash,
@@ -333,7 +346,12 @@ def _segment_request_signature(request: NarrationRequest) -> str:
         'consent': bool(request.consent),
         'thread_count': request.thread_count,
         'normalizer_version': NORMALIZER_VERSION,
-    })
+    }
+    # Keep the legacy/default signature stable. An explicitly selected seed
+    # must invalidate a long-narration regeneration manifest.
+    if request.seed is not None:
+        inputs['seed'] = validate_purec_seed(request.seed)
+    return digest(inputs)
 
 
 def load_narration_segment_manifest(audio_path: str | Path,
@@ -528,8 +546,11 @@ def _generate_long_narration(request: NarrationRequest, chunks: list[str],
             generated.append(path)
             results.append(part)
         stamp = time.strftime('%Y%m%d_%H%M%S')
-        suffix = digest({'text': request.text.strip(), 'voice': request.voice,
-                         'engine': request.engine, 'language': request.language})[:8]
+        identity = {'text': request.text.strip(), 'voice': request.voice,
+                    'engine': request.engine, 'language': request.language}
+        if request.seed is not None:
+            identity['seed'] = validate_purec_seed(request.seed)
+        suffix = digest(identity)[:8]
         safe_title = ''.join(ch if ch.isalnum() or ch in '-_' else '_'
                              for ch in request.title.strip())[:48] or 'Narracao'
         destination = destination_folder / f'{safe_title}_{stamp}_{suffix}_completa.wav'
@@ -553,6 +574,7 @@ def _generate_long_narration(request: NarrationRequest, chunks: list[str],
         'conditioning_mode': results[0].get('conditioning_mode'),
         'engine': request.engine, 'threads': request.thread_count,
         'title': request.title, 'voice': request.voice, 'language': request.language,
+        'seed': request.seed,
         'emotion_by_example': bool(request.emotion_by_example),
         'chunk_count': len(chunks), 'continuous_wav': True,
         'generation_seconds': sum(float(item.get('generation_seconds', 0.0)) for item in results),
@@ -565,6 +587,10 @@ def generate_narration(request: NarrationRequest, progress: Callable | None = No
                        stage=None, audio_chunk: Callable | None = None,
                        _prepared_text: bool = False) -> dict:
     """Generate a non-destructive, local WAV using the sole supported TTS engine."""
+    if request.seed is not None:
+        if request.engine not in ('qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8'):
+            raise ValueError('A seed de reprodução está disponível somente no backend Pure C.')
+        validate_purec_seed(request.seed)
     if request.engine not in _TEXT_CHUNK_CHARS:
         raise ValueError('O BerofelStudio usa exclusivamente Qwen3-TTS Base para narração.')
     source_text = request.text
