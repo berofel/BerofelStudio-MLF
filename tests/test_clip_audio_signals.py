@@ -57,6 +57,18 @@ class ClipAudioTests(unittest.TestCase):
         e = dict(start_ms=200, end_ms=600, speech_verified=True, strength=1.0)
         self.assertLessEqual(score_clip(c, [e])['score'], 59)
 
+    def test_profile_score_exposes_components_and_missing_evidence(self):
+        candidate = dict(start_ms=0, end_ms=10000, context_score=.7,
+                         hook_score=.9, boundary_score=.8,
+                         information_score=.6, payoff_score=.8, rhythm_score=.7)
+        general = score_clip(candidate, [], profile='Geral')
+        gameplay = score_clip(candidate, [], profile='Gameplay')
+        self.assertIn('hook', general['components'])
+        self.assertIsNone(general['components']['audio'])
+        self.assertIsNone(general['components']['visual'])
+        self.assertLess(general['evidence_coverage'], 1.)
+        self.assertNotEqual(general['score'], gameplay['score'])
+
     def test_nonoverlap(self):
         ranked = [dict(start_ms=s, end_ms=e, score=p) for s,e,p in
                   [(0,10000,91),(1000,9000,88),(14000,25000,79)]]

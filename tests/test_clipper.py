@@ -9,7 +9,8 @@ import numpy as np
 from berofel.core.project import Clip
 from berofel.services.clip_audio_signals import extract_frames_from_chunks
 from berofel.services.clipper import (ClipperOptions, _candidate_spans,
-    _dialogue_context_bounds, _normalise_words, analyze_clips, audio_features)
+    _dialogue_context_bounds, _local_textrank_salience, _normalise_words,
+    analyze_clips, audio_features)
 
 
 def transcript(source, count=180, start=0., step=.2):
@@ -262,6 +263,56 @@ class ClipperTests(unittest.TestCase):
         self.assertTrue(any(5900<=event['start_ms']<=6100 and
                             event['speech_verified'] for event in events),events)
         self.assertFalse(any(event['start_ms']>=11000 for event in events))
+
+    def test_quick_audio_mode_reuses_cached_timeline_waveform_without_decoding(self):
+        class CachedWaveform:
+            def get_wave(self, source, at, request=False):
+                self.request=request
+                return {'offset':0.,'step':.1,'peaks':[.1,.2,.3,.4,.5,
+                    .4,.3,.2,.1,.08,.1,.12,.14,.16,.18,.2,.22,.24,.26,.28]}
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_cached_wave_') as folder:
+            source=Path(folder)/'source.wav';source.write_bytes(b'fixture')
+            provider=CachedWaveform()
+            with patch('berofel.services.clipper._audio_pcm_chunks') as decode:
+                frames,hit=audio_features(str(source),0.,2.,cache_dir=Path(folder)/'cache',
+                    waveform_provider=provider,waveform_only=True)
+        decode.assert_not_called()
+        self.assertTrue(hit)
+        self.assertIsNotNone(frames)
+        self.assertEqual(frames.level_kind,'waveform_peak_proxy')
+        self.assertAlmostEqual(frames.frame_ms,100.)
+        self.assertFalse(provider.request)
+
+    def test_quick_audio_mode_without_complete_waveform_does_not_decode(self):
+        class MissingWaveform:
+            def get_wave(self, source, at, request=False):
+                return None
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_missing_wave_') as folder:
+            source=Path(folder)/'source.wav';source.write_bytes(b'fixture')
+            with patch('berofel.services.clipper._audio_pcm_chunks') as decode:
+                frames,hit=audio_features(str(source),0.,2.,cache_dir=Path(folder)/'cache',
+                    waveform_provider=MissingWaveform(),waveform_only=True)
+        decode.assert_not_called()
+        self.assertIsNone(frames)
+        self.assertFalse(hit)
+
+    def test_advanced_text_rank_is_local_deterministic_and_bounded(self):
+        texts=('O editor organiza os cortes da timeline e as legendas do vídeo.',
+               'A timeline mostra os cortes e a duração de cada clipe.',
+               'As legendas acompanham o áudio e a transcrição do vídeo.')
+        words=[];at=0.
+        for text in texts:
+            for token in text.split():
+                words.append({'start_ms':at,'end_ms':at+100,'text':token})
+                at+=120
+            words[-1]['text']=words[-1]['text'].rstrip('.')+'.'
+            at+=400
+        first=_local_textrank_salience(words)
+        second=_local_textrank_salience(words)
+        self.assertIsNotNone(first)
+        self.assertEqual(first,second)
+        self.assertGreaterEqual(first,0.)
+        self.assertLessEqual(first,1.)
 
 
 if __name__=='__main__':

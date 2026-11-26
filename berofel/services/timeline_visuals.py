@@ -39,6 +39,7 @@ class TimelineVisualCache:
         self.stopping=False
         self.proc=None
         self.memory=OrderedDict()
+        self._memory_lock=threading.RLock()
         self._completed_since_prune=0
         self.thread=None
         if start_worker:
@@ -72,23 +73,25 @@ class TimelineVisualCache:
         at=self.wave_tile(at)
         key=self.waveform_path(source,at)
         name=str(key)
-        if name in self.memory:
-            self.memory.move_to_end(name)
-            return self.memory[name]
-        if key.is_file():
-            try:
-                data=json.loads(key.read_text(encoding='utf-8'))
-                self._remember_wave(name,data)
-                return data
-            except (ValueError,OSError):pass
+        with self._memory_lock:
+            if name in self.memory:
+                self.memory.move_to_end(name)
+                return self.memory[name]
+            if key.is_file():
+                try:
+                    data=json.loads(key.read_text(encoding='utf-8'))
+                    self._remember_wave(name,data)
+                    return data
+                except (ValueError,OSError):pass
         if request and Path(source).is_file():self._enqueue(10,'wave',source,at,key)
         return None
 
     def _remember_wave(self,name,data):
-        self.memory[name]=data
-        self.memory.move_to_end(name)
-        while len(self.memory)>MAX_MEMORY_WAVE_TILES:
-            self.memory.popitem(last=False)
+        with self._memory_lock:
+            self.memory[name]=data
+            self.memory.move_to_end(name)
+            while len(self.memory)>MAX_MEMORY_WAVE_TILES:
+                self.memory.popitem(last=False)
 
     def _enqueue(self,priority,kind,source,at,key):
         name=str(key)

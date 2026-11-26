@@ -29,8 +29,10 @@ class ClipperDialog(QDialog):
         intro.setStyleSheet('color:#ffad70;font-weight:850;font-size:12px;letter-spacing:.5px;')
         root.addWidget(intro)
         explanation=QLabel('A nota 0–100 é um ranking editorial explicável, não uma previsão de viralização. '
-            'O Clipador reutiliza as palavras já transcritas, mede RMS/picos em PCM por streaming e nunca '
-            'corta nem renderiza a mídia durante a análise. Cada candidato precisa de confirmação.')
+            'O Clipador reutiliza a transcrição existente do Parakeet. Equilibrado mede RMS/picos em PCM por '
+            'streaming; Rápido lê apenas waveforms já armazenadas na timeline (aproximação de pico em 100 ms); '
+            'Avançado também aplica TextRank local às falas do candidato. '
+            'A análise não corta nem renderiza a mídia. Cada candidato precisa de confirmação.')
         explanation.setWordWrap(True)
         explanation.setStyleSheet('color:#bac2cc;')
         root.addWidget(explanation)
@@ -51,6 +53,18 @@ class ClipperDialog(QDialog):
         self.sensitivity.setSingleStep(1.);self.sensitivity.setDecimals(1)
         self.sensitivity.setValue(6.)
         options.addWidget(self.sensitivity)
+        options.addWidget(QLabel('perfil'))
+        self.profile=QComboBox()
+        self.profile.addItems(('Geral','Podcast','Gameplay','Tutorial','Terror',
+                               'Humor','Debate','Vlog'))
+        self.profile.setToolTip('Altera os pesos do ranking editorial; não executa outra transcrição.')
+        options.addWidget(self.profile)
+        options.addWidget(QLabel('modo'))
+        self.mode=QComboBox()
+        self.mode.addItems(('Rápido','Equilibrado','Avançado'))
+        self.mode.setCurrentText('Equilibrado')
+        self.mode.setToolTip('Rápido: waveform em cache; Equilibrado: PCM + regras; Avançado: PCM + TextRank local. Todos reutilizam a transcrição Parakeet.')
+        options.addWidget(self.mode)
         root.addLayout(options)
 
         self.status=QLabel('Analise somente o alcance escolhido na aba Ações IA.')
@@ -122,7 +136,8 @@ class ClipperDialog(QDialog):
                 'A duração máxima precisa ser maior que a duração mínima.')
             return None
         return ClipperOptions(self.minimum.value(),self.maximum.value(),
-            self.maximum_candidates.value(),self.sensitivity.value())
+            self.maximum_candidates.value(),self.sensitivity.value(),self.profile.currentText(),
+            self.mode.currentText())
 
     def _analyze(self):
         options=self.options()
@@ -132,7 +147,8 @@ class ClipperDialog(QDialog):
     def set_busy(self,busy: bool):
         self.analyze_button.setEnabled(not busy)
         self.cancel_button.setEnabled(busy)
-        for widget in (self.minimum,self.maximum,self.maximum_candidates,self.sensitivity):
+        for widget in (self.minimum,self.maximum,self.maximum_candidates,self.sensitivity,
+                       self.profile,self.mode):
             widget.setEnabled(not busy)
         if busy:self.status.setText('Calculando em segundo plano; você pode continuar editando a timeline.')
 
@@ -147,11 +163,21 @@ class ClipperDialog(QDialog):
             check.setCheckState(Qt.CheckState.Unchecked)
             check.setData(Qt.ItemDataRole.UserRole,candidate)
             self.table.setItem(row,0,check)
-            self.table.setItem(row,1,QTableWidgetItem(f"{candidate['score']:.1f}/100"))
+            coverage=float(candidate.get('evidence_coverage',0.))
+            self.table.setItem(row,1,QTableWidgetItem(
+                f"{candidate['score']:.1f}/100 · evidência {coverage:.0%}"))
             self.table.setItem(row,2,QTableWidgetItem(
                 f"{candidate['source_start']:.2f}–{candidate['source_end']:.2f}s  ·  {candidate['duration']:.1f}s"))
             self.table.setItem(row,3,QTableWidgetItem(candidate.get('text','')))
             evidence='; '.join(candidate.get('reasons',[])) or 'Sem evidência textual forte.'
+            components=candidate.get('score_components',{})
+            labels={'hook':'gancho','context':'contexto','audio':'áudio',
+                    'value':'informação','payoff':'desfecho','rhythm':'ritmo','visual':'visual'}
+            measured=[f"{labels.get(key,key)} {value:.2f}" for key,value in components.items()
+                      if value is not None]
+            if measured:evidence+='  ·  componentes: '+', '.join(measured)
+            if candidate.get('text_rank_score') is not None:
+                evidence+=f"  ·  TextRank local {float(candidate['text_rank_score']):.2f}"
             warnings=candidate.get('warnings',[])
             if warnings:evidence+='  ⚠ '+'; '.join(warnings)
             if candidate.get('events'):
@@ -165,10 +191,12 @@ class ClipperDialog(QDialog):
         stats=result.get('stats',{})
         rss=stats.get('rss_mb')
         rss_label=f" · RSS {rss:.1f} MiB" if rss is not None else ''
+        profile=stats.get('profile','Geral')
+        mode=stats.get('mode','Equilibrado')
         self.status.setText(f"{len(self._candidates)} candidato(s) · {len(self._events)} evento(s) acústico(s) · "
             f"{stats.get('elapsed_seconds',0):.2f}s · cache {stats.get('cache_hits',0)} hit(s)/"
             f"{stats.get('cache_misses',0)} novo(s) · decodificados {stats.get('decoded_seconds',0):.1f}s"
-            +rss_label+". Se não houver áudio, a nota usa somente os sinais disponíveis.")
+            +rss_label+f" · {mode} · perfil {profile}. A nota usa somente evidências disponíveis.")
 
     def _selected_candidate(self):
         row=self.table.currentRow()

@@ -18,6 +18,28 @@ import numpy as np
 
 EPS = 1e-9
 
+# Profile weights for the currently measured dimensions. Visual evidence stays
+# unavailable until the editor provides frame features; weights are renormalized
+# over dimensions that have actual data.
+CLIP_SCORE_PROFILES = {
+    "Geral": {"hook": .20, "context": .20, "audio": .15, "value": .15,
+              "payoff": .15, "rhythm": .10, "visual": .05},
+    "Podcast": {"hook": .20, "context": .25, "audio": .12, "value": .15,
+                 "payoff": .16, "rhythm": .12, "visual": 0.},
+    "Gameplay": {"hook": .15, "context": .10, "audio": .25, "value": .05,
+                 "payoff": .15, "rhythm": .10, "visual": .20},
+    "Tutorial": {"hook": .15, "context": .25, "audio": .05, "value": .30,
+                 "payoff": .15, "rhythm": .08, "visual": .02},
+    "Terror": {"hook": .15, "context": .20, "audio": .20, "value": .05,
+               "payoff": .25, "rhythm": .10, "visual": .05},
+    "Humor": {"hook": .20, "context": .15, "audio": .20, "value": .05,
+              "payoff": .30, "rhythm": .08, "visual": .02},
+    "Debate": {"hook": .20, "context": .25, "audio": .15, "value": .15,
+               "payoff": .15, "rhythm": .08, "visual": .02},
+    "Vlog": {"hook": .20, "context": .15, "audio": .15, "value": .10,
+             "payoff": .15, "rhythm": .10, "visual": .15},
+}
+
 # Small PT-BR function-word list for candidate diversity only. It is not a
 # prohibited-word list and never changes transcript text or timestamps.
 _DIVERSITY_STOPWORDS = frozenset((
@@ -75,6 +97,7 @@ class FrameFeatures:
     clip_fraction: np.ndarray
     frame_ms: float
     sample_rate: int
+    level_kind: str = 'pcm_rms'
 
     def __post_init__(self) -> None:
         lengths = [len(self.times_ms), len(self.rms_dbfs),
@@ -92,6 +115,7 @@ class FrameFeatures:
             "clip_fraction": self.clip_fraction.round(4).tolist(),
             "frame_ms": self.frame_ms,
             "sample_rate": self.sample_rate,
+            "level_kind": self.level_kind,
         }
 
     @classmethod
@@ -103,6 +127,7 @@ class FrameFeatures:
             clip_fraction=np.asarray(d["clip_fraction"], dtype=np.float32),
             frame_ms=float(d["frame_ms"]),
             sample_rate=int(d["sample_rate"]),
+            level_kind=str(d.get('level_kind','pcm_rms')),
         )
 
 
@@ -257,7 +282,8 @@ def detect_energy_events(
         peak_db = float(np.max(frames.peak_dbfs[first:last+1]))
         clipped = float(np.mean(frames.clip_fraction[first:last+1]))
         events.append({
-            "kind": "relative_energy_surge",
+            "kind": ("relative_energy_surge" if frames.level_kind == 'pcm_rms'
+                     else "relative_waveform_peak_surge"),
             "start_ms": round(start_ms),
             "end_ms": round(end_ms),
             "rise_db": round(max_delta, 2),
@@ -265,6 +291,7 @@ def detect_energy_events(
             "clipped_fraction": round(clipped, 4),
             "strength": round(float(np.clip((max_delta - relative_rise_db) / 12.0, 0, 1)), 3),
             "speech_verified": speech_intervals_ms is not None,
+            "level_source": frames.level_kind,
             "meaning": "energy change only; semantic interpretation required",
         })
     return events
@@ -307,6 +334,7 @@ def score_clip(
     candidate: Mapping,
     events: Sequence[Mapping],
     frames: FrameFeatures | None = None,
+    profile: str = "Geral",
 ) -> dict:
     """Score a transcript-proposed clip using cheap reusable event features.
 
@@ -335,24 +363,45 @@ def score_clip(
         audio_available = False
     figurative = float(np.clip(candidate.get('figurative_score', 0.0), 0, 1))
     discourse = float(np.clip(candidate.get('discourse_score', 0.0), 0, 1))
+    # Explainable editorial dimensions. Values not supplied by the analysis are
+    # omitted rather than fabricated, and weights are renormalized accordingly.
+    context_component = .8*context + .2*boundary
     if 'figurative_score' in candidate:
-        # Optional, intentionally small contribution from the deterministic
-        # context analyzer. A suspected irony/reaction cue is not a virality
-        # probability; keep the contribution small and preserve total weight.
-        semantic = 0.50*context + 0.32*hook + 0.10*figurative + 0.08*discourse
-    else:
-        semantic = 0.6*context + 0.4*hook
-    # Graceful degradation: when speech-verified audio is absent, do not punish
-    # genuinely good quiet content. Reweight only available components.
-    if audio_available:
-        raw = 0.70*semantic + 0.20*audio + 0.10*boundary
-    else:
-        raw = 0.875*semantic + 0.125*boundary
+        context_component += .025*figurative
+    if 'discourse_score' in candidate:
+        context_component += .025*discourse
+    dimensions = {
+        'hook': hook,
+        'context': float(np.clip(context_component, 0., 1.)),
+        'audio': audio if audio_available else None,
+        'value': candidate.get('information_score'),
+        'payoff': candidate.get('payoff_score'),
+        'rhythm': candidate.get('rhythm_score'),
+        'visual': candidate.get('visual_score'),
+    }
+    weights = dict(CLIP_SCORE_PROFILES.get(profile, CLIP_SCORE_PROFILES['Geral']))
+    if frames is not None and frames.level_kind != 'pcm_rms':
+        # The timeline waveform is a quantized 100 ms peak envelope, not RMS.
+        # It can support a coarse event cue but receives less ranking weight.
+        weights['audio'] *= .55
+    available_weight = sum(weights[key] for key, value in dimensions.items()
+                           if value is not None and weights.get(key, 0.) > 0.)
+    if available_weight <= EPS:
+        raise ValueError('Não há evidências disponíveis para classificar o candidato.')
+    components = {key: (round(float(np.clip(value, 0., 1.)), 3)
+                        if value is not None and weights.get(key, 0.) > 0.
+                        else None)
+                  for key, value in dimensions.items()}
+    raw = sum(weights[key]*float(value) for key, value in dimensions.items()
+              if value is not None and weights.get(key, 0.) > 0.) / available_weight
+    evidence_coverage = sum(weights[key] for key, value in dimensions.items()
+                            if value is not None and weights.get(key, 0.) > 0.)
     penalties: list[str] = []
     if frames is not None and len(frames.times_ms):
-        mask = (frames.times_ms >= start) & (frames.times_ms < end)
-        if np.any(mask):
-            mean_clip_fraction = float(np.mean(frames.clip_fraction[mask]))
+        left = int(np.searchsorted(frames.times_ms, start, side='left'))
+        right = int(np.searchsorted(frames.times_ms, end, side='left'))
+        if right > left and frames.level_kind == 'pcm_rms':
+            mean_clip_fraction = float(np.mean(frames.clip_fraction[left:right]))
             if mean_clip_fraction > 0.01:
                 raw -= 0.08
                 penalties.append("Amostras próximas ao limite digital em parte significativa do áudio")
@@ -362,7 +411,10 @@ def score_clip(
         penalties.append("Contexto insuficiente para clipe independente")
     reasons: list[str] = []
     if verified:
-        reasons.append(f"{len(verified)} evento(s) de energia ligados à fala")
+        if frames is not None and frames.level_kind != 'pcm_rms':
+            reasons.append(f"{len(verified)} mudança(s) na envoltória de pico, alinhada(s) às palavras")
+        else:
+            reasons.append(f"{len(verified)} evento(s) de RMS ligados à fala")
         roles = {str(e.get("conversation_role", "")) for e in verified}
         for label in ("question", "answer", "reveal"):
             if label in roles:
@@ -379,6 +431,9 @@ def score_clip(
         reasons.append("Sinais discursivos de reação, humor, pergunta retórica ou reinício; conferir no áudio")
     if not verified:
         reasons.append("Áudio não verificado; nota baseada no texto e limites")
+    elif frames is not None and frames.level_kind != 'pcm_rms':
+        reasons.append('Sinal acústico aproximado pela waveform de pico da timeline (100 ms)')
+    semantic = .6*context + .4*hook
     return {
         "start_ms": int(start), "end_ms": int(end),
         "score": round(100*float(np.clip(raw, 0, 1)), 1),
@@ -387,7 +442,11 @@ def score_clip(
         "figurative_score": round(figurative, 3) if 'figurative_score' in candidate else None,
         "discourse_score": round(discourse, 3) if 'discourse_score' in candidate else None,
         "audio_available": audio_available,
+        "audio_source": frames.level_kind if frames is not None else None,
         "boundary_score": round(boundary, 3),
+        "profile": profile if profile in CLIP_SCORE_PROFILES else 'Geral',
+        "components": components,
+        "evidence_coverage": round(float(evidence_coverage), 3),
         "reasons": reasons,
         "warnings": penalties,
         "note": "Ranking editorial relativo, não probabilidade de viralização",
