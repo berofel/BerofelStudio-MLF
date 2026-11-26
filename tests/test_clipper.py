@@ -267,6 +267,37 @@ class ClipperTests(unittest.TestCase):
         self.assertGreaterEqual(result['candidates'][0]['source_start'],10.)
         self.assertLessEqual(result['candidates'][0]['source_end'],46.)
 
+    def test_candidate_duration_limits_follow_playback_speed_but_keep_source_times(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_retime_') as folder:
+            source=Path(folder)/'source.wav';source.write_bytes(b'fixture')
+            words=transcript(source,count=220,step=.18)
+            options=ClipperOptions(8.,16.,5,6.,mode='Rápido')
+            cache=Path(folder)/'cache'
+            with patch('berofel.services.clipper.audio_features',
+                       return_value=(None,False)) as audio:
+                normal=analyze_clips([Clip(str(source),0.,39.,kind='audio')],
+                    words,options,cache_dir=cache)
+                fast=analyze_clips([Clip(str(source),0.,39.,kind='audio',speed=2.)],
+                    words,options,cache_dir=cache)
+                slow=analyze_clips([Clip(str(source),0.,39.,kind='audio',speed=.5)],
+                    words,options,cache_dir=cache)
+
+        self.assertTrue(normal['candidates'] and fast['candidates'] and slow['candidates'])
+        self.assertEqual(audio.call_count,3)
+        for result,rate in ((normal,1.),(fast,2.),(slow,.5)):
+            for candidate in result['candidates']:
+                self.assertGreaterEqual(candidate['duration'],8.)
+                self.assertLessEqual(candidate['duration'],16.)
+                self.assertAlmostEqual(candidate['source_duration'],
+                                        candidate['duration']*rate,places=3)
+                self.assertEqual(candidate['playback_rate'],rate)
+                self.assertGreaterEqual(candidate['source_start'],0.)
+                self.assertLessEqual(candidate['source_end'],39.)
+        self.assertGreater(fast['candidates'][0]['source_duration'],
+                           normal['candidates'][0]['source_duration'])
+        self.assertLess(slow['candidates'][0]['source_duration'],
+                        normal['candidates'][0]['source_duration'])
+
     def test_identical_source_range_reuses_rank_cache_across_clip_ids(self):
         with tempfile.TemporaryDirectory(prefix='bfs_clipper_range_cache_') as folder:
             source=Path(folder)/'source.wav';source.write_bytes(b'synthetic placeholder')

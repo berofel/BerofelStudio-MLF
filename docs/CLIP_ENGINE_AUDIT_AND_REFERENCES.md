@@ -2,6 +2,14 @@
 
 Data da revisão: 26/11/2026
 
+## Correção de duração na timeline com velocidade alterada
+
+O escopo de edição fornece limites da mídia original e mantém a velocidade de reprodução do bloco. O Clip Engine conserva esse contrato: Parakeet, eventos e cortes continuam em segundos da fonte. Agora, os limites mínimo/máximo escolhidos pelo usuário são limites de duração reproduzida; para buscar palavras/acontecimentos em mídia, o motor converte a janela por `source_duration = playback_duration × clip.speed`. A duração apresentada no resultado é `source_duration / clip.speed`, e a interface identifica separadamente tempo de fonte e duração na timeline. Os controles de ajuste de borda usam limites equivalentes em tempo da fonte.
+
+A velocidade também integra a chave do cache de ranking. Mudar velocidade reavalia candidatos e ranking dependentes, mas reutiliza frames acústicos cacheados, que continuam sendo características do áudio original. `CLIPPER_VERSION` avançou para invalidar resultados antigos cuja duração estava rotulada como tempo de fonte. Um teste de regressão cobre velocidade 0,5×, 1× e 2×, limites de duração, timestamps absolutos e invalidação seletiva sem alterar a fonte.
+
+Durante a correção, um teste detectou outro desvio do limite mínimo: a preferência por um fim de frase permitia escolher um candidato com até 75% da duração mínima. A busca agora só adota o limite de frase se ele também respeitar o intervalo solicitado. Se não houver fim natural dentro desses limites, mantém o limite de palavra mais próximo que já passou pela validação de duração.
+
 ## Estado encontrado no repositório
 
 O clipador não precisava ser reconstruído. A branch de trabalho já continha uma implementação local e determinística em `berofel/services/clipper.py`, ligada à interface `berofel/ui/clipper_dialog.py` e à janela principal. Ela recebe palavras persistidas no projeto, reutiliza cache da waveform/miniaturas, pode medir PCM por um pipe FFmpeg limitado e devolve candidatos revisáveis com timestamps absolutos da mídia de origem.
@@ -35,6 +43,8 @@ Referências são engenharia e literatura, não prova de qualidade do Berofel. N
 |---|---|---|
 | [Auto-Editor](https://github.com/WyattBlue/auto-editor) | Máscaras temporais por condição, limiar de áudio/movimento e margem explícita para suavizar cortes. Útil para separar detecção de atividade da ação de edição. | O repositório declara Unlicense para seu código; binários e dependências podem ter licenças próprias. Nenhum código importado. |
 | [PySceneDetect](https://github.com/Breakthrough/PySceneDetect) | Detector adaptativo compara mudanças entre frames com uma referência temporal local para reduzir cortes falsos por movimento de câmera; também documenta conteúdo HSV, histogramas e hash perceptual. | BSD-3-Clause verificada no repositório. Não adicionada como dependência; nosso clipador só reutiliza miniaturas já cacheadas. |
+| [NVIDIA NeMo ASR](https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/asr/intro.html) | Documenta timestamps de segmentos e palavras para Parakeet, dependendo do decodificador/modelo. Isso respalda o uso dos tempos efetivamente emitidos pelo adaptador, sem criar alinhamentos quando ausentes. | Documentação oficial estudada; o editor preserva seu runtime Parakeet existente e não adiciona NeMo como dependência do Clip Engine. |
+| [SciPy `find_peaks`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.find_peaks.html) | Prominência, distância e largura são propriedades úteis para separar máximos locais de eventos sustentados. A implementação atual usa uma passagem NumPy compacta sobre RMS relativo e fluxo espectral; SciPy não foi adicionado para evitar custo/dependência duplicada. | Documentação oficial consultada; sem código importado. |
 | [TextTiling, Hearst 1997](https://aclanthology.org/J97-1003/) | Coesão lexical e vales de similaridade para aproximar fronteiras de subassuntos. A versão local é uma heurística de janela/turnos e não uma implementação integral nem equivalente a avaliação humana do artigo. | Página ACL informa material pré-2016 sob CC BY-NC-SA 3.0. Não copiar texto nem código; somente conceito acadêmico. |
 | [TextRank, Mihalcea e Tarau 2004](https://web.eecs.umich.edu/~mihalcea/papers/mihalcea.emnlp04.pdf) | Ranking gráfico recursivo de frases/termos; o modo avançado usa uma passagem pequena e localizada para saliência, não para prever viralidade. | Fórmula acadêmica estudada; não houve cópia de implementação. |
 | [MomentClip / Yuu-yu09/clipper](https://github.com/Yuu-yu09/clipper) | Exibe justificativas e admite explicitamente limites de entendimento visual; exemplo de transparência e separação de pistas observáveis. | README declara MIT. Projeto inclui recursos multimodais/LLM opcionais, que não foram integrados nem são necessários ao Berofel. |
@@ -48,6 +58,10 @@ Referências são engenharia e literatura, não prova de qualidade do Berofel. N
 As marcas OpusClip, Klap e Vizard servem somente como referência de experiência editorial: escolha de duração, revisão, limites/contexto, títulos e diversidade. Os algoritmos proprietários não foram presumidos ou reproduzidos.
 
 ## Validação executada nesta revisão
+
+- Teste novo de duração/timebase em 0,5×, 1× e 2×: inicialmente revelou que o ajuste de limite de frase podia cair abaixo da duração mínima; após a correção, `unittest discover -s tests -p 'test_clipper.py' -q` passou em 32 testes.
+- A validação deste incremento ainda não inclui um novo benchmark editorial humano ou inferência Parakeet. O escopo de mudança não aciona ASR; para validar os candidatos reais será necessário usar a transcrição persistida e revisar o áudio no editor.
+- Execução adicional do benchmark sintético `benchmark_clip_engine_synthetic.py --lengths 5 20 60 80 120 --repeats 1`, 26/11/2026: em 80 min/11.048 palavras, Rápido 4,471 s, Equilibrado 4,465 s e Avançado 4,625 s; em 120 min/16.572 palavras, 6,676 s, 6,680 s e 7,018 s, respectivamente. Delta RSS amostrado máximo em 120 min: 15,145 / 9,402 / 7,461 MiB. Foi uma única execução por combinação, sem vídeo/áudio e com transcrição sintética repetida; não é p50/p95, medição do Parakeet nem prova de qualidade editorial.
 
 - `unittest discover -s tests -p 'test_cl*.py'`: 67 testes passaram.
 - `unittest discover -s tests -p 'test_parakeet_asr.py'`: 8 testes passaram. São testes de adaptador com doubles; não são uma nova inferência real do modelo.

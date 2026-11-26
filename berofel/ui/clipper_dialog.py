@@ -14,6 +14,18 @@ from berofel.services.clipper import ClipperOptions, suggest_title
 from berofel.services.clip_audio_signals import CLIP_SCORE_PROFILES
 
 
+def _candidate_time_label(candidate):
+    rate=float(candidate.get('playback_rate',1.0) or 1.0)
+    source_start=float(candidate.get('source_start',0.0))
+    source_end=float(candidate.get('source_end',source_start))
+    playback_duration=float(candidate.get('duration',max(0.,source_end-source_start)))
+    label=(f'Fonte {source_start:.2f}–{source_end:.2f}s · '
+           f'timeline {playback_duration:.1f}s')
+    if abs(rate-1.0)>1e-4:
+        label+=f' · {rate:g}×'
+    return label
+
+
 class ClipperDialog(QDialog):
     analyze_requested=Signal(object)
     transcribe_requested=Signal()
@@ -141,7 +153,7 @@ class ClipperDialog(QDialog):
         boundary_row.addWidget(self.end_boundary,1)
         root.addLayout(boundary_row)
         self.table=QTableWidget(0,6)
-        self.table.setHorizontalHeaderLabels(('Usar','Nota','Tempo · duração',
+        self.table.setHorizontalHeaderLabels(('Usar','Nota','Fonte · duração na timeline',
                                               'Título sugerido','Texto transcrito',
                                               'Sinais e avisos'))
         self.table.verticalHeader().hide()
@@ -252,7 +264,7 @@ class ClipperDialog(QDialog):
             self.table.setItem(row,1,QTableWidgetItem(
                 f"{candidate['score']:.1f}/100 · evidência {coverage:.0%}"))
             self.table.setItem(row,2,QTableWidgetItem(
-                f"{candidate['source_start']:.2f}–{candidate['source_end']:.2f}s  ·  {candidate['duration']:.1f}s"))
+                _candidate_time_label(candidate)))
             title=str(candidate.get('suggested_title') or suggest_title(candidate.get('text','')))
             candidate['suggested_title']=title
             title_item=QTableWidgetItem(title)
@@ -388,8 +400,10 @@ class ClipperDialog(QDialog):
             self._updating_boundaries=False
         if start==candidate['start_ms'] and end==candidate['end_ms']:return
         candidate=dict(candidate)
+        playback_rate=float(candidate.get('playback_rate',1.0) or 1.0)
         candidate.update({'start_ms':start,'end_ms':end,'source_start':start/1000.,
-            'source_end':end/1000.,'duration':(end-start)/1000.,'score_adjusted':True})
+            'source_end':end/1000.,'source_duration':(end-start)/1000.,
+            'duration':(end-start)/1000./playback_rate,'score_adjusted':True})
         spans=[word for word in candidate.get('word_spans',[])
                if int(word['start_ms'])>=start and int(word['end_ms'])<=end]
         candidate['text']=' '.join(str(word['text']) for word in spans).strip()
@@ -401,8 +415,7 @@ class ClipperDialog(QDialog):
         if warning not in candidate['warnings']:candidate['warnings'].append(warning)
         row=self.table.currentRow()
         self.table.item(row,0).setData(Qt.ItemDataRole.UserRole,candidate)
-        self.table.item(row,2).setText(
-            f"{candidate['source_start']:.2f}–{candidate['source_end']:.2f}s  ·  {candidate['duration']:.1f}s")
+        self.table.item(row,2).setText(_candidate_time_label(candidate))
         self.table.item(row,3).setText(candidate['suggested_title'])
         self.table.item(row,4).setText(candidate['text'] or
             ('Sem transcrição · candidato baseado apenas em sinais observados'

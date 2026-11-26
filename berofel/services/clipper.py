@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import subprocess
 import time
+from types import SimpleNamespace
 from typing import Callable, Iterable, Mapping, Sequence
 
 import numpy as np
@@ -28,7 +29,7 @@ from .clip_visual_signals import (read_cached_visual_signals,
     score_cached_visual_interval, detect_cached_visual_events)
 from .ffmpeg import ffmpeg_path, media_info
 
-CLIPPER_VERSION = 10
+CLIPPER_VERSION = 11
 # Keep the persisted v5 feature keys compatible: the PCM/waveform extraction
 # format and algorithm did not change. Bump this independently only when they do.
 FEATURE_EXTRACTOR_VERSION = 6
@@ -758,7 +759,10 @@ def _candidate_spans(words: Sequence[Mapping], options: ClipperOptions) -> list[
                           if _TERMINAL.search(str(words[i]['text']).strip())]
         if terminal_indices:
             best=min(terminal_indices,key=lambda i:abs(ends[i]-(start+target)))
-            if ends[best]-start>=minimum*.75:
+            # A sentence ending is preferable only when it still respects the
+            # requested duration. Previously the 75% allowance could silently
+            # return a shorter clip than the lower duration bound.
+            if minimum<=ends[best]-start<=maximum:
                 end_index=best
         subset=list(words[start_index:end_index+1])
         end=float(subset[-1]['end_ms'])
@@ -1168,6 +1172,16 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
     for position,clip in enumerate(clips):
         if control:control.checkpoint()
         source=str(Path(clip.source).resolve())
+        # UI duration limits describe playback time. Candidate boundaries and
+        # Parakeet timestamps remain in source time, so scale only the search
+        # window by the clip's playback rate. The original source is untouched.
+        playback_rate=float(getattr(clip,'speed',1.0))
+        if not np.isfinite(playback_rate) or playback_rate<=0:
+            raise ValueError('Velocidade de reprodução inválida no escopo do Clipador.')
+        source_duration_options=SimpleNamespace(
+            min_seconds=float(opts.min_seconds)*playback_rate,
+            max_seconds=float(opts.max_seconds)*playback_rate,
+            mode=opts.mode)
         words=_normalise_words(clip,path_words.get(source,[]))
         waveform_signature=(
             _waveform_cache_signature(waveform_provider,source,clip.start,clip.end)
@@ -1180,6 +1194,7 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
         result_identity={'schema':CACHE_SCHEMA,'version':CLIPPER_VERSION,
             'source':identity,'start':round(clip.start,4),
             'end':round(clip.end,4),'words':words,
+            'playback_rate':round(playback_rate,6),
             'options':opts.cache_identity(),
             'timebase':'absolute-source-ms'}
         if opts.mode=='Rápido' and waveform_provider is not None:
@@ -1277,11 +1292,13 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
         word_starts=[int(word['start_ms']) for word in words]
         if words:
             gap_events = gap_audio_events + _events_in_transcript_gaps(visual_events, gaps)
-            proposals = _candidate_spans(words,opts)
-            proposals.extend(_event_only_spans_in_gaps(clip,gap_events,gaps,opts))
+            proposals = _candidate_spans(words,source_duration_options)
+            proposals.extend(_event_only_spans_in_gaps(
+                clip,gap_events,gaps,source_duration_options))
         else:
             gap_events = []
-            proposals = _event_only_spans(clip,events,visual_events,opts)
+            proposals = _event_only_spans(
+                clip,events,visual_events,source_duration_options)
         for candidate in proposals:
             if control:control.checkpoint()
             visual=(score_cached_visual_interval(visual_signals,
@@ -1322,9 +1339,11 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
             candidate_id=digest({'clip_id':clip.id,'start_ms':candidate['start_ms'],
                                   'end_ms':candidate['end_ms'],
                                   'event_only':bool(candidate.get('event_only'))})[:16]
-            start_choices,end_choices=_boundary_choices(words,candidate,opts)
+            start_choices,end_choices=_boundary_choices(
+                words,candidate,source_duration_options)
             if candidate.get('event_only'):
-                start_choices,end_choices=_event_boundary_choices(clip,candidate,opts)
+                start_choices,end_choices=_event_boundary_choices(
+                    clip,candidate,source_duration_options)
             span_left=bisect_left(word_starts,candidate['start_ms']-3000)
             span_right=bisect_right(word_starts,candidate['end_ms']+3000)
             local_words=words[span_left:span_right]
@@ -1340,7 +1359,10 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                 'source':source,'source_start':candidate['start_ms']/1000.,
                 'source_end':candidate['end_ms']/1000.,
                 'start_ms':candidate['start_ms'],'end_ms':candidate['end_ms'],
-                'duration':(candidate['end_ms']-candidate['start_ms'])/1000.,
+                'source_duration':(candidate['end_ms']-candidate['start_ms'])/1000.,
+                'duration':((candidate['end_ms']-candidate['start_ms'])/
+                            1000./playback_rate),
+                'playback_rate':playback_rate,
                 'text':candidate['text'],'transcript_available':not bool(candidate.get('event_only')),
                 'transcript_present':bool(words),
                 'score':ranked['score'],
@@ -1370,8 +1392,12 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                     if int(word['start_ms'])>=candidate['start_ms']-3000 and
                        int(word['end_ms'])<=candidate['end_ms']+3000],
                 'start_choices':start_choices,'end_choices':end_choices,
-                'min_duration_ms':int(opts.min_seconds*1000),
-                'max_duration_ms':int(opts.max_seconds*1000),
+                # Boundary selectors operate on source timestamps, so retain
+                # the equivalent source-time limits alongside playback limits.
+                'min_duration_ms':int(source_duration_options.min_seconds*1000),
+                'max_duration_ms':int(source_duration_options.max_seconds*1000),
+                'min_playback_duration_ms':int(opts.min_seconds*1000),
+                'max_playback_duration_ms':int(opts.max_seconds*1000),
                 'audio_score':ranked['audio_score'],'audio_available':ranked['audio_available'],
                 'checked':False})
         # Keep a cache-local shortlist large enough for the final global pass.
