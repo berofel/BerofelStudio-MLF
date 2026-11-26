@@ -2,6 +2,10 @@
 
 O ASR usado no fluxo BVI é **Parakeet TDT v3 ONNX INT8 em CPU**, junto ao Silero VAD local. Faster-Whisper não faz parte desta rota e não foi usado nos resultados abaixo.
 
+## Smoke test local Parakeet em amostra autorizada (26/11/2026)
+
+Foi executada uma chamada nova do adaptador canônico `parakeet_asr.transcribe_file` sobre uma amostra local autorizada de voz do usuário, convertida temporariamente por FFmpeg para PCM16 mono a 16 kHz. O Parakeet reportou `parakeet-tdt-0.6b-v3-int8`, backend `onnxruntime-cpu`, quatro threads, 8,712 s de mídia, 20 palavras agrupadas e um segmento; a chamada de VAD+ASR levou 5,090 s após os imports Python. O diretório temporário foi removido e nem áudio nem texto reconhecido foram incluídos no log ou repositório. Esta é uma execução única; o tempo exclui a conversão FFmpeg e não tem medição de RAM, repetição estatística ou referência textual humana. Confirma que a rota da branch usa Parakeet local, não a precisão do texto nem a qualidade da voz.
+
 ## Reutilização real do cache de verificação Parakeet (26/11/2026)
 
 O inspetor foi executado sobre a amostra de voz CC0 `assets/voices/stuart_bell.wav` (8,454 s), sem alterar o WAV. A primeira checagem carregou e chamou Parakeet TDT v3 ONNX INT8 via `onnxruntime-cpu`, reconhecendo 23 palavras; a segunda, para o mesmo conteúdo, retornou `cache_hit=true` e o mesmo texto reconhecido, mesmo alterando o parâmetro de threads de 4 para 8. O cache temporário foi removido ao fim do processo. O texto ASR não foi registrado neste documento. Esta execução comprova a integração real do cache com o Parakeet instalado, não a precisão do reconhecimento, qualidade vocal ou desempenho em gravações longas. O texto esperado é comparado novamente a cada chamada, fora do cache, e requer validação humana para ser tratado como referência.
