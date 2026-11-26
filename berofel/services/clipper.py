@@ -28,7 +28,7 @@ from .clip_visual_signals import (read_cached_visual_signals,
     score_cached_visual_interval, detect_cached_visual_events)
 from .ffmpeg import ffmpeg_path, media_info
 
-CLIPPER_VERSION = 8
+CLIPPER_VERSION = 9
 # Keep the persisted v5 feature keys compatible: the PCM/waveform extraction
 # format and algorithm did not change. Bump this independently only when they do.
 FEATURE_EXTRACTOR_VERSION = 5

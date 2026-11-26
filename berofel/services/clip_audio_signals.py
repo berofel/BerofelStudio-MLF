@@ -103,6 +103,14 @@ def _same_topic_duplicate(left: Mapping, right: Mapping,
     return containment >= .92 and jaccard >= .82
 
 
+def _sparse_term_cosine(left: set[str], right: set[str]) -> float:
+    """Cosine similarity for the binary sparse term sets used by MMR."""
+    if not left or not right:
+        return 0.0
+    shared = len(left & right)
+    return float(np.clip(shared / ((len(left) * len(right)) ** 0.5), 0.0, 1.0))
+
+
 @dataclass
 class FrameFeatures:
     """Compact cached frame features (audio analysis, not display waveform min/max)."""
@@ -492,31 +500,68 @@ def score_clip(
 
 
 def select_diverse_clips(ranked: Sequence[Mapping], max_clips: int = 5,
-                         max_overlap_ratio: float = 0.35) -> list[dict]:
-    """Greedily retain high-ranking clips with temporal and lexical diversity.
+                         max_overlap_ratio: float = 0.35,
+                         diversity_lambda: float = 0.75) -> list[dict]:
+    """Rank with MMR while keeping hard temporal/near-duplicate safeguards.
 
     Lexical deduplication is deliberately conservative and only operates on
     transcript text already attached to candidates. It adds no ASR/model work.
+    Relevance is the existing 0-100 editorial score; similarity combines sparse
+    content-term cosine with temporal IoU. The lambda is a ranking tradeoff,
+    not a calibrated quality parameter.
     """
-    chosen: list[tuple[dict, set[str]]] = []
-    for c in sorted(ranked, key=lambda c: float(c["score"]), reverse=True):
-        s, e = float(c["start_ms"]), float(c["end_ms"])
-        if e <= s:
+    if int(max_clips) <= 0:
+        return []
+    if not 0.0 <= float(diversity_lambda) <= 1.0:
+        raise ValueError('diversity_lambda must be between 0 and 1')
+    prepared = []
+    for index, candidate in enumerate(ranked):
+        try:
+            start = float(candidate['start_ms'])
+            end = float(candidate['end_ms'])
+            relevance = float(candidate['score'])
+        except (KeyError, TypeError, ValueError):
             continue
-        terms = _diversity_terms(c.get('text', ''))
-        duplicates = False
-        for prev, prev_terms in chosen:
-            ps, pe = float(prev["start_ms"]), float(prev["end_ms"])
-            intersection = max(0.0, min(e, pe)-max(s, ps))
-            ratio = intersection / min(e-s, pe-ps)
-            if ratio > max_overlap_ratio:
-                duplicates = True
-                break
-            if _same_topic_duplicate(c, prev, terms, prev_terms):
-                duplicates = True
-                break
-        if not duplicates:
-            chosen.append((dict(c), terms))
-            if len(chosen) >= max_clips:
-                break
-    return [candidate for candidate, _terms in chosen]
+        if not (np.isfinite(start) and np.isfinite(end) and
+                np.isfinite(relevance) and 0.0 <= start < end):
+            continue
+        prepared.append({'index': index, 'candidate': dict(candidate),
+                         'start': start, 'end': end,
+                         'relevance': float(np.clip(relevance / 100.0, 0.0, 1.0)),
+                         'terms': _diversity_terms(candidate.get('text', ''))})
+    remaining = sorted(prepared, key=lambda item: (-item['relevance'], item['index']))
+    chosen = []
+    while remaining and len(chosen) < int(max_clips):
+        best_index = None
+        best_utility = float('-inf')
+        for position, item in enumerate(remaining):
+            similarities = []
+            duplicate = False
+            for previous in chosen:
+                intersection = max(0.0, min(item['end'], previous['end']) -
+                                   max(item['start'], previous['start']))
+                shorter = min(item['end'] - item['start'],
+                              previous['end'] - previous['start'])
+                containment = intersection / max(shorter, EPS)
+                if containment > max_overlap_ratio or _same_topic_duplicate(
+                        item['candidate'], previous['candidate'],
+                        item['terms'], previous['terms']):
+                    duplicate = True
+                    break
+                union = ((item['end'] - item['start']) +
+                         (previous['end'] - previous['start']) - intersection)
+                temporal_iou = intersection / max(union, EPS)
+                lexical = _sparse_term_cosine(item['terms'], previous['terms'])
+                similarities.append(.65 * temporal_iou + .35 * lexical)
+            if duplicate:
+                continue
+            redundancy = max(similarities, default=0.0)
+            utility = (float(diversity_lambda) * item['relevance'] -
+                       (1.0 - float(diversity_lambda)) * redundancy)
+            if utility > best_utility:
+                best_utility = utility
+                best_index = position
+        if best_index is None:
+            break
+        chosen.append(remaining.pop(best_index))
+    return [item['candidate'] for item in chosen]

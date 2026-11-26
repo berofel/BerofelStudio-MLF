@@ -155,6 +155,27 @@ class ClipAudioTests(unittest.TestCase):
         out = select_diverse_clips(ranked, max_clips=2)
         self.assertEqual(len(out), 2)
 
+    def test_mmr_prefers_a_distinct_topic_after_the_best_candidate(self):
+        ranked = [
+            dict(start_ms=0, end_ms=10000, score=92,
+                 text='O programa melhora edição automática, transcrição contextual, revisão manual, exportação e legendas.'),
+            dict(start_ms=20000, end_ms=30000, score=88,
+                 text='O programa melhora edição automática, transcrição contextual, revisão manual, performance de exportação e cache.'),
+            dict(start_ms=40000, end_ms=50000, score=78,
+                 text='A entrevista revela como preservar a identidade vocal em narrações longas com vozes diferentes.'),
+        ]
+        out = select_diverse_clips(ranked, max_clips=2, diversity_lambda=.75)
+        self.assertEqual([item['score'] for item in out], [92, 78])
+
+    def test_mmr_rejects_invalid_tradeoff_and_ignores_bad_intervals(self):
+        with self.assertRaises(ValueError):
+            select_diverse_clips([], diversity_lambda=1.1)
+        out = select_diverse_clips([
+            dict(start_ms=5, end_ms=5, score=100),
+            dict(start_ms=0, end_ms=1000, score=70),
+        ])
+        self.assertEqual([item['score'] for item in out], [70])
+
     def test_diversity_terms_are_extracted_once_per_candidate(self):
         from berofel.services import clip_audio_signals as signals
         ranked = [dict(start_ms=i*20000, end_ms=i*20000+10000, score=90-i,
