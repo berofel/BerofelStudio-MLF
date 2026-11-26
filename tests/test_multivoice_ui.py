@@ -42,6 +42,14 @@ class MultiVoicePanelTests(unittest.TestCase):
         self.profile = self.manager.create('Teste UI', sample, 'portuguese', 'fala de referência',
                                            authorized=True)
         self.panel = MultiVoicePanel()
+        # The UI intentionally requires an explicit narration-engine choice.
+        # Keep these script-building tests independent from locally installed models.
+        engine_id = 'qwen3-tts-purec-int8'
+        engine_index = self.panel.engine.findData(engine_id)
+        if engine_index < 0:
+            self.panel.engine.addItem('Pure C INT8 test', engine_id)
+            engine_index = self.panel.engine.findData(engine_id)
+        self.panel.engine.setCurrentIndex(engine_index)
 
     def tearDown(self):
         self.panel.close()

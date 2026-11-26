@@ -55,6 +55,49 @@ git ls-remote --heads origin <branch>
 
 `git push` atualiza o código no GitHub. A Release/instalador só muda após tag validada. O próprio instalador consulta a Release no momento da instalação, mas não publica commits nem atualiza a si mesmo a partir do código-fonte.
 
+## Diagnóstico de acesso e fluxo permanente (26/11/2026)
+
+Estado verificado no workspace Windows:
+
+- `origin` aponta para `https://github.com/berofel/BerofelStudio-MLF.git` em fetch e push.
+- O Git Credential Manager está configurado como helper (`manager`). O teste autenticado `git push --dry-run` ao branch de trabalho retornou `Everything up-to-date`; pushes reais anteriores desta sessão também foram confirmados no remoto. Nenhum token deve ser copiado para arquivos ou logs.
+- O sandbox bloqueia conexões HTTPS ao GitHub (`Failed to connect to github.com:443`). Fora do sandbox, `git fetch --prune origin` e o `push --dry-run` concluíram. Se a mesma mensagem aparecer, a causa é a rede do ambiente, não um conflito Git; não altere o remote nem reescreva histórico para tentar contorná-la.
+- A configuração Git global inclui o caminho exato deste checkout em `safe.directory`, corrigindo a rejeição `fatal: detected dubious ownership`. Não marque pastas amplas como seguras.
+- A configuração local do repositório é `push.default=simple`, `push.autoSetupRemote=true`, `fetch.prune=true` e `pull.ff=only`. Assim, branches novas passam a rastrear o upstream no primeiro push, branches removidas do remoto são podadas no fetch, e pulls não criam merges implícitos.
+- `gh` não está instalado neste ambiente (`gh` não reconhecido), então `gh auth status` e criação de PR via CLI não estão disponíveis. Instalar/autenticar o CLI é opcional; o Git Credential Manager já atende aos pushes Git.
+- A integração GitHub conectada ao Codex informa `permissions.push=false`; a consulta de permissão do colaborador falha com `403 Resource not accessible by integration`. Uma tentativa anterior de criar PR foi rejeitada com `422 ... must be collaborator`. Essa identidade do conector é diferente do credential helper que autenticou os pushes Git. Portanto, push Git funcional não implica permissão para abrir PR pela integração do Codex.
+- A lista pública de branches reporta `protected=false` e o endpoint de rulesets retorna `[]`. A consulta detalhada da proteção de `main` respondeu `403 Resource not accessible by integration`, portanto a integração não consegue inspecionar regras administrativas; não há evidência de branch protection ativa na lista pública. Não removemos proteções.
+- A leitura de `actions/permissions` é recusada pelo conector como endpoint não permitido. O estado administrativo das permissões de Actions não pôde ser confirmado por esta conexão. Os workflows versionados devem continuar executando seus testes; nenhuma permissão ou teste foi alterado nesta configuração.
+- O workflow do instalador define `permissions: contents: read` para os testes/build e `contents: write` somente no job de publicação de Releases; não usa token para abrir PR. O endpoint administrativo de permissões do repositório não ficou acessível, portanto não afirmamos conhecer a política global do Actions.
+- A execução CI do commit `ff441903600c7a6ae59ffc1343fd0c4c119db678` (run [45790082395](https://github.com/berofel/BerofelStudio-MLF/actions/runs/45790082395)) reportou `4 failed, 677 passed, 8 skipped`. Os quatro testes multivozes chamavam `build_script()` sem selecionar motor, mas a interface exige seleção explícita e corretamente lança `ValueError: Escolha manualmente o motor de narração antes de gerar o roteiro.`. Os fixtures foram corrigidos nesta branch para escolher um motor de teste compatível; a suíte local ainda precisa de validação Windows/CI, pois este ambiente não tem `pytest` nem `PySide6` instalado.
+
+### Uso diário
+
+```powershell
+git status --short --branch
+git fetch --prune origin
+git switch -c feat/<assunto> origin/main
+# implemente; rode os testes obrigatórios e revise o diff
+git diff --check
+git add <arquivos-validados>
+git commit -m "feat: resumo objetivo"
+git push -u origin HEAD
+```
+
+Abra o PR de `<branch>` para `main` após o push e aguarde os checks obrigatórios. Só integre alterações validadas; nunca use `--force`/`--force-with-lease` nem faça push direto em `main`. `pull.ff=only` faz `git pull` parar com erro se houver divergência; nessa situação, examine os dois lados e resolva explicitamente, sem reset.
+
+### Ação necessária do proprietário para PR pela integração Codex
+
+O proprietário deve revisar se a instalação do GitHub App usada pelo Codex inclui este repositório e quais permissões o app solicitou. Se o app oferecer `Contents: write` e `Pull requests: write`, autorizar essa atualização; para editar `.github/workflows/*`, o app também precisa solicitar e receber `Workflows: write`. O dono da instalação não consegue conceder um escopo que o próprio app não solicitou; nesse caso, use a CLI com uma conta que tenha escrita ou peça ao administrador do app/integrador que disponibilize esses escopos. Alternativamente, conecte no Codex uma conta GitHub que já tenha escrita. Links diretos:
+
+- Acesso e colaboradores: <https://github.com/berofel/BerofelStudio-MLF/settings/access>
+- Instalação de aplicativos: <https://github.com/settings/installations>
+- Regras de branches: <https://github.com/berofel/BerofelStudio-MLF/settings/branches>
+- Rulesets: <https://github.com/berofel/BerofelStudio-MLF/settings/rules>
+- Permissões de GitHub Actions: <https://github.com/berofel/BerofelStudio-MLF/settings/actions>
+
+Não habilite permissões de escrita amplas para todas as organizações/repositórios se a instalação permitir selecionar somente `BerofelStudio-MLF`. Branch protection pode ser configurada pelo proprietário para exigir PR e os checks reais de CI, mas não é uma correção para a identidade de integração sem `push`.
+
 ## Segurança e limites de distribuição
 
 - O EXE é um bootstrapper online, não um pacote offline completo: baixa Python, dependências, FFmpeg e os motores selecionados.

@@ -1665,6 +1665,12 @@ class ActionsUITests(unittest.TestCase):
                 profile=VoiceProfileManager().create(
                     'Voz UI',sample,'portuguese','referência autorizada',authorized=True)
                 panel=win.narration_panel.multivoice_panel
+                engine_id='qwen3-tts-purec-int8'
+                engine_index=panel.engine.findData(engine_id)
+                if engine_index<0:
+                    panel.engine.addItem('Pure C INT8 test',engine_id)
+                    engine_index=panel.engine.findData(engine_id)
+                panel.engine.setCurrentIndex(engine_index)
                 panel.refresh_profiles()
                 panel.assignments['V1'].setCurrentIndex(
                     panel.assignments['V1'].findData(profile['id']))
