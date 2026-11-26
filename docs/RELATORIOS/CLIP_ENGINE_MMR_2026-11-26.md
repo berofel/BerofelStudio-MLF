@@ -33,11 +33,11 @@ O seletor final agora utiliza uma variante determinística de Maximal Marginal R
 
 ## Validação executada
 
-- `python -m unittest discover -s tests -p test_clip_audio_signals.py -v`: **20/20 passaram**.
+- `python -m unittest discover -s tests -p test_clip_audio_signals.py -q`: **22/22 passaram**.
 - `python -m unittest discover -s tests -p test_clipper.py -v`: **27/27 passaram**.
-- A branch DSP integrada acrescenta cobertura do fluxo espectral e do painel de resultados; essa cobertura será reexecutada no conjunto final após a integração.
-- `python -m unittest discover -s tests -q`: **648 testes, OK; 6 ignorados** por pré-condições existentes. Uma mensagem de uso do benchmark Qwen aparece por um teste negativo de argumentos; não é falha da suíte.
-- `python -m compileall -q` nos dois serviços e no teste alterado: passou.
+- `python -m unittest discover -s tests -p test_clip_visual_signals.py -q`: **8/8**; `test_actions_panel.py`: **91/91**.
+- `python -m unittest discover -s tests -q`: **651 testes, OK; 6 ignorados** por pré-condições existentes. Uma mensagem de uso do benchmark Qwen aparece por um teste negativo de argumentos; não é falha da suíte.
+- `python -m compileall -q` nos serviços, UI, script de benchmark e testes afetados: passou.
 - `python scripts/benchmark_clip_engine_synthetic.py --lengths 5 20 60 80 120 --repeats 2`: texto PT-BR sintético repetitivo, 2 repetições por modo/duração, sem mídia, áudio, vídeo, Parakeet ou anotações humanas. Medianas de parede:
 
 | Duração | Rápido | Equilibrado | Avançado |
@@ -50,10 +50,22 @@ O seletor final agora utiliza uma variante determinística de Maximal Marginal R
 
 O maior aumento de RSS amostrado em cada modo no cenário de 120 min foi 13,00 / 6,48 / 5,02 MiB. A amostragem de RSS é aproximada e esses valores incluem todo o motor da fixture; não são pico exato do processo nem memória de pipeline completa. Com apenas duas repetições não se reporta p95. Os resultados mostram escala de processamento sintético, não melhora de qualidade editorial.
 
+O benchmark `scripts/benchmark_clip_audio_features.py --minutes 5 20 60 80 120 --repeats 1` comparou o extrator anterior (RMS/pico/clipping) com o atual, que adiciona fluxo espectral e ZCR. PCM sintético 16 kHz, sem FFmpeg, Parakeet, ranking ou mídia real; uma repetição por célula:
+
+| Duração | Anterior (s) | Atual com DSP (s) | RSS incremental amostrado anterior/atual (MiB) |
+|---:|---:|---:|---:|
+| 5 min | 0,327 | 0,434 | 5,01 / 4,75 |
+| 20 min | 1,195 | 1,415 | 8,21 / 6,73 |
+| 60 min | 3,198 | 3,892 | 22,16 / 9,62 |
+| 80 min | 4,252 | 5,173 | 27,72 / 11,78 |
+| 120 min | 6,329 | 7,616 | 40,26 / 13,39 |
+
+Na execução de 120 min, o fluxo espectral/ZCR custou cerca de 1,29 s (20%) e reduziu em aproximadamente 26,87 MiB o incremento de RSS amostrado, devido aos arrays compactos float32. São observações de um ensaio sintético, não p50/p95 nem avaliação de ganho editorial. O modo Rápido segue sem decodificar PCM.
+
 ## Limites e próximos passos
 
 - Não havia arquivo real adicional ou conjunto humano de momentos relevantes acessível nesta execução. Precision@K, Recall, completude, erro de fronteira, preferência editorial e calibração de `lambda` continuam sem medida.
 - Não houve nova sessão da interface gráfica, preview ou exportação real nesta mudança; a seleção MMR afeta somente a ordenação/lista retornada.
-- O extrator não calcula F0, fluxo espectral ou risadas; a waveform de 100 ms não contém essas informações. Essas características só devem ser acrescentadas se um benchmark humano mostrar utilidade suficiente para justificar o custo.
+- O extrator PCM agora calcula fluxo espectral e ZCR, mas ainda não calcula F0 nem identifica risadas. A waveform visual de 100 ms não contém dados suficientes para essas medidas.
 - Eventos acústicos ou mudança visual são cues observáveis, não classificação de ação/emoção. Sem palavra cronometrada não significa silêncio.
 - O usuário continua revisando candidatos antes da inserção/exportação. Não há alegação de viralidade nem de competitividade equivalente aos produtos comerciais.
