@@ -45,6 +45,8 @@ No perfil Geral, os pesos são: gancho 0,20; contexto/limites 0,20; áudio 0,15;
 
 Informação lexical combina proporção de termos de conteúdo e razão de termos únicos. Desfecho usa classes de turno e marcadores explícitos; ritmo usa a união dos timestamps de palavras dividida pelo intervalo, sem dupla contagem. Isso não mede utilidade, verdade ou emoção como fatos. Sinais discursivos e possíveis reações permanecem cues para revisão.
 
+Quando há PCM medido, mas nenhum pico relativo à fala é encontrado, a dimensão acústica fica em 0,5 (neutra) e a interface explica que não houve pico; não confunde falta de um evento positivo com áudio ausente. Se o áudio/feature realmente falta, a dimensão fica indisponível e seu peso não entra no cálculo. O piso do detector foi reduzido a -80 dBFS para não suprimir automaticamente microfones de baixo ganho; a decisão continua exigindo aumento relativo sobre a mediana local e timestamps de fala.
+
 ## Cache e desempenho
 
 - Os arrays RMS/pico/clip de PCM e waveform proxy são caches separados, indexados por identidade da fonte, intervalo, taxa, tamanho de quadro e versão do extrator.
@@ -68,7 +70,7 @@ Referências consultadas em 25/11/2026; não copiamos código de terceiros:
 
 ## Testes e limites conhecidos
 
-Testes determinísticos existentes cobrem timestamps, bordas, pergunta/resposta, mudanças de tópico, ironia heurística, RMS/picos, cache e deduplicação. Esta alteração acrescenta cobertura de componentes/perfis e leitura de waveform em cache sem decode. Os 30 testes focados de `test_clip_audio_signals.py` e `test_clipper.py` passaram. A primeira execução da suíte completa encontrou uma regressão Qt: a tarefa consultava `self.timeline.visual_cache`, embora o cache pertença a `self.timeline.view`. A referência foi corrigida, o teste real de despacho Qt passou e a execução final de `python -m unittest discover -s tests -q` passou em **611 testes, com 6 skips**, em 67,022 s. Após a busca binária local, os 30 testes focados passaram novamente. `pytest` não está instalado, mas a suíte existente é `unittest`; não foi instalado outro pacote. `py_compile` dos arquivos alterados e `git diff --check` também passaram.
+Testes determinísticos existentes cobrem timestamps, bordas, pergunta/resposta, mudanças de tópico, ironia heurística, RMS/picos, cache e deduplicação. Esta alteração acrescenta cobertura de componentes/perfis, leitura de waveform em cache sem decode, tolerância a baixo ganho e distinção entre áudio medido e evento detectado. Os 32 testes focados de `test_clip_audio_signals.py` e `test_clipper.py` passaram. A primeira execução da suíte completa encontrou uma regressão Qt: a tarefa consultava `self.timeline.visual_cache`, embora o cache pertença a `self.timeline.view`. A referência foi corrigida e o teste real de despacho Qt passou. A última execução de `python -m unittest discover -s tests -q` passou em **613 testes (607 aprovados, 6 skips)** em 69,765 s. `pytest` não está instalado, mas a suíte existente é `unittest`; não foi instalado outro pacote. `py_compile` dos arquivos alterados e `git diff --check` também passaram.
 
 ### Benchmark sintético de escala (25/11/2026)
 

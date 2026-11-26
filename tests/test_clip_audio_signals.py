@@ -26,12 +26,34 @@ class ClipAudioTests(unittest.TestCase):
         self.assertTrue(any(6950 <= e['start_ms'] <= 7100 for e in events), events)
         self.assertTrue(all(e['start_ms'] < 10500 for e in events))
 
+    def test_relative_event_survives_low_gain_recording(self):
+        rate = 16000
+        signal = np.full(rate * 12, .00015, dtype=np.float32)
+        signal[rate * 6:rate * 7] *= 5.
+        frames = extract_frames_from_chunks([signal], rate)
+        events = detect_energy_events(frames, [(0, 12000)], relative_rise_db=6,
+                                      min_duration_ms=80)
+        self.assertTrue(any(5900 <= event['start_ms'] <= 6100
+                            for event in events), events)
+
     def test_quiet_good_content_not_penalized_if_audio_unavailable(self):
         c = dict(start_ms=0, end_ms=10000, context_score=.95, hook_score=.9,
                  boundary_score=.9)
         result = score_clip(c, [])
         self.assertGreater(result['score'], 85)
         self.assertIsNone(result['audio_score'])
+
+    def test_measured_audio_without_surge_is_neutral_not_reported_missing(self):
+        frames = extract_frames_from_chunks(
+            [np.full(16000 * 3, .03, dtype=np.float32)], 16000)
+        candidate = dict(start_ms=0, end_ms=3000, context_score=.8,
+                         hook_score=.7, boundary_score=.8)
+        result = score_clip(candidate, [], frames)
+        self.assertTrue(result['audio_available'])
+        self.assertFalse(result['audio_event_evidence'])
+        self.assertEqual(result['audio_score'], .5)
+        self.assertEqual(result['components']['audio'], .5)
+        self.assertIn('valor neutro', ' '.join(result['reasons']))
 
     def test_discourse_signal_is_small_and_reported_in_editorial_ranking(self):
         base = dict(start_ms=0, end_ms=10000, context_score=.7,

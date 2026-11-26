@@ -217,7 +217,11 @@ def _baseline_db(
     seconds = np.floor(times_ms / 1000).astype(int)
     count = int(seconds[-1]) + 1
     # Use voiced, non-silent frames to avoid lowering reference in quiet gaps.
-    valid = speech & (rms_dbfs > -65)
+    # Keep the local reference speaker-relative: an absolute -55/-65 dBFS
+    # gate discarded low-gain microphones even when their speech was clearly
+    # present in the transcript timestamps. This floor only rejects near-zero
+    # PCM; the event threshold remains a rise over the recording's own median.
+    valid = speech & (rms_dbfs > -80)
     ref = np.full(count, np.nan, dtype=np.float32)
     # Slice adjacent time buckets by index, rather than doing one full-array
     # scan for every second of a multi-hour video.
@@ -230,7 +234,7 @@ def _baseline_db(
             ref[sec] = float(np.median(values))
     available = ref[np.isfinite(ref)]
     if len(available) == 0:
-        return np.full(len(rms_dbfs), -65, dtype=np.float32)
+        return np.full(len(rms_dbfs), -80, dtype=np.float32)
     fallback = float(np.median(available))
     radius = max(1, baseline_window_s // 2)
     reference = np.empty(count, dtype=np.float32)
@@ -261,7 +265,7 @@ def detect_energy_events(
     speech = speech_frame_mask(frames, speech_intervals_ms)
     baseline = _baseline_db(frames.times_ms, frames.rms_dbfs, speech)
     rise = frames.rms_dbfs - baseline
-    active = (rise >= relative_rise_db) & (frames.rms_dbfs > -55) & speech
+    active = (rise >= relative_rise_db) & (frames.rms_dbfs > -80) & speech
     idxs = np.flatnonzero(active)
     if not len(idxs):
         return []
@@ -353,14 +357,18 @@ def score_clip(
     span_events = [e for e in events if float(e["start_ms"]) < end
                    and float(e["end_ms"]) > start]
     verified = [e for e in span_events if e.get("speech_verified", False)]
+    audio_available = frames is not None or bool(verified)
     if verified:
         strengths = sorted((float(e.get("strength", 0)) for e in verified), reverse=True)
         # Cap strong evidence to prevent repeated music beats inflating the score.
         audio = float(np.clip(0.75*strengths[0] + 0.25*min(len(strengths)/3, 1.0), 0, 1))
-        audio_available = True
+    elif audio_available:
+        # A measured signal with no speech-aligned relative surge is neutral.
+        # Silence/low dynamics are not sufficient grounds to call good speech
+        # uninteresting, but the acoustic dimension is still observed.
+        audio = 0.5
     else:
         audio = 0.0
-        audio_available = False
     figurative = float(np.clip(candidate.get('figurative_score', 0.0), 0, 1))
     discourse = float(np.clip(candidate.get('discourse_score', 0.0), 0, 1))
     # Explainable editorial dimensions. Values not supplied by the analysis are
@@ -421,6 +429,10 @@ def score_clip(
                 reasons.append({"question": "Mudança de energia durante pergunta",
                                 "answer": "Mudança de energia durante resposta",
                                 "reveal": "Mudança de energia durante revelação"}[label])
+    elif audio_available:
+        reasons.append("Áudio medido; nenhum pico relativo alinhado à fala foi detectado (valor neutro)")
+    else:
+        reasons.append("Áudio indisponível; ranking baseado nas evidências restantes")
     if context >= 0.75:
         reasons.append("Conversa com contexto independente")
     if hook >= 0.75:
@@ -429,9 +441,7 @@ def score_clip(
         reasons.append("Possíveis sinais de ironia/figura de linguagem; conferir no áudio")
     if discourse >= .62:
         reasons.append("Sinais discursivos de reação, humor, pergunta retórica ou reinício; conferir no áudio")
-    if not verified:
-        reasons.append("Áudio não verificado; nota baseada no texto e limites")
-    elif frames is not None and frames.level_kind != 'pcm_rms':
+    if verified and frames is not None and frames.level_kind != 'pcm_rms':
         reasons.append('Sinal acústico aproximado pela waveform de pico da timeline (100 ms)')
     semantic = .6*context + .4*hook
     return {
@@ -442,6 +452,7 @@ def score_clip(
         "figurative_score": round(figurative, 3) if 'figurative_score' in candidate else None,
         "discourse_score": round(discourse, 3) if 'discourse_score' in candidate else None,
         "audio_available": audio_available,
+        "audio_event_evidence": bool(verified),
         "audio_source": frames.level_kind if frames is not None else None,
         "boundary_score": round(boundary, 3),
         "profile": profile if profile in CLIP_SCORE_PROFILES else 'Geral',
