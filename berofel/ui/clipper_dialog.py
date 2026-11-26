@@ -111,6 +111,14 @@ class ClipperDialog(QDialog):
             'não decodifica o vídeo e não identifica semanticamente o que aparece.')
         visual_row.addWidget(self.visual_analysis)
         visual_row.addStretch(1)
+        visual_row.addWidget(QLabel('Pontuação mínima'))
+        self.minimum_score=QSpinBox()
+        self.minimum_score.setRange(0,100)
+        self.minimum_score.setSuffix('/100')
+        self.minimum_score.setValue(0)
+        self.minimum_score.setToolTip(
+            'Filtra candidatos já classificados. Alterar este valor reutiliza o ranking e não chama o Parakeet.')
+        visual_row.addWidget(self.minimum_score)
         root.addLayout(visual_row)
 
         self.status=QLabel('Analise somente o alcance escolhido na aba Ações IA.')
@@ -200,7 +208,8 @@ class ClipperDialog(QDialog):
             self.maximum_candidates.value(),self.sensitivity.value(),self.profile.currentText(),
             self.mode.currentText(),self.visual_analysis.isChecked(),
             ({key:spin.value()/100. for key,spin in self.score_weight_controls.items()}
-             if self.weight_group.isChecked() else None))
+             if self.weight_group.isChecked() else None),
+            self.minimum_score.value())
 
     def _reset_profile_weights(self,profile):
         weights=CLIP_SCORE_PROFILES.get(profile,CLIP_SCORE_PROFILES['Geral'])
@@ -217,7 +226,7 @@ class ClipperDialog(QDialog):
         self.transcribe_button.setEnabled(not busy)
         self.cancel_button.setEnabled(busy)
         for widget in (self.minimum,self.maximum,self.maximum_candidates,self.sensitivity,
-                       self.profile,self.mode,self.visual_analysis):
+                       self.profile,self.mode,self.visual_analysis,self.minimum_score):
             widget.setEnabled(not busy)
         self.weight_group.setEnabled(not busy)
         if busy:self.status.setText('Calculando em segundo plano; você pode continuar editando a timeline.')
@@ -301,7 +310,8 @@ class ClipperDialog(QDialog):
         status_text=(f"{len(self._candidates)} candidato(s) · {len(self._events)} evento(s) acústico(s) · "
             f"{stats.get('elapsed_seconds',0):.2f}s · cache {stats.get('cache_hits',0)} hit(s)/"
             f"{stats.get('cache_misses',0)} novo(s) · decodificados {stats.get('decoded_seconds',0):.1f}s"
-            +rss_label+f" · {mode} · perfil {profile}. A nota usa somente evidências disponíveis.")
+            +rss_label+f" · {mode} · perfil {profile} · nota mínima {stats.get('min_score',0):.0f}/100. "
+            "A nota usa somente evidências disponíveis.")
         if not self._candidates:
             warnings=[str(warning) for clip in result.get('clips',[])
                       for warning in clip.get('warnings',[]) if warning]

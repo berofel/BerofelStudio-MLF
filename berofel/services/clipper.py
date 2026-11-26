@@ -65,6 +65,7 @@ class ClipperOptions:
     mode: str = 'Equilibrado'
     analyze_visual: bool = False
     score_weights: Mapping[str, float] | None = None
+    min_score: float = 0.0
 
     def __post_init__(self):
         if not 3 <= float(self.min_seconds) <= 300:
@@ -75,6 +76,8 @@ class ClipperOptions:
             raise ValueError('Escolha entre 1 e 50 candidatos.')
         if not 1 <= float(self.relative_rise_db) <= 24:
             raise ValueError('Sensibilidade de energia precisa ficar entre 1 e 24 dB.')
+        if not np.isfinite(float(self.min_score)) or not 0. <= float(self.min_score) <= 100.:
+            raise ValueError('A pontuação mínima deve ficar entre 0 e 100.')
         from .clip_audio_signals import CLIP_SCORE_PROFILES
         if self.profile not in CLIP_SCORE_PROFILES:
             raise ValueError('Perfil do Clipador desconhecido.')
@@ -95,6 +98,9 @@ class ClipperOptions:
                 'relative_rise_db': float(self.relative_rise_db),
                 'profile': self.profile,'mode':self.mode,
                 'analyze_visual':bool(self.analyze_visual),
+                # The score floor is a result filter, not an analysis input.
+                # Keep it out of the ranking cache key so changing it reuses
+                # the same transcript, acoustic features, and ranked candidates.
                 'score_weights':({str(key):float(value) for key,value in
                     sorted(self.score_weights.items())}
                     if self.score_weights is not None else None)}
@@ -1371,17 +1377,32 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
             temporary.unlink(missing_ok=True)
         results.append(result)
         if progress:progress(position+1,total)
-    candidate_count=sum(len(item['candidates']) for item in results)
+    candidate_count_before_filter=sum(len(item['candidates']) for item in results)
+    visible_results=[]
+    min_score=float(opts.min_score)
+    for item in results:
+        visible=dict(item)
+        visible['candidates']=[candidate for candidate in item['candidates']
+            if float(candidate.get('score',-1.)) >= min_score]
+        if item['candidates'] and not visible['candidates']:
+            visible['status']='below_minimum_score'
+            visible['warnings']=list(item.get('warnings',[])) + [
+                f"Nenhum candidato atingiu a pontuação mínima de {min_score:.0f}/100."]
+        visible_results.append(visible)
+    visible_candidates=[candidate for item in visible_results
+                        for candidate in item['candidates']]
     try:
         import psutil
         rss_mb=psutil.Process(os.getpid()).memory_info().rss/(1024*1024)
     except (ImportError,OSError):
         rss_mb=None
-    return {'clips':results,'candidates':[c for item in results for c in item['candidates']],
+    return {'clips':visible_results,'candidates':visible_candidates,
         'events':[event for item in results for event in item['events']],
         'stats':{'cache_hits':hits,'cache_misses':misses,'decoded_seconds':round(decoded_seconds,3),
             'profile':opts.profile,'mode':opts.mode,
-            'feature_frames':frames_seen,'candidate_count':candidate_count,
+            'min_score':min_score,
+            'feature_frames':frames_seen,'candidate_count':len(visible_candidates),
+            'candidate_count_before_min_score':candidate_count_before_filter,
             'visual_frames_reused':visual_frames_reused,
             'visual_cache_hits':visual_cache_hits,
             'transcript_gap_candidates':sum(

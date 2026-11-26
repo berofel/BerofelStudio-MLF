@@ -341,6 +341,33 @@ class ClipperTests(unittest.TestCase):
         self.assertEqual(first['stats']['decoded_seconds'],0.)
         self.assertEqual(second['stats']['decoded_seconds'],0.)
 
+    def test_minimum_score_filters_cached_rank_without_reanalysis(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_min_score_') as folder:
+            source=Path(folder)/'source.wav';source.write_bytes(b'fixture')
+            clip=Clip(str(source),0.,36.,kind='audio')
+            words=transcript(source,count=180,step=.2)
+            cache=Path(folder)/'cache'
+            with patch('berofel.services.clipper.audio_features',
+                       return_value=(None,False)) as audio:
+                ranked=analyze_clips([clip],words,
+                    ClipperOptions(8.,16.,5,6.),cache_dir=cache)
+                filtered=analyze_clips([clip],words,
+                    ClipperOptions(8.,16.,5,6.,min_score=100.),cache_dir=cache)
+        self.assertTrue(ranked['candidates'])
+        self.assertGreater(ranked['stats']['candidate_count_before_min_score'],0)
+        self.assertEqual(filtered['candidates'],[])
+        self.assertEqual(filtered['clips'][0]['status'],'below_minimum_score')
+        self.assertEqual(filtered['stats']['candidate_count'],0)
+        self.assertEqual(filtered['stats']['candidate_count_before_min_score'],
+                         ranked['stats']['candidate_count_before_min_score'])
+        self.assertGreaterEqual(filtered['stats']['cache_hits'],1)
+        audio.assert_called_once()
+
+    def test_minimum_score_rejects_nonfinite_and_out_of_range_values(self):
+        for value in (-.1,100.1,float('nan'),float('inf')):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                ClipperOptions(min_score=value)
+
     def test_visual_event_in_long_transcript_gap_becomes_review_candidate(self):
         with tempfile.TemporaryDirectory(prefix='bfs_clipper_transcript_gap_') as folder:
             source=Path(folder)/'gameplay.mp4';source.write_bytes(b'fixture')

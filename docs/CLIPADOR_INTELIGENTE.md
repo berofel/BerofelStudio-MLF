@@ -5,6 +5,7 @@ O Clipador é uma ferramenta local de descoberta e revisão, não um editor auto
 ## Backend e dados de entrada auditados
 
 - ASR em `berofel/services/parakeet_asr.py`: `nemo-parakeet-tdt-0.6b-v3`, quantização ONNX INT8, `onnx-asr==0.12.0`, `onnxruntime` com `CPUExecutionProvider`, `.with_timestamps()`. VAD usa o Silero ONNX local. Os arquivos de palavra contêm texto, `start`, `end` e `probability=None`; a confiança não é fabricada. O projeto mapeia os tempos para `source_start`/`source_end` absolutos da mídia.
+- Limite linguístico importante: a matriz oficial consultada da NVIDIA lista o Parakeet TDT v3 multilíngue com locale de português `pt-PT`, não uma variante `pt-BR`. O adaptador local seleciona idioma automaticamente e não declara confiança calibrada. O Clip Engine reutiliza a saída como está; nomes, gírias e fala brasileira podem ter erros, portanto confirme a transcrição e os limites no preview. Nenhum ASR alternativo ou fallback é executado.
 - O Clipador recebe `project.transcripts` em `window.open_clipper`; a função `analyze_clips` só recebe os clipes selecionados e esse texto/timestamp salvo. A análise nunca instancia nem chama o ASR. Se faltarem palavras, a pessoa pode escolher **Transcrever faltantes com Parakeet**; essa ação chama o pipeline modular existente em modo `transcribe`, somente nos blocos sem palavras persistidas, grava os resultados no projeto/cache e então permite atualizar os candidatos. Sem essa ação, a análise segue apenas com sinais existentes ou PCM, sem ASR.
 - A waveform da timeline em `services/timeline_visuals.py` é um envelope visual de pico mono a 4 kHz, um valor por 100 ms, dividido em tiles de 60 s. Ela não contém RMS, FFT, F0, fluxo espectral nem VAD. O Clipador agora pode consumi-la sem pedir uma decodificação nova, no modo **Rápido**. O envelope é explicitamente classificado como `waveform_peak_proxy`; não é tratado como RMS nem como clipping.
 - No modo **Equilibrado**, a extração PCM usa FFmpeg em streaming, mono float 16 kHz e quadros de 20 ms. Em uma única passagem calcula RMS, pico, fração de clipping, fluxo espectral normalizado e taxa de cruzamento por zero. Esses sinais ficam no cache; o áudio nunca é carregado integralmente na RAM.
@@ -44,6 +45,8 @@ Perfis disponíveis: Geral, Podcast, Gameplay, Tutorial, Terror, Humor, Debate, 
 
 O grupo recolhido **Ajuste avançado de pesos · experimental** permite alterar as prioridades por dimensão depois de escolher um perfil. Os valores são normalizados para soma 1; evidências ausentes continuam `null` e não recebem nota inventada. Esse controle recalcula somente os resultados/ranking com o cache de áudio existente, não chama o Parakeet nem decodifica PCM novamente. Pesos são preferências experimentais, não parâmetros calibrados por aprovação humana.
 
+O campo **Pontuação mínima** filtra os candidatos classificados, entre 0 e 100. Ele não participa da identidade da análise persistida: aumentar ou reduzir o limite relê o ranking em cache, sem nova chamada ao Parakeet, reextração acústica, leitura de vídeo ou renderização. O painel informa quando todos os resultados ficaram abaixo do limite. Nota zero mantém a lista sem esse filtro.
+
 ## Pontuação
 
 Os pesos iniciais estão em `clip_audio_signals.CLIP_SCORE_PROFILES`. Para cada candidato, usa-se a média ponderada dos componentes disponíveis:
@@ -64,6 +67,7 @@ Quando há PCM medido, mas nenhum pico relativo à fala é encontrado, a dimens�
 - O proxy visual usa cache `.npz` separado, indexado pela mídia/intervalo e pelo caminho, tamanho e `mtime_ns` de cada thumbnail existente. Alterar o perfil reutiliza as diferenças de quadro/histogramas; criar ou alterar miniaturas invalida somente essa extração. A coleta de caminhos chama `get_thumb(..., request=False)`, e a escrita é atômica e entra no limite geral do cache do Clipador.
 - Quando a análise visual está ligada, a classificação final relê o manifesto das miniaturas antes de consultar resultado persistido, para que uma miniatura nova/substituída não deixe o ranking antigo visível. O cálculo das diferenças continua vindo do cache visual se a identidade das miniaturas não mudou.
 - Resultados incluem texto/timestamps, opções, perfil, modo e versão da regra. Alterar duração/perfil pode recalcular candidatos e ranking, mas nunca solicita uma nova transcrição. As características de áudio continuam reutilizáveis.
+- O limite de nota é aplicado depois da leitura do ranking persistido. Assim, alterar apenas a nota mínima não invalida candidatos, transcrição ou características; o retorno também informa quantos candidatos havia antes do filtro.
 - `score_clip` e avisos agora recortam os arrays com busca binária, em vez de criar uma máscara sobre todos os frames para cada candidato. A busca de tópicos internos também limita a consulta às fronteiras dentro do candidato.
 - Para candidatos sem fala transcrita, as mudanças de miniaturas usam MAD/percentis e NMS temporal. Scores de evento são contraídos conforme a cobertura das evidências do perfil; essa é uma proteção de ranking experimental, não uma métrica de qualidade validada.
 - O cache segue em `%LOCALAPPDATA%\BFS\cache\clipper` ou `BEROFEL_CLIPPER_CACHE`; os artefatos reconhecidos estão sujeitos ao limite configurável `BEROFEL_CLIPPER_CACHE_MAX_MB`. Cache corrompido é ignorado e pode ser refeito.
@@ -71,7 +75,7 @@ Quando há PCM medido, mas nenhum pico relativo à fala é encontrado, a dimens�
 
 ## Pesquisa e licenças
 
-Referências consultadas em 25/11/2026; não copiamos código de terceiros:
+Referências consultadas em 26/11/2026; não copiamos código de terceiros:
 
 - TextTiling (Hearst, 1997) baseia segmentação temática em coocorrência/cohesão lexical entre blocos: [ACL Anthology](https://aclanthology.org/J97-1003/). O projeto usa uma aproximação local por turnos, não replica o algoritmo experimental completo.
 - TextRank (Mihalcea e Tarau, 2004) é uma técnica de ranking em grafo para texto: [ACL Anthology](https://aclanthology.org/W04-3252/). O modo Avançado implementa uma variante local, esparsa e limitada por vizinhança; não é uma reprodução integral do experimento do artigo.
@@ -84,6 +88,8 @@ Referências consultadas em 25/11/2026; não copiamos código de terceiros:
 - Claggeta Clipper indica “License to be decided”; não usar nem adaptar código dele até que haja licença compatível.
 - A leitura do MomentClip/`Yuu-yu09/clipper` é útil como referência de desenho “sinais primeiro, shortlist depois”, mas o próprio repositório descreve uso opcional de Faster-Whisper, visão e juiz LLM; esses componentes não entram no Berofel. A licença foi verificada no repositório antes de qualquer consideração de reutilização; nenhum arquivo foi copiado.
 - A documentação do OpusClip é referência de fluxo editorial e opções de produto, não de implementação: os detalhes proprietários não são observáveis e não foram inferidos. O Auto-Editor mostra uma composição declarativa de regras de áudio/movimento e margens; o Berofel mantém o próprio modelo de timeline e não importa sua implementação.
+- A página pública “How Klap Works” descreve seleção de momentos a partir de transcrição cronometrada, autonomia contextual, começo rápido, conclusão da ideia, ranking explicado, edição posterior, múltiplas proporções e reenquadramento. A página comercial do OpusClip apresenta clipping por gênero, recorte, legendas e edição. São referências de produto/fluxo; alegações de “viralidade” e algoritmos proprietários não foram reproduzidos nem tratados como métricas científicas.
+- ClipsAI (MIT) documenta segmentação e composição como biblioteca, mas sua integração padrão usa WhisperX; não reutilizamos ASR nem código. A documentação consultada do Claggeta Clipper declara que sua licença ainda será decidida, portanto foi excluído de qualquer reutilização. Nenhuma dependência foi adicionada por esta pesquisa.
 
 ## Testes e limites conhecidos
 

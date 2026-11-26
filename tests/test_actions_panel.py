@@ -257,6 +257,7 @@ class ActionsUITests(unittest.TestCase):
         self.assertEqual(dialog.options().min_seconds,15.)
         self.assertEqual(dialog.options().max_seconds,60.)
         self.assertFalse(dialog.options().analyze_visual)
+        self.assertEqual(dialog.options().min_score,0.)
         self.assertIn('Aulas',[dialog.profile.itemText(i)
                                for i in range(dialog.profile.count())])
         self.assertIn('Personalizado',[dialog.profile.itemText(i)
@@ -264,6 +265,9 @@ class ActionsUITests(unittest.TestCase):
         dialog.visual_analysis.setChecked(True)
         self.assertTrue(dialog.options().analyze_visual)
         dialog.visual_analysis.setChecked(False)
+        dialog.minimum_score.setValue(72)
+        self.assertEqual(dialog.options().min_score,72.)
+        dialog.minimum_score.setValue(0)
         self.assertIsNone(dialog.options().score_weights)
         dialog.weight_group.setChecked(True)
         weights=dialog.options().score_weights
