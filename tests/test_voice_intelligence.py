@@ -638,6 +638,10 @@ class ParakeetQualityInspectionTests(TestCase):
         self.assertAlmostEqual(result['wpm_wall'], 45.0)
         self.assertAlmostEqual(result['wpm_active'], 120.0)
         self.assertAlmostEqual(result['active_fraction'], .375)
+        self.assertEqual(result['inter_word_gap_count'], 1)
+        self.assertAlmostEqual(result['inter_word_gap_p50_seconds'], 1.0)
+        self.assertAlmostEqual(result['inter_word_gap_p90_seconds'], 1.0)
+        self.assertEqual(result['gaps_at_least_0_5_seconds'], 1)
         self.assertEqual(result['timestamp_basis'], 'parakeet_word_timestamps')
 
     def test_speech_rate_skips_invalid_words_and_reports_missing_timestamps(self):

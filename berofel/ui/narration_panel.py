@@ -1759,6 +1759,12 @@ class NarrationPanel(QScrollArea):
                            f"{float(wpm_wall):.0f} palavras/min no áudio · "
                            f"{float(wpm_active):.0f} palavras/min em fala ativa "
                            f"({int(speech_rate.get('word_count', 0))} palavras).")
+            gap_p50 = speech_rate.get('inter_word_gap_p50_seconds')
+            gap_p90 = speech_rate.get('inter_word_gap_p90_seconds')
+            if gap_p50 is not None and gap_p90 is not None:
+                audio_note += (f"\nLacunas aproximadas entre palavras (alinhamento, não silêncio confirmado): "
+                               f"p50 {float(gap_p50):.2f} s · p90 {float(gap_p90):.2f} s · "
+                               f">0,5 s: {int(speech_rate.get('gaps_at_least_0_5_seconds', 0))}.")
         timing_note = (f'\nFim reconhecido em {result.get("last_recognized_word_end_seconds"):.2f} s; '
                        f'intervalo restante {float(trailing):.2f} s. Confira o final ouvindo.'
                        if result.get('review_ending') and trailing is not None and

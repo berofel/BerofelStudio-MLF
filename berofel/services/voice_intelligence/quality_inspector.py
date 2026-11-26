@@ -139,19 +139,34 @@ def calculate_speech_rate(words, audio_duration: float | None) -> dict:
     if not intervals:
         return {"word_count": 0, "active_speech_seconds": None,
                 "wpm_wall": None, "wpm_active": None,
+                "inter_word_gap_count": 0,
+                "inter_word_gap_p50_seconds": None,
+                "inter_word_gap_p90_seconds": None,
+                "gaps_at_least_0_2_seconds": None,
+                "gaps_at_least_0_5_seconds": None,
+                "gaps_at_least_1_second": None,
                 "timestamp_basis": "parakeet_word_timestamps",
                 "note": "No valid Parakeet word timestamps; speech rate unavailable."}
 
     intervals.sort()
     active = 0.0
+    gaps: list[float] = []
     start, end = intervals[0]
     for next_start, next_end in intervals[1:]:
         if next_start <= end:
             end = max(end, next_end)
         else:
+            gaps.append(next_start - end)
             active += end - start
             start, end = next_start, next_end
     active += end - start
+
+    def percentile_nearest_rank(values: list[float], fraction: float) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        index = max(0, math.ceil(fraction * len(ordered)) - 1)
+        return ordered[index]
 
     return {
         "word_count": word_count,
@@ -159,8 +174,15 @@ def calculate_speech_rate(words, audio_duration: float | None) -> dict:
         "wpm_wall": (60.0 * word_count / duration if duration is not None else None),
         "wpm_active": 60.0 * word_count / active if active > 0 else None,
         "active_fraction": (min(1.0, active / duration) if duration is not None else None),
+        "inter_word_gap_count": len(gaps),
+        "inter_word_gap_p50_seconds": percentile_nearest_rank(gaps, .50),
+        "inter_word_gap_p90_seconds": percentile_nearest_rank(gaps, .90),
+        "gaps_at_least_0_2_seconds": sum(gap >= .2 for gap in gaps),
+        "gaps_at_least_0_5_seconds": sum(gap >= .5 for gap in gaps),
+        "gaps_at_least_1_second": sum(gap >= 1.0 for gap in gaps),
         "timestamp_basis": "parakeet_word_timestamps",
-        "note": "Approximate diagnostic from ASR word boundaries; not a voice-quality score.",
+        "note": ("Approximate word-boundary gaps from Parakeet alignment; not confirmed "
+                 "silence, emotion, or a calibrated voice-quality score."),
     }
 
 

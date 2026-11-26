@@ -132,10 +132,15 @@ class FastNarrationProfileUiTests(unittest.TestCase):
                     'word_error_rate':0.0,'character_error_rate':0.0,
                     'recognized_text':'Hoje vamos editar.',
                     'speech_rate':{'wpm_wall':90.0,'wpm_active':130.0,
-                                   'word_count':3},
+                                   'word_count':3,
+                                   'inter_word_gap_p50_seconds':.2,
+                                   'inter_word_gap_p90_seconds':.7,
+                                   'gaps_at_least_0_5_seconds':1},
                 })
                 self.assertIn('90 palavras/min no áudio',panel.status.text())
                 self.assertIn('130 palavras/min em fala ativa (3 palavras)',
+                              panel.status.text())
+                self.assertIn('p50 0.20 s · p90 0.70 s · >0,5 s: 1',
                               panel.status.text())
                 panel.set_quality_result({
                     'audio_rms_dbfs':-20.0,'audio_peak_dbfs':-3.0,
