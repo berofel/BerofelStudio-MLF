@@ -49,8 +49,13 @@ class NarrationPanel(QScrollArea):
         self.on_prepare_voice = None
         self.on_transcribe_reference = None
         self.on_verify_last = None
+        self.on_compare_identity = None
         self.last_audio = ''
         self.last_spoken_text = ''
+        self.last_engine = ''
+        self.last_threads = None
+        self.last_reference_path = ''
+        self.last_voice_consent = False
         self.audio_history=[]
         self._voice_reference_quality_cache={}
         self._voice_reference_inspections={}
@@ -410,6 +415,14 @@ class NarrationPanel(QScrollArea):
             'o texto falado. É opcional e não avalia identidade vocal.')
         self.verify_last.clicked.connect(self._verify_last)
         layout.addWidget(self.verify_last)
+        self.compare_identity = QPushButton('◉ Comparar identidade vocal · experimental')
+        self.compare_identity.setEnabled(False)
+        self.compare_identity.setToolTip(
+            'Extrai x-vectors Qwen da referência e do WAV gerado. É uma verificação '
+            'manual e mais lenta; pode reiniciar o servidor uma vez por perfil. '
+            'O escore não é calibrado, não decide aprovação e não substitui a audição.')
+        self.compare_identity.clicked.connect(self._compare_identity)
+        layout.addWidget(self.compare_identity)
         self.listen_previous=QPushButton('♫ Ouvir geração anterior')
         self.listen_previous.setEnabled(False)
         self.listen_previous.clicked.connect(self._listen_previous)
@@ -424,6 +437,7 @@ class NarrationPanel(QScrollArea):
             (self.add_last,'＋ Adicionar última narração à timeline','＋ Adicionar WAV'),
             (self.listen,'♫ Ouvir a última narração','♫ Ouvir narração'),
             (self.verify_last,'✓ Verificar texto com Parakeet local','✓ Verificar com Parakeet'),
+            (self.compare_identity,'◉ Comparar identidade vocal · experimental','◉ Comparar identidade'),
             (self.listen_previous,'♫ Ouvir geração anterior','♫ Ouvir anterior'),
         ])
         self.status = QLabel('O Qwen3 Base é carregado uma vez e mantido aquecido durante a sessão do editor.')
@@ -1462,15 +1476,21 @@ class NarrationPanel(QScrollArea):
         self.insert.setDisabled(busy)
         self.generate_file.setDisabled(busy)
         self.verify_last.setDisabled(bool(busy) or not bool(self.last_spoken_text))
+        self.set_identity_check_busy(bool(busy))
         if busy:
             self.status.setText('Qwen3-TTS em processo local isolado; o modelo é reutilizado durante esta sessão.')
 
     def set_result(self, path: str, duration: float, cache_hit: bool, engine: str='',
                    threads: int | None = None, title: str='',
                    reference_window: dict | None=None, conditioning_mode: str='',
-                   source_text: str='', spoken_text: str=''):
+                   source_text: str='', spoken_text: str='',
+                   voice_reference_path: str='', voice_consent: bool=False):
         self.last_audio = path
         self.last_spoken_text = str(spoken_text or source_text or '')
+        self.last_engine = str(engine or '')
+        self.last_threads = threads
+        self.last_reference_path = str(voice_reference_path or '')
+        self.last_voice_consent = bool(voice_consent)
         self.last_duration = float(duration)
         self.last_title = str(title or Path(path).stem)
         mode={'qwen3-tts-local':'Original','qwen3-tts-native-q4':'Turbo · Q4 · 6 threads',
@@ -1483,6 +1503,10 @@ class NarrationPanel(QScrollArea):
         self.listen_previous.setEnabled(len(self.audio_history)>1)
         self.listen.setEnabled(True)
         self.verify_last.setEnabled(bool(self.last_spoken_text))
+        self.compare_identity.setEnabled(
+            self.last_engine in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8') and
+            bool(self.last_voice_consent) and bool(self.last_reference_path) and
+            Path(self.last_reference_path).is_file() and Path(path).is_file())
         self.add_last.setEnabled(True)
         reference_note=''
         if engine=='qwen3-tts-local' and reference_window:
@@ -1502,6 +1526,29 @@ class NarrationPanel(QScrollArea):
             self.verify_last.setDisabled(True)
             self.status.setText('Verificando o texto do WAV com Parakeet TDT v3 ONNX INT8/CPU…')
             self.on_verify_last(self.last_audio, self.last_spoken_text)
+
+    def _compare_identity(self):
+        if (self.compare_identity.isEnabled() and self.on_compare_identity and
+                self.last_audio and self.last_reference_path):
+            self.compare_identity.setDisabled(True)
+            self.status.setText('Comparando x-vectors Qwen. Isso pode reiniciar o servidor; nenhuma reprodução será iniciada…')
+            self.on_compare_identity(
+                self.last_audio, self.last_reference_path, self.last_engine,
+                self.last_threads, self.last_voice_consent)
+
+    def set_identity_check_busy(self, busy: bool):
+        self.compare_identity.setDisabled(bool(busy) or not (
+            self.last_engine in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8') and
+            self.last_voice_consent and self.last_reference_path and
+            Path(self.last_reference_path).is_file() and
+            self.last_audio and Path(self.last_audio).is_file()))
+
+    def set_identity_result(self, result: dict):
+        score = float(result['cosine_similarity'])
+        self.status.setText(
+            f"Similaridade heurística do x-vector Qwen: {score:.3f}. "
+            "Não calibrada: não é uma probabilidade nem comprova fidelidade da voz. "
+            "Confirme ouvindo a amostra e a narração. O servidor restaurou a voz selecionada.")
 
     def _edit_pronunciation_dictionary(self):
         selected = self.voice.currentData()

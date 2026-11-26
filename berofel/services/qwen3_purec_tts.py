@@ -44,6 +44,9 @@ _PROFILE_SECONDS = 0.0
 _SERVER_STATE = 'STOPPED'
 _ACTIVE_PROFILE_FINGERPRINT = ''
 _ACTIVE_STYLE_FINGERPRINT = ''
+_ACTIVE_PROFILE_PATH = ''
+_ACTIVE_STYLE_PATH = ''
+_ACTIVE_STYLE_TEXT = ''
 _ACTIVE_ENGINE = ''
 _ACTIVE_THREADS = 0
 _SERVER_LOG_HANDLE = None
@@ -332,9 +335,88 @@ def prepare_voice_profile(reference: str, reference_text: str = '',
             'emotion_by_example': emotion_path is not None}
 
 
+def compare_generated_voice_identity(reference: str, generated: str, *,
+                                     consent: bool = False, engine: str = ENGINE_INT8_ID,
+                                     thread_count: int | None = None,
+                                     control=None, stage=None) -> dict:
+    """Compare cached Pure C speaker vectors as an explicit, slower diagnostic.
+
+    At most one Qwen server is resident. The helper serializes both profile
+    extractions and restores the previously active voice/style server (or stops
+    the temporary server if none was active). The resulting cosine is heuristic
+    and intentionally has no pass/fail threshold.
+    """
+    reference_path = Path(reference).expanduser().resolve()
+    generated_path = Path(generated).expanduser().resolve()
+    if not reference_path.is_file() or not generated_path.is_file():
+        raise FileNotFoundError('A referência e o WAV gerado precisam existir.')
+    from .voice_intelligence.speaker_fingerprint import (
+        VECTOR_FORMAT, cosine_similarity, read_purec_xvector,
+    )
+
+    with _LOCK:
+        was_running = _PROCESS is not None and _PROCESS.poll() is None
+        previous = {
+            'profile': _ACTIVE_PROFILE_PATH,
+            'style_path': _ACTIVE_STYLE_PATH,
+            'style_text': _ACTIVE_STYLE_TEXT,
+            'engine': _ACTIVE_ENGINE,
+            'threads': _ACTIVE_THREADS,
+        } if was_running else None
+        try:
+            if stage:
+                stage('Pure C · extraindo impressão vocal da narração')
+            generated_profile = prepare_voice_profile(
+                str(generated_path), consent=consent, control=control,
+                engine=engine, thread_count=thread_count, stage=stage)
+            if control:
+                control.checkpoint()
+            if stage:
+                stage('Pure C · comparando com a referência autorizada')
+            reference_profile = prepare_voice_profile(
+                str(reference_path), consent=consent, control=control,
+                engine=engine, thread_count=thread_count, stage=stage)
+            generated_vector = read_purec_xvector(generated_profile['path'])
+            reference_vector = read_purec_xvector(reference_profile['path'])
+            score = cosine_similarity(reference_vector, generated_vector)
+            return {
+                'cosine_similarity': score,
+                'vector_format': VECTOR_FORMAT,
+                'encoder': 'Qwen3-TTS Pure C x-vector 1024-f32',
+                'engine': engine,
+                'reference_cache_hit': bool(reference_profile['cache_hit']),
+                'generated_cache_hit': bool(generated_profile['cache_hit']),
+                'review_required': True,
+                'calibrated': False,
+                'metric_note': ('Diagnóstico heurístico do encoder do próprio Qwen; '
+                                'sem limiar calibrado, não comprova identidade nem '
+                                'substitui audição humana.'),
+            }
+        finally:
+            # This function may have restarted the resident server twice. Restore
+            # its exact voice/style configuration to avoid the generated voice
+            # becoming the active identity for the next narration.
+            if previous and previous['profile'] and Path(previous['profile']).is_file():
+                _stop_server_locked()
+                try:
+                    _start_server(
+                        Path(previous['profile']), engine=previous['engine'],
+                        thread_count=previous['threads'],
+                        emotion_reference_path=(Path(previous['style_path'])
+                                                if previous['style_path'] else None),
+                        emotion_reference_text=previous['style_text'])
+                except Exception:
+                    _stop_server_locked()
+                    raise RuntimeError(
+                        'A comparação terminou, mas não foi possível restaurar o servidor Pure C anterior.')
+            else:
+                _stop_server_locked()
+
+
 def _stop_server_locked() -> None:
     global _PROCESS, _PROCESS_KEY, _PORT, _MODEL_LOAD_SECONDS, _PROFILE_SECONDS
     global _SERVER_STATE, _ACTIVE_PROFILE_FINGERPRINT, _ACTIVE_STYLE_FINGERPRINT
+    global _ACTIVE_PROFILE_PATH, _ACTIVE_STYLE_PATH, _ACTIVE_STYLE_TEXT
     global _ACTIVE_ENGINE, _ACTIVE_THREADS
     global _SERVER_LOG_HANDLE, _SERVER_LOG_PATH
     process = _PROCESS
@@ -349,6 +431,7 @@ def _stop_server_locked() -> None:
     _PROCESS = None; _PROCESS_KEY = ''; _PORT = 0
     _MODEL_LOAD_SECONDS = 0.0; _PROFILE_SECONDS = 0.0
     _ACTIVE_PROFILE_FINGERPRINT = ''; _ACTIVE_STYLE_FINGERPRINT = ''
+    _ACTIVE_PROFILE_PATH = ''; _ACTIVE_STYLE_PATH = ''; _ACTIVE_STYLE_TEXT = ''
     _ACTIVE_ENGINE = ''; _ACTIVE_THREADS = 0
     log_handle = _SERVER_LOG_HANDLE
     _SERVER_LOG_HANDLE = None; _SERVER_LOG_PATH = ''
@@ -379,6 +462,7 @@ def _start_server(profile: Path, control=None,
                   emotion_reference_text: str = '') -> tuple[int, float]:
     global _PROCESS, _PROCESS_KEY, _PORT, _MODEL_LOAD_SECONDS, _PROFILE_SECONDS
     global _SERVER_STATE, _ACTIVE_PROFILE_FINGERPRINT, _ACTIVE_STYLE_FINGERPRINT
+    global _ACTIVE_PROFILE_PATH, _ACTIVE_STYLE_PATH, _ACTIVE_STYLE_TEXT
     global _ACTIVE_ENGINE, _ACTIVE_THREADS
     global _SERVER_LOG_HANDLE, _SERVER_LOG_PATH
     exe, model, paths = _layout()
@@ -444,6 +528,11 @@ def _start_server(profile: Path, control=None,
                     _PROCESS_KEY = key; _PORT = port
                     _ACTIVE_PROFILE_FINGERPRINT = profile_fingerprint
                     _ACTIVE_STYLE_FINGERPRINT = style_fingerprint
+                    _ACTIVE_PROFILE_PATH = str(Path(profile).resolve())
+                    _ACTIVE_STYLE_PATH = (str(emotion_reference_path.resolve())
+                                          if emotion_reference_path is not None else '')
+                    _ACTIVE_STYLE_TEXT = (' '.join(str(emotion_reference_text or '').split())
+                                          if emotion_reference_path is not None else '')
                     _ACTIVE_ENGINE = engine
                     _ACTIVE_THREADS = threads_for_engine(thread_count)
                     _SERVER_STATE = 'READY'

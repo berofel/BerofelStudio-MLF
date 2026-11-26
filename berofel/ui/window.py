@@ -895,6 +895,7 @@ class MainWindow(QMainWindow):
         self.narration_panel.on_prepare_voice=self.prepare_narration_voice
         self.narration_panel.on_transcribe_reference=self.transcribe_narration_reference
         self.narration_panel.on_verify_last=self.verify_last_narration
+        self.narration_panel.on_compare_identity=self.compare_last_narration_identity
         self.narration_panel.on_use_transcript=self.use_selected_transcript
         self.narration_panel.on_voice_eq_begin=self.begin_voice_eq_edit
         self.narration_panel.on_voice_eq_change=self.apply_voice_eq_edit
@@ -1505,7 +1506,8 @@ class MainWindow(QMainWindow):
             self.narration_panel.set_result(path,duration,result['cache_hit'],
                 result.get('engine',''),result.get('threads'),result.get('title',''),
                 result.get('reference_window'),conditioning_mode,
-                result.get('source_text',''),result.get('spoken_text',''))
+                result.get('source_text',''),result.get('spoken_text',''),
+                request.voice,request.consent)
             self._register_narration_media(path)
             if add_to_timeline:
                 self.add_last_narration_to_timeline(path,duration,result['title'],position)
@@ -1547,6 +1549,38 @@ class MainWindow(QMainWindow):
             panel.set_quality_check_busy(False)
             return
         task.signals.finished.connect(lambda:panel.set_quality_check_busy(False))
+
+    def compare_last_narration_identity(self, audio_path: str, reference_path: str,
+                                        engine: str, threads: int | None,
+                                        consent: bool):
+        """Run an explicit Pure C x-vector diagnostic and restore its server."""
+        panel=self.narration_panel
+        if self._ai_busy or self.active_task is not None:
+            QMessageBox.information(self,'Comparar identidade vocal',
+                'Aguarde a tarefa atual terminar antes de comparar as vozes.')
+            panel.set_identity_check_busy(False)
+            return
+        if engine not in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8'):
+            panel.set_identity_check_busy(False)
+            QMessageBox.information(self,'Comparar identidade vocal',
+                'A comparação exige uma narração gerada pelo backend Pure C selecionado.')
+            return
+        from berofel.services.qwen3_purec_tts import compare_generated_voice_identity
+        def compare(path, reference, selected_engine, thread_count, authorized,
+                    control=None, stage=None):
+            return compare_generated_voice_identity(
+                reference, path, consent=authorized, engine=selected_engine,
+                thread_count=thread_count, control=control, stage=stage)
+        def ready(result):
+            panel.set_identity_result(result)
+            self.statusBar().showMessage(
+                'Comparação x-vector concluída. O escore é diagnóstico e não calibrado.')
+        task=self._task(compare,ready,audio_path,reference_path,engine,threads,consent,
+            label='Comparar x-vectors · Qwen3 Pure C · CPU')
+        if task is None:
+            panel.set_identity_check_busy(False)
+            return
+        task.signals.finished.connect(lambda:panel.set_identity_check_busy(False))
 
     def _refresh_media_library(self):
         """Refresh visible media references without stopping the transport."""

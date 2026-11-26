@@ -36,6 +36,14 @@ Não há arquivos `dir_*.bin` no diretório de assets consultado. O adaptador ca
 
 ## Execução e validação
 
+### Diagnóstico manual de x-vector
+
+O botão **Comparar identidade vocal · experimental** aparece habilitado após uma narração Pure C INT8 ou Mixed, somente se a geração foi autorizada e a referência local ainda existe. Ele usa `speaker_fingerprint.py` para validar o formato Pure C atual (1.024 floats little-endian, finitos e com norma não nula) e calcular cosseno entre a referência e um vetor extraído do WAV gerado pelo Qwen Pure C. O escore é heurístico, não calibrado, não é uma probabilidade e não decide aprovação; deve ser conferido auditivamente. Não se usa Parakeet para identidade, nem se carrega outro modelo.
+
+Essa ação é manual porque é custosa: uma execução local em referência autorizada, Pure C INT8/6 threads, gerou 5,12 s de fala em 8,925 s e levou mais 10,370 s para extração/comparação de x-vectors. A comparação executa serialmente, mantém no máximo um servidor Qwen residente, preserva os dados de perfil/estilo/backend/threads ativos e restaura o servidor ao final. Se não havia servidor antes, o temporário é encerrado. Os WAVs e o escore derivados da voz não são gravados na documentação/Git. A tarefa roda sem reprodução automática. Não foi feita calibração com várias vozes ou pares anotados; portanto a métrica não deve ser interpretada como comprovação de clonagem fiel.
+
+O cache dos vetores fica no diretório privado já usado pelo Pure C. Em instalações normais, esse caminho pertence ao usuário do aplicativo. Em sandbox, a validação deve apontar o cache/log para uma pasta temporária gravável; uma falha de permissão no cache privado não é falha acústica do Qwen.
+
 O ASR desta integração é exclusivamente **Parakeet TDT v3 ONNX INT8 em CPU**. Faster-Whisper não é usado para conferir referência nem narração. Os testes sem dependências de áudio/UI são executados com:
 
 O adaptador `transcribe_file` lê PCM16 em janelas. Se a pipeline já fornece spans Silero em tempo local ao WAV do trecho, eles são reutilizados sem um segundo VAD. Se não fornece, Silero percorre o arquivo em blocos de 30 s; o Parakeet só é carregado quando existem regiões de fala, e cada região é buscada no WAV e inferida em janelas de até 20 s. Isso limita PCM transitório e mantém um único modelo residente por chamada. O resultado marca `memory_strategy=streamed_pcm_windows`, `vad_windows` e `model_loaded`; offsets permanecem no tempo do arquivo recebido. A versão anterior carregava o WAV inteiro em PCM e float32.

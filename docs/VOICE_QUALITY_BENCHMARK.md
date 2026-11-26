@@ -2,6 +2,12 @@
 
 O ASR usado no fluxo BVI é **Parakeet TDT v3 ONNX INT8 em CPU**, junto ao Silero VAD local. Faster-Whisper não faz parte desta rota e não foi usado nos resultados abaixo.
 
+## Verificação exploratória de identidade Pure C
+
+Em 25/11/2026, foi gerada uma frase nova com a referência local autorizada, Qwen3-TTS Base Pure C INT8/6 threads e arquivo de saída em diretório temporário. A síntese levou 8,925 s e produziu WAV PCM válido de 5,12 s (245.804 bytes). O botão/manual checker extraiu os x-vectors da referência e saída pelo mesmo backend; a operação levou 10,370 s. O servidor terminou no mesmo perfil, INT8 e seis threads que tinha antes. O arquivo temporário foi removido. O valor do cosseno foi deliberadamente omitido deste relatório versionado para não persistir uma métrica derivada da gravação vocal privada. Esse experimento demonstra que o caminho de cálculo e restauração funciona para um par; não calibra um limiar, não mede MOS, não constitui avaliação auditiva e não permite concluir fidelidade geral. A comparação está marcada `calibrated=false` e nunca aprova/rejeita áudio automaticamente.
+
+A execução inicial apontou que o sandbox podia ler, mas não escrever no cache/log privado do aplicativo. Repeti a medição com ambos redirecionados para uma pasta temporária gravável dentro do workspace; essa pasta foi removida no encerramento. Isso é uma limitação do sandbox de teste, não uma alteração de diretórios privados do aplicativo.
+
 ## Microbenchmark do sumarizador PCM
 
 Em 25/11/2026, no ambiente virtual do aplicativo (Python 3.12, NumPy 2.5.4; identificação física de CPU indisponível), comparei a implementação padrão e a rota NumPy com o mesmo buffer sintético: seno de 145 Hz, 16 kHz, 30 s/480.000 amostras, 20 ms por quadro. Após uma chamada de aquecimento, foram feitas nove medições por rota, alternadas. Medianas: Python puro 0,155741 s; NumPy 0,006898 s; aceleração observada de 22,58×. Ambos calculam os mesmos campos e o teste de regressão compara a saída numérica. É microbenchmark do resumo de PCM apenas: não inclui leitura/decodificação, FFmpeg, Silero, seleção de janela, não mede RAM/CPU do host e não representa ganho equivalente no tempo total de preparação da voz. NumPy continua opcional; a rota Python é mantida como fallback.

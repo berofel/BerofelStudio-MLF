@@ -413,6 +413,34 @@ class FastNarrationProfileUiTests(unittest.TestCase):
         finally:
             panel.close()
 
+    def test_identity_diagnostic_is_manual_and_only_available_for_authorized_purec(self):
+        import wave
+        with tempfile.TemporaryDirectory(prefix='bfs_identity_ui_') as folder:
+            reference=Path(folder)/'reference.wav'
+            generated=Path(folder)/'generated.wav'
+            for path in (reference,generated):
+                with wave.open(str(path),'wb') as wav:
+                    wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(24000)
+                    wav.writeframes(b'\x01\x00'*2400)
+            panel=NarrationPanel()
+            try:
+                panel.set_result(str(generated),.1,False,'qwen3-tts-purec-int8',
+                    6,'Generated',source_text='texto',spoken_text='texto',
+                    voice_reference_path=str(reference),voice_consent=True)
+                calls=[]
+                panel.on_compare_identity=lambda *args:calls.append(args)
+                self.assertTrue(panel.compare_identity.isEnabled())
+                self.assertEqual(panel._player.playbackState().value,0)
+                panel.compare_identity.click()
+                self.assertEqual(calls,[(
+                    str(generated),str(reference),'qwen3-tts-purec-int8',6,True)])
+                self.assertEqual(panel._player.playbackState().value,0)
+                panel.set_result(str(generated),.1,False,'qwen3-tts-local',
+                    source_text='texto',voice_reference_path=str(reference),voice_consent=True)
+                self.assertFalse(panel.compare_identity.isEnabled())
+            finally:
+                panel.close()
+
     def test_asr_reference_draft_requires_review_and_text_changes_invalidate_it(self):
         from PySide6.QtWidgets import QMessageBox
         with tempfile.TemporaryDirectory(prefix='bfs_asr_review_gate_') as folder:
