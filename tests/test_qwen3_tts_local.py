@@ -469,24 +469,38 @@ class QwenLocalCloneTests(unittest.TestCase):
 [silencedetect] silence_start: 70.0
 [silencedetect] silence_end: 3540.0 | silence_duration: 3470.0
 '''
+        class SilenceScanProcess:
+            returncode = 0
+
+            def __init__(self, _command, *, stderr, **_kwargs):
+                stderr.write(silence_log.encode('utf-8'))
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout=None):
+                return self.returncode
+
         with patch('berofel.services.ffmpeg.ffmpeg_path',return_value='ffmpeg'), \
              patch('berofel.services.ffmpeg.media_info',return_value=(3600.0,False,True)), \
-             patch('berofel.services.audio_reference.subprocess.run',return_value=type(
-                 'Result',(),{'returncode':0,'stderr':silence_log})()) as run:
+             patch('berofel.services.audio_reference._silero_speech_regions',
+                   return_value=None), \
+             patch('berofel.services.audio_reference.subprocess.Popen',
+                   side_effect=SilenceScanProcess) as process:
             start,length,active= _best_reference_window(source,123,456)
         self.assertEqual(length,30.0)
         self.assertGreaterEqual(start,40.0)
         self.assertAlmostEqual(start,40.0)
         self.assertEqual(active,1.0)
         self.assertTrue(any('silencedetect' in arg
-                            for call in run.call_args_list
+                            for call in process.call_args_list
                             for arg in call.args[0]))
 
     def test_hour_long_uniform_speech_scans_pcm_candidates_across_full_timeline(self):
         from berofel.services.audio_reference import _best_reference_window
         source='hour-long-reference.wav'
         measured=[]
-        def measure(_source,_binary,start,duration):
+        def measure(_source,_binary,start,duration,_cancel_event=None):
             measured.append((float(start),float(duration)))
             return {'rms_dbfs':-24.,'clipped_fraction':0.,
                     'near_silence_fraction':0.,'pitch_trackability':.8}
