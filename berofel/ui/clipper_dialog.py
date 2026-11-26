@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QDialog,
     QCheckBox, QDoubleSpinBox, QGridLayout, QGroupBox, QHBoxLayout,
     QHeaderView, QLabel, QMessageBox, QPushButton, QTableWidget,
@@ -176,6 +177,11 @@ class ClipperDialog(QDialog):
         self._candidates=[]
         self._events=[]
         self._updating_boundaries=False
+        self._thumbnail_provider=None
+
+    def set_thumbnail_provider(self,provider):
+        """Use cached thumbnails only; never enqueue a new frame extraction."""
+        self._thumbnail_provider=provider
 
     def options(self):
         if self.maximum.value()<=self.minimum.value():
@@ -225,7 +231,22 @@ class ClipperDialog(QDialog):
                 f"{candidate['source_start']:.2f}–{candidate['source_end']:.2f}s  ·  {candidate['duration']:.1f}s"))
             title=str(candidate.get('suggested_title') or suggest_title(candidate.get('text','')))
             candidate['suggested_title']=title
-            self.table.setItem(row,3,QTableWidgetItem(title))
+            title_item=QTableWidgetItem(title)
+            thumb_path=''
+            if self._thumbnail_provider is not None:
+                try:
+                    thumb_path=self._thumbnail_provider.get_thumb(
+                        candidate.get('source',''),candidate.get('source_start',0.),
+                        request=False)
+                except (AttributeError,OSError,TypeError,ValueError):
+                    thumb_path=''
+            if thumb_path:
+                pixmap=QPixmap(str(thumb_path))
+                if not pixmap.isNull():
+                    title_item.setIcon(QIcon(pixmap.scaled(
+                        96,54,Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)))
+            self.table.setItem(row,3,title_item)
             transcript_text=candidate.get('text','')
             if not candidate.get('transcript_available',True):
                 transcript_text=(
@@ -250,7 +271,8 @@ class ClipperDialog(QDialog):
             if candidate.get('events'):
                 evidence+=f"  ·  {len(candidate['events'])} evento(s) observável(is)"
             self.table.setItem(row,5,QTableWidgetItem(evidence))
-            self.table.item(row,3).setToolTip('Título extraído da transcrição; sem geração por IA.')
+            self.table.item(row,3).setToolTip(
+                'Título extraído da transcrição; sem geração por IA. Miniatura exibida somente se já estava em cache.')
             self.table.item(row,4).setToolTip(candidate.get('text',''))
             self.table.item(row,5).setToolTip(evidence)
         if self._candidates:

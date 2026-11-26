@@ -15,7 +15,7 @@ O Clipador é uma ferramenta local de descoberta e revisão, não um editor auto
 2. Selecione clipes/fonte e abra **Ações IA → Clipador Inteligente**.
 3. Escolha duração, quantidade, sensibilidade acústica, perfil editorial e modo. A opção **Análise visual** é independente e lê somente miniaturas já salvas no cache da timeline; não solicita quadros faltantes nem decodifica o vídeo.
 4. Revise nota, cobertura das evidências, componentes, justificativas e avisos.
-5. Reproduza candidatos, ajuste limites em bordas reais de palavras e marque os desejados.
+5. Miniaturas aparecem junto aos títulos somente quando já existem no cache da timeline; o painel não pede decodificação de quadros. Reproduza candidatos, ajuste limites em bordas reais de palavras e marque os desejados.
 6. Use **Adicionar marcados à timeline**. A inserção é não destrutiva e pode ser desfeita; o arquivo original não muda.
 
 O modo Rápido só usa tiles de waveform já presentes para o intervalo inteiro. Se faltar qualquer tile, ele continua com texto/timestamps quando existem e informa que não havia waveform completa; não inicia FFmpeg escondido. Sem texto e sem sinais já cacheados, não inventa candidatos. O modo Equilibrado calcula PCM se ainda não houver o cache PCM. O modo Avançado também calcula PCM e executa TextRank local esparso somente nas falas de cada candidato. Os resultados persistidos ficam separados por modo para não confundir envelope de pico com RMS. TextRank é uma centralidade relativa entre falas daquele candidato, não uma medida absoluta de qualidade.

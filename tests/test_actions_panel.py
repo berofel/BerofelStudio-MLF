@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 try:
     from PySide6.QtCore import QThreadPool, QPoint, QPointF, QSettings, QEventLoop, QTimer, Qt
-    from PySide6.QtGui import QFontDatabase, QWheelEvent
+    from PySide6.QtGui import QFontDatabase, QPixmap, QWheelEvent
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QLabel,
                                    QMessageBox, QToolButton, QAbstractScrollArea)
@@ -447,6 +447,33 @@ class ActionsUITests(unittest.TestCase):
         dialog.set_results({'candidates':[transcript_gap],'events':[],'stats':{}})
         self.assertIn('Sem palavras do Parakeet',dialog.table.item(0,4).text())
         dialog.close()
+
+    def test_clipper_displays_cached_thumbnail_without_requesting_frame_decode(self):
+        class CachedThumbnail:
+            def __init__(self,path):self.path=path;self.request=None
+            def get_thumb(self,source,at,request=True):
+                self.request=request
+                return str(self.path)
+        with tempfile.TemporaryDirectory(prefix='bfs_clip_cached_thumb_') as folder:
+            thumb_path=Path(folder)/'frame.jpg'
+            thumb=QPixmap(12,8);thumb.fill(Qt.GlobalColor.darkBlue)
+            self.assertTrue(thumb.save(str(thumb_path),'JPG'))
+            provider=CachedThumbnail(thumb_path)
+            dialog=ClipperDialog();dialog.set_thumbnail_provider(provider)
+            candidate={'id':'candidate-1','clip_id':'clip-1','title':'Vídeo',
+                'source':'video.mp4','source_start':3.,'source_end':13.,
+                'duration':10.,'score':75.,'suggested_title':'Resultado',
+                'text':'A conclusão do vídeo.', 'transcript_available':True,
+                'reasons':[],'warnings':[],'events':[],
+                'score_components':{},'evidence_coverage':.5,
+                'start_ms':3000,'end_ms':13000,'min_duration_ms':3000,
+                'max_duration_ms':60000,'start_choices':[],'end_choices':[],
+                'word_spans':[]}
+            dialog.set_results({'candidates':[candidate],'events':[],'stats':{}})
+            self.assertFalse(provider.request)
+            self.assertFalse(dialog.table.item(0,3).icon().isNull())
+            self.assertIn('já estava em cache',dialog.table.item(0,3).toolTip())
+            dialog.close()
 
     def test_custom_voice_panel_defaults_to_full_clone_backend_and_keeps_other_profiles(self):
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True):
