@@ -441,6 +441,9 @@ class ActionsUITests(unittest.TestCase):
         self.assertEqual(adjusted['source_start'],3.)
         self.assertEqual(adjusted['suggested_title'],'Mudança visual detectada')
         self.assertTrue(any('por tempo' in warning for warning in adjusted['warnings']))
+        transcript_gap=dict(candidate,transcript_present=True)
+        dialog.set_results({'candidates':[transcript_gap],'events':[],'stats':{}})
+        self.assertIn('Sem palavras do Parakeet',dialog.table.item(0,4).text())
         dialog.close()
 
     def test_custom_voice_panel_defaults_to_full_clone_backend_and_keeps_other_profiles(self):

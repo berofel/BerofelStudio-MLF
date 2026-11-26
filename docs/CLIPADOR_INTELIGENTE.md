@@ -22,6 +22,8 @@ O modo Rápido só usa tiles de waveform já presentes para o intervalo inteiro.
 
 Sem transcrição, candidatos são gerados somente quando há picos acústicos relativos à própria gravação ou mudanças suficientemente isoladas em miniaturas cacheadas. O detector visual aplica limiar robusto e supressão de máximos próximos; é um proxy de mudança de imagem, não detecção semântica de cena. A pontuação usa apenas dimensões observadas, expõe cobertura e reduz a nota parcial em direção a 50 quando a cobertura é baixa. O painel mostra “Sem transcrição” em vez de texto inventado e permite trim temporal curto; nenhum Parakeet é iniciado automaticamente.
 
+Quando já existe uma transcrição, mudanças acústicas/visuais em lacunas longas fora dos timestamps de palavras também podem gerar candidatos complementares, desde que caibam na duração configurada. Um intervalo sem palavras cronometradas não prova silêncio nem ausência de fala: a UI o identifica como janela sem palavras Parakeet e pede conferência no áudio. Esses candidatos pontuam somente dimensões acústicas/visuais, têm cobertura parcial e mantêm os controles de ajuste dentro da lacuna. Os eventos não entram na pontuação de candidatos falados.
+
 O alcance selecionado sem transcrição permanece elegível no diálogo principal. Antes, a janela principal bloqueava esse caminho e pedia para transcrever, apesar de o serviço e o diálogo já oferecerem candidatos baseados em eventos; essa lacuna de integração foi corrigida. Sem transcrição, o modo Rápido ainda precisa de waveform/miniaturas existentes. Equilibrado/Avançado podem ler PCM da fonte em streaming, sem abrir uma transcrição.
 
 ## Etapas existentes e evolução desta versão
@@ -77,10 +79,20 @@ Referências consultadas em 25/11/2026; não copiamos código de terceiros:
 - MomentClip (`Yuu-yu09/clipper`) informa MIT; seu README cita componentes opcionais, incluindo Faster-Whisper, que não usamos. Viral Clipper (`davidkamere/clipper`) foi inspecionado, mas não localizei licença no repositório consultado; nenhum código foi copiado/adaptado. AI Video Clipping Studio e AutoClip indicam MIT; foram usados como leitura arquitetural, sem reutilização de código.
 - Klap descreve publicamente transcrição, seleção de momentos autossuficientes, ranking e edição/revisão: [como funciona](https://klap.app/how-it-works). Isso informa requisitos de experiência do usuário, não revela seu algoritmo proprietário.
 - Claggeta Clipper indica “License to be decided”; não usar nem adaptar código dele até que haja licença compatível.
+- A leitura do MomentClip/`Yuu-yu09/clipper` é útil como referência de desenho “sinais primeiro, shortlist depois”, mas o próprio repositório descreve uso opcional de Faster-Whisper, visão e juiz LLM; esses componentes não entram no Berofel. A licença foi verificada no repositório antes de qualquer consideração de reutilização; nenhum arquivo foi copiado.
+- A documentação do OpusClip é referência de fluxo editorial e opções de produto, não de implementação: os detalhes proprietários não são observáveis e não foram inferidos. O Auto-Editor mostra uma composição declarativa de regras de áudio/movimento e margens; o Berofel mantém o próprio modelo de timeline e não importa sua implementação.
 
 ## Testes e limites conhecidos
 
-Testes determinísticos existentes cobrem timestamps, bordas, pergunta/resposta, mudanças de tópico, RMS/picos, cache e deduplicação. Nesta atualização, também foram testados candidatos sem transcrição a partir de eventos de áudio ou miniaturas locais, NMS visual, ausência de chamada ao Parakeet, aviso no diálogo e ajuste temporal sem palavras. O conjunto completo passou em **632 testes, com 6 skips** no venv do editor; os skips são condicionados a recursos locais. `pytest` não está instalado; a suíte disponível é `unittest`. As medições são sintéticas e não comprovam que um pico ou mudança visual seja um evento editorial relevante.
+Testes determinísticos existentes cobrem timestamps, bordas, pergunta/resposta, mudanças de tópico, RMS/picos, cache e deduplicação. O relatório de validação atual registra os testes novos para eventos em lacunas de transcrição e trims limitados; o número mais recente de testes deve ser lido nesse relatório. `pytest` não está instalado nesse runtime; a suíte disponível é `unittest`. As medições sintéticas não comprovam que um pico ou mudança visual seja um evento editorial relevante.
+
+Para comparar resultados com momentos marcados manualmente, `scripts/evaluate_clip_engine.py` lê um JSON de resultado já salvo e um arquivo local `{"labels":[{"start":12.4,"end":35.0}]}` em segundos da mídia original. Exemplo:
+
+```powershell
+python scripts\evaluate_clip_engine.py --result caminho\resultado.json --labels caminho\marcacoes.json --top-k 5
+```
+
+O relatório calcula Precision@K e Recall@K com correspondência temporal um-para-um, erro total de início/fim e uma taxa de duplicidade estritamente temporal. Não lê mídia, não inicia Parakeet e não avalia semântica, completude ou potencial de viralização. Use a mesma política de marcação em todos os vídeos e separe vídeos de calibração dos de validação.
 
 ### Benchmark sintético de escala (25/11/2026)
 

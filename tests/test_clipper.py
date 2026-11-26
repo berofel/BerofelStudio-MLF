@@ -2,6 +2,7 @@
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -339,6 +340,72 @@ class ClipperTests(unittest.TestCase):
         self.assertTrue(second['candidates'])
         self.assertEqual(first['stats']['decoded_seconds'],0.)
         self.assertEqual(second['stats']['decoded_seconds'],0.)
+
+    def test_visual_event_in_long_transcript_gap_becomes_review_candidate(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_transcript_gap_') as folder:
+            source=Path(folder)/'gameplay.mp4';source.write_bytes(b'fixture')
+            clip=Clip(str(source),0.,60.,kind='video')
+            words=[
+                {'id':'w1','source':str(source.resolve()),'source_start':1.,
+                 'source_end':1.2,'text':'Começou.'},
+                {'id':'w2','source':str(source.resolve()),'source_start':50.,
+                 'source_end':50.2,'text':'Acabou.'},
+            ]
+            frames=FrameFeatures(np.empty(0,dtype=np.float64),
+                np.empty(0,dtype=np.float32),np.empty(0,dtype=np.float32),
+                np.empty(0,dtype=np.float32),20.,16000)
+            visual_event={'kind':'cached_thumbnail_change','start_ms':25000,
+                'end_ms':26000,'strength':.9,'source':'cached_thumbnail_proxy',
+                'meaning':'visual change only'}
+            audio_event={'kind':'relative_energy_surge','start_ms':25000,
+                'end_ms':26000,'strength':.8,'rise_db':12.,
+                'meaning':'energy change only'}
+            options=ClipperOptions(10.,20.,5,6.,'Gameplay','Rápido',True)
+            with patch('berofel.services.clipper.audio_features',
+                       return_value=(frames,True)), \
+                 patch('berofel.services.clipper.read_cached_visual_signals',
+                       return_value=SimpleNamespace(frame_count=60,cache_hit=True)), \
+                 patch('berofel.services.clipper.detect_cached_visual_events',
+                       return_value=[visual_event]), \
+                 patch('berofel.services.clipper.detect_energy_events',
+                       side_effect=lambda _frames, speech, **_kwargs:
+                           [] if speech is not None else [audio_event]), \
+                 patch('berofel.services.clipper.score_cached_visual_interval',
+                       return_value={'score':None,'coverage':0.,'frames':0,
+                                     'reason':'fixture'}), \
+                 patch('berofel.services.parakeet_asr.transcribe_file') as parakeet:
+                result=analyze_clips([clip],words,options,
+                    cache_dir=Path(folder)/'cache',visual_provider=object())
+            parakeet.assert_not_called()
+
+        candidates=[item for item in result['candidates']
+                    if not item['transcript_available']]
+        self.assertTrue(candidates)
+        candidate=candidates[0]
+        self.assertTrue(candidate['transcript_present'])
+        self.assertGreaterEqual(candidate['start_ms'],1550)
+        self.assertLessEqual(candidate['end_ms'],49650)
+        self.assertIn('cached_thumbnail_change',
+                      {event['kind'] for event in candidate['events']})
+        self.assertIn('relative_energy_surge',
+                      {event['kind'] for event in candidate['events']})
+        self.assertTrue(any('não comprova ausência de fala' in warning
+                            for warning in candidate['warnings']))
+        self.assertEqual(result['stats']['transcript_gap_candidates'],
+                         len(candidates))
+
+    def test_event_trim_choices_stay_inside_the_transcript_gap(self):
+        from berofel.services.clipper import _event_boundary_choices
+        clip=Clip('fixture.mp4',0.,60.,kind='video')
+        candidate={'start_ms':20000,'end_ms':35000,
+                   'allowed_start_ms':1550,'allowed_end_ms':49650}
+        starts,ends=_event_boundary_choices(clip,candidate,
+            ClipperOptions(10.,20.,5,6.))
+        self.assertTrue(starts and ends)
+        self.assertTrue(all(candidate['allowed_start_ms']<=item['ms']<candidate['end_ms']
+                            for item in starts))
+        self.assertTrue(all(candidate['start_ms']<item['ms']<=candidate['allowed_end_ms']
+                            for item in ends))
 
     def test_result_cache_is_invalidated_by_transcript_text_and_options(self):
         with tempfile.TemporaryDirectory(prefix='bfs_clipper_cache_') as folder:

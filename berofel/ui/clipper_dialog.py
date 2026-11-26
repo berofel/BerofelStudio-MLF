@@ -228,7 +228,10 @@ class ClipperDialog(QDialog):
             self.table.setItem(row,3,QTableWidgetItem(title))
             transcript_text=candidate.get('text','')
             if not candidate.get('transcript_available',True):
-                transcript_text='Sem transcrição · candidato baseado apenas em sinais observados'
+                transcript_text=(
+                    'Sem palavras do Parakeet nesta janela · confirme áudio/vídeo'
+                    if candidate.get('transcript_present') else
+                    'Sem transcrição · candidato baseado apenas em sinais observados')
             self.table.setItem(row,4,QTableWidgetItem(transcript_text))
             evidence='; '.join(candidate.get('reasons',[])) or 'Sem evidência textual forte.'
             components=candidate.get('score_components',{})

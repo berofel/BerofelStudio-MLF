@@ -4023,7 +4023,10 @@ class MainWindow(QMainWindow):
             source_time=float(event.get('start_ms',0))/1000.
             if source_time<clip.start or source_time>clip.end:continue
             at=clip.timeline_start+(source_time-clip.start)/clip.speed
-            label=f"Clipador · energia +{float(event.get('rise_db',0)):.1f} dB"
+            if event.get('kind')=='cached_thumbnail_change':
+                label='Clipador · mudança visual em miniatura'
+            else:
+                label=f"Clipador · energia +{float(event.get('rise_db',0)):.1f} dB"
             key=(round(at,2),label)
             if key in seen:continue
             seen.add(key)

@@ -28,7 +28,7 @@ from .clip_visual_signals import (read_cached_visual_signals,
     score_cached_visual_interval, detect_cached_visual_events)
 from .ffmpeg import ffmpeg_path, media_info
 
-CLIPPER_VERSION = 7
+CLIPPER_VERSION = 8
 # Keep the persisted v5 feature keys compatible: the PCM/waveform extraction
 # format and algorithm did not change. Bump this independently only when they do.
 FEATURE_EXTRACTOR_VERSION = 5
@@ -870,6 +870,131 @@ def _event_only_spans(clip, audio_events: Sequence[Mapping],
     return candidates
 
 
+def _transcript_gaps(clip, words: Sequence[Mapping],
+                     guard_ms: float = 350.) -> list[tuple[float, float]]:
+    """Return source-time gaps not covered by word timestamps.
+
+    A guard around each word avoids treating uncertain word boundaries as
+    evidence of a truly speech-free moment. A gap means only that the saved
+    transcript has no timed words there; it does not prove silence.
+    """
+    left = float(clip.start) * 1000.
+    right = float(clip.end) * 1000.
+    if not np.isfinite(left + right) or right <= left:
+        return []
+    spans = []
+    for word in words:
+        try:
+            start = max(left, float(word['start_ms']) - guard_ms)
+            end = min(right, float(word['end_ms']) + guard_ms)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if np.isfinite(start + end) and end > start:
+            spans.append((start, end))
+    spans.sort()
+    gaps = []
+    cursor = left
+    for start, end in spans:
+        if start > cursor:
+            gaps.append((cursor, start))
+        cursor = max(cursor, end)
+    if cursor < right:
+        gaps.append((cursor, right))
+    return gaps
+
+
+def _events_in_transcript_gaps(events: Sequence[Mapping],
+                               gaps: Sequence[tuple[float, float]]) -> list[dict]:
+    """Keep observed event cues whose centers fall outside timed speech."""
+    gap_starts = [left for left, _right in gaps]
+    result = []
+    for event in events:
+        try:
+            start, end = float(event['start_ms']), float(event['end_ms'])
+            strength = float(event.get('strength', 0.))
+        except (KeyError, TypeError, ValueError):
+            continue
+        center = (start + end) / 2.
+        if not (np.isfinite(start + end + strength) and end > start and strength >= .05):
+            continue
+        gap_index = bisect_right(gap_starts, center) - 1
+        if gap_index < 0 or center > gaps[gap_index][1]:
+            continue
+        item = dict(event)
+        item['speech_verified'] = False
+        item['meaning'] = ('relative audio event outside Parakeet word timestamps; '
+                           'not a speech or semantic classification')
+        result.append(item)
+    return result
+
+
+def _event_only_spans_in_gaps(clip, events: Sequence[Mapping],
+                              gaps: Sequence[tuple[float, float]],
+                              options: ClipperOptions) -> list[dict]:
+    """Build review-only candidates for measured events in long transcript gaps."""
+    minimum = float(options.min_seconds) * 1000.
+    maximum = float(options.max_seconds) * 1000.
+    preferred = min(maximum, max(minimum, (minimum + maximum) / 2.))
+    candidates = []
+    anchors = []
+    for event in events:
+        try:
+            center = (float(event['start_ms']) + float(event['end_ms'])) / 2.
+            strength = float(event.get('strength', 0.))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if np.isfinite(center + strength) and strength >= .05:
+            anchors.append((center, dict(event)))
+    anchors.sort(key=lambda item: item[0])
+    anchor_times = [at for at, _event in anchors]
+    for gap_start, gap_end in gaps:
+        gap_duration = gap_end - gap_start
+        duration = min(preferred, maximum, gap_duration)
+        if duration < minimum:
+            continue
+        left = bisect_left(anchor_times, gap_start)
+        right = bisect_right(anchor_times, gap_end)
+        gap_anchors = anchors[left:right]
+        groups = []
+        for anchor in gap_anchors:
+            if groups and anchor[0] - groups[-1][-1][0] <= min(duration * .45, 12000.):
+                groups[-1].append(anchor)
+            else:
+                groups.append([anchor])
+        for group in groups:
+            weights = [max(.01, float(event.get('strength', 0.)))
+                       for _at, event in group]
+            center = sum(at * weight for (at, _event), weight
+                         in zip(group, weights)) / sum(weights)
+            start = max(gap_start, min(center - duration / 2., gap_end - duration))
+            end = start + duration
+            if not gap_start <= start < end <= gap_end:
+                continue
+            group_events = [event for _at, event in group]
+            kinds = {event.get('kind') for event in group_events}
+            cues = []
+            if any('energy' in str(kind) or 'waveform' in str(kind) for kind in kinds):
+                cues.append('mudança de energia relativa')
+            if 'cached_thumbnail_change' in kinds:
+                cues.append('mudança visual em miniatura já armazenada')
+            if not cues:
+                continue
+            candidates.append({
+                'start_ms': int(round(start)), 'end_ms': int(round(end)),
+                'duration_ms': int(round(duration)), 'text': '', 'words': [],
+                'event_only': True, 'transcript_present': True,
+                'event_cues': cues, 'events': group_events,
+                'allowed_start_ms': int(round(gap_start)),
+                'allowed_end_ms': int(round(gap_end)),
+                'text_reasons': [
+                    'Sem palavras do Parakeet nesta janela; candidato baseado em sinais medidos.',
+                    'Ausência de timestamps não comprova silêncio, ação ou relevância; confirme no áudio/vídeo.',
+                ],
+                'visual_score': None,
+            })
+    return candidates
+
+
 def _score_event_only(candidate: Mapping, profile: str,
                       weights_override: Mapping[str,float] | None = None) -> dict:
     """Rank only measured event dimensions; semantic dimensions stay absent."""
@@ -932,7 +1057,10 @@ def _event_boundary_choices(clip, candidate: Mapping,
                             options: ClipperOptions) -> tuple[list[dict],list[dict]]:
     """Offer small second-based trims when no transcript word edges exist."""
     minimum=options.min_seconds*1000.;maximum=options.max_seconds*1000.
-    low=float(clip.start)*1000.;high=float(clip.end)*1000.
+    low=max(float(clip.start)*1000.,float(candidate.get(
+        'allowed_start_ms',float(clip.start)*1000.)))
+    high=min(float(clip.end)*1000.,float(candidate.get(
+        'allowed_end_ms',float(clip.end)*1000.)))
     start=int(candidate['start_ms']);end=int(candidate['end_ms'])
     offsets=(-2000,-1000,0,1000,2000)
     starts=[{'ms':at,'word':'evento ± tempo'} for delta in offsets
@@ -1039,6 +1167,16 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                           if words else None)
         events=(detect_energy_events(frames,speech_intervals,
                  relative_rise_db=opts.relative_rise_db) if frames is not None else [])
+        gaps = _transcript_gaps(clip, words) if words else []
+        gap_audio_events = []
+        if words and frames is not None:
+            # A second, cheap pass over the already computed frame arrays finds
+            # out-of-speech bursts (e.g. gameplay events). It decodes no audio;
+            # these cues remain explicitly unverified and never affect the
+            # transcript-backed candidate scores.
+            exploratory = detect_energy_events(
+                frames, None, relative_rise_db=opts.relative_rise_db)
+            gap_audio_events = _events_in_transcript_gaps(exploratory, gaps)
         turns=_utterances(words)
         events=align_events_to_conversation(events,turns)
         events=[dict(event,clip_id=clip.id,title=clip.title,source=source) for event in events]
@@ -1052,14 +1190,18 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
             if visual_signals is not None:
                 visual_frames_reused+=visual_signals.frame_count
                 visual_cache_hits+=int(visual_signals.cache_hit)
-                if not words:
-                    visual_events=detect_cached_visual_events(visual_signals)
-                    visual_events=[dict(event,clip_id=clip.id,title=clip.title,
-                        source=source) for event in visual_events]
+                visual_events=detect_cached_visual_events(visual_signals)
+                visual_events=[dict(event,clip_id=clip.id,title=clip.title,
+                    source=source) for event in visual_events]
         candidates=[]
         word_starts=[int(word['start_ms']) for word in words]
-        proposals=(_candidate_spans(words,opts) if words else
-            _event_only_spans(clip,events,visual_events,opts))
+        if words:
+            gap_events = gap_audio_events + _events_in_transcript_gaps(visual_events, gaps)
+            proposals = _candidate_spans(words,opts)
+            proposals.extend(_event_only_spans_in_gaps(clip,gap_events,gaps,opts))
+        else:
+            gap_events = []
+            proposals = _event_only_spans(clip,events,visual_events,opts)
         for candidate in proposals:
             if control:control.checkpoint()
             visual=(score_cached_visual_interval(visual_signals,
@@ -1084,7 +1226,10 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                 continue
             warnings=list(ranked['warnings'])
             if candidate.get('event_only'):
-                warnings.append('Sem transcrição salva: revisar o acontecimento e os limites manualmente.')
+                warnings.append(
+                    'Sem palavras do Parakeet no intervalo: isso não comprova ausência de fala; '
+                    'confirme o áudio e os limites manualmente.' if words else
+                    'Sem transcrição salva: revisar o acontecimento e os limites manualmente.')
             if opts.analyze_visual and visual.get('score') is None:
                 warnings.append(visual.get('reason') or
                     'Análise visual solicitada, mas nenhum cache visual utilizável foi fornecido.')
@@ -1117,6 +1262,7 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                 'start_ms':candidate['start_ms'],'end_ms':candidate['end_ms'],
                 'duration':(candidate['end_ms']-candidate['start_ms'])/1000.,
                 'text':candidate['text'],'transcript_available':not bool(candidate.get('event_only')),
+                'transcript_present':bool(words),
                 'score':ranked['score'],
                 'score_note':ranked.get('note','Ranking parcial de eventos observáveis; não avalia conteúdo semântico.'),
                 'reasons':candidate['text_reasons']+ranked['reasons'],
@@ -1150,7 +1296,7 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
         selected=select_diverse_clips(candidates,opts.max_candidates)
         result={'clip_id':clip.id,'title':clip.title,'source':source,
             'status':'ready' if selected else 'no_candidates','candidates':selected,
-            'events':events,'audio_available':frames is not None,
+            'events':events+gap_audio_events+visual_events,'audio_available':frames is not None,
             'warnings':(([audio_warning] if audio_warning else [])+
                 (['Sem transcrição salva: somente sinais acústicos/visuais observáveis podem gerar candidatos.']
                  if not words else []))}
@@ -1177,6 +1323,9 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
             'feature_frames':frames_seen,'candidate_count':candidate_count,
             'visual_frames_reused':visual_frames_reused,
             'visual_cache_hits':visual_cache_hits,
+            'transcript_gap_candidates':sum(
+                bool(c.get('transcript_present')) and not bool(c.get('transcript_available'))
+                for item in results for c in item['candidates']),
             'irony_candidates':sum(bool(c.get('irony_suspected')) for item in results for c in item['candidates']),
             'topic_boundary_candidates':sum(
                 float(c.get('topic_shift_before',0.))>=.52 or
