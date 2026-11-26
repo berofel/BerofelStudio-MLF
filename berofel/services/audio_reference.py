@@ -227,8 +227,8 @@ def _distributed_reference_shortlist(ranked: list, duration: float,
 
     ``ranked`` is already ordered by cheap VAD evidence. Selecting only its
     first rows biases long, uniformly voiced recordings toward the beginning.
-    This keeps the PCM scan bounded while reserving one high-ranked candidate
-    per temporal region, then fills unused slots from the global ranking.
+    This keeps the PCM scan bounded while sampling inclusive temporal targets
+    over active windows; local ties favor the higher VAD-ranked candidate.
     """
     if limit <= 0 or not ranked:
         return []
