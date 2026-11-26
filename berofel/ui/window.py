@@ -3878,16 +3878,17 @@ class MainWindow(QMainWindow):
                 'Selecione blocos de áudio/vídeo ou escolha um alcance na aba Ações IA.')
             self.open_actions()
             return
-        usable=[];missing=[]
-        for clip in selected:
-            if words_in_clip(self.project,clip):usable.append(clip)
-            else:missing.append(clip.title or clip.id[:8])
+        # Transcript is optional: the Clip Engine can still rank measured
+        # audio/thumbnail events without claiming semantic understanding.
+        # Keep every selected media clip in scope and let the service use saved
+        # Parakeet words where available; never launch ASR from this tool.
+        usable=[clip for clip in selected if clip.kind in ('audio','video')]
         if not usable:
-            QMessageBox.information(self,'Transcrição necessária',
-                'O Clipador reutiliza as palavras já salvas e não inicia uma retranscrição. '
-                'Marque “Transcrever · somente ASR local” na aba Ações IA para estes blocos e tente novamente.')
-            self.open_actions()
+            QMessageBox.information(self,'Mídia incompatível',
+                'Selecione ao menos um bloco de áudio ou vídeo. O Clipador não inicia uma transcrição.')
             return
+        missing=[clip.title or clip.id[:8] for clip in usable
+                 if not words_in_clip(self.project,clip)]
         source_paths={str(Path(clip.source).resolve()) for clip in usable}
         words=[dict(word) for word in self.project.transcripts
             if str(Path(word.get('source','')).resolve()) in source_paths]
@@ -3908,7 +3909,9 @@ class MainWindow(QMainWindow):
         dialog.show()
         dialog.raise_()
         if missing:
-            dialog.status.setText('Alguns blocos sem transcrição foram ignorados: '+', '.join(missing[:5])+'.')
+            dialog.status.setText('Sem transcrição em parte do alcance: esses blocos serão avaliados '
+                'somente pelos sinais de áudio/miniaturas disponíveis; o Parakeet não será iniciado. '
+                'Use Equilibrado ou Avançado para medir o áudio original quando necessário.')
 
     def _run_clipper(self,dialog,options):
         context=getattr(dialog,'_clipper_context',None)
@@ -3938,9 +3941,9 @@ class MainWindow(QMainWindow):
                 return
             dialog.set_results(result)
             if context['missing']:
-                dialog.status.setText(dialog.status.text()+' Blocos sem transcrição ignorados: '+
-                    ', '.join(context['missing'][:5])+'.')
-        task=self._task(worker,ready,label='Clipador Inteligente · PCM e transcrição')
+                dialog.status.setText(dialog.status.text()+' Blocos sem transcrição foram avaliados '
+                    'somente pelos sinais disponíveis, sem nova transcrição.')
+        task=self._task(worker,ready,label='Clipador Inteligente · sinais locais')
         if task is None:
             dialog.set_busy(False)
             return

@@ -11,7 +11,7 @@ O Clipador é uma ferramenta local de descoberta e revisão, não um editor auto
 
 ## Uso
 
-1. Para candidatos com contexto de fala, transcreva o material uma vez pela ferramenta Parakeet existente. A transcrição não é obrigatória para procurar mudanças acústicas/visuais.
+1. Para candidatos com contexto de fala, transcreva o material uma vez pela ferramenta Parakeet existente. A transcrição não é obrigatória para procurar mudanças acústicas/visuais; o Clipador não inicia Parakeet por conta própria.
 2. Selecione clipes/fonte e abra **Ações IA → Clipador Inteligente**.
 3. Escolha duração, quantidade, sensibilidade acústica, perfil editorial e modo. A opção **Análise visual** é independente e lê somente miniaturas já salvas no cache da timeline; não solicita quadros faltantes nem decodifica o vídeo.
 4. Revise nota, cobertura das evidências, componentes, justificativas e avisos.
@@ -21,6 +21,8 @@ O Clipador é uma ferramenta local de descoberta e revisão, não um editor auto
 O modo Rápido só usa tiles de waveform já presentes para o intervalo inteiro. Se faltar qualquer tile, ele continua com texto/timestamps quando existem e informa que não havia waveform completa; não inicia FFmpeg escondido. Sem texto e sem sinais já cacheados, não inventa candidatos. O modo Equilibrado calcula PCM se ainda não houver o cache PCM. O modo Avançado também calcula PCM e executa TextRank local esparso somente nas falas de cada candidato. Os resultados persistidos ficam separados por modo para não confundir envelope de pico com RMS. TextRank é uma centralidade relativa entre falas daquele candidato, não uma medida absoluta de qualidade.
 
 Sem transcrição, candidatos são gerados somente quando há picos acústicos relativos à própria gravação ou mudanças suficientemente isoladas em miniaturas cacheadas. O detector visual aplica limiar robusto e supressão de máximos próximos; é um proxy de mudança de imagem, não detecção semântica de cena. A pontuação usa apenas dimensões observadas, expõe cobertura e reduz a nota parcial em direção a 50 quando a cobertura é baixa. O painel mostra “Sem transcrição” em vez de texto inventado e permite trim temporal curto; nenhum Parakeet é iniciado automaticamente.
+
+O alcance selecionado sem transcrição permanece elegível no diálogo principal. Antes, a janela principal bloqueava esse caminho e pedia para transcrever, apesar de o serviço e o diálogo já oferecerem candidatos baseados em eventos; essa lacuna de integração foi corrigida. Sem transcrição, o modo Rápido ainda precisa de waveform/miniaturas existentes. Equilibrado/Avançado podem ler PCM da fonte em streaming, sem abrir uma transcrição.
 
 ## Etapas existentes e evolução desta versão
 

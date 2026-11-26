@@ -49,3 +49,16 @@ O relatório real anterior nesta branch documenta um arquivo de 80,63 min: extra
 - O usuário ainda precisa revisar a seleção antes de inserir ou exportar. A validação desta rodada foi automatizada/offscreen; não foi uma sessão gráfica manual.
 - As medidas de tempo e memória sintéticas não substituem benchmark end-to-end no Ryzen 7 5700G com os arquivos de mídia reais.
 - A pasta mencionada anteriormente em `D:\Edição CapCut\vídeos` não está disponível neste ambiente; nenhum arquivo real adicional foi analisado em 26/11.
+
+## Correção de integração posterior
+
+Na revisão de 26/11 foi encontrada uma divergência entre o serviço e a entrada da UI: `analyze_clips` aceitava transcrição vazia e possuía a rota de eventos, mas `MainWindow.open_clipper` impedia abrir a ferramenta sem palavras salvas. A guarda foi removida para blocos de áudio/vídeo. Sem transcrição, a UI passa a explicar que somente áudio/miniaturas disponíveis podem contribuir e que Parakeet não será executado. O alcance continua sendo de revisão, sem cortes automáticos.
+
+Foi acrescentado um teste Qt de regressão que abre um clipe sem transcrição e verifica o despacho com lista de palavras vazia e zero chamadas a `parakeet_asr.transcribe_file`. Ele passou no ambiente virtual do aplicativo com Qt offscreen. A janela visível do editor não foi operada manualmente nesta sessão. A rota de serviço sem ASR também permanece coberta pelos testes de `test_clipper.py` e `test_clip_visual_signals.py`.
+
+### Revalidação automatizada desta correção
+
+- `python -m unittest discover -s tests -q`: **637 testes executados, 631 aprovados e 6 ignorados**, em 67,822 s. A execução foi feita com o Python do venv do aplicativo, que contém PySide6, NumPy, Pillow e SciPy.
+- Testes focados: Clipador **25/25**, sinais de áudio **18/18**, sinais visuais **8/8**, e novo teste Qt de entrada sem transcrição **1/1**.
+- Benchmark sintético atual, uma repetição por célula, 5/20/60/80/120 min: Rápido **0,290/1,097/3,290/4,394/6,615 s**; Equilibrado **0,286/1,098/3,298/4,433/6,598 s**; Avançado **0,294/1,143/3,432/4,556/6,856 s**. No caso de 120 min, aumento de RSS amostrado foi 12,6/7,9/8,1 MiB, respectivamente. Cada cenário retornou sete candidatos, zero chamadas Parakeet e zero segundos de áudio decodificado: este benchmark mede somente transcrição sintética e construção/ranking de candidatos, não pipeline real nem qualidade editorial.
+- A pasta de mídia mencionada em `D:\Edição CapCut\vídeos` não existe neste ambiente. Não foi possível executar benchmark novo com gravação real nem avaliação humana.

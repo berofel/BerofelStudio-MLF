@@ -380,6 +380,41 @@ class ActionsUITests(unittest.TestCase):
             self.assertEqual(analyze.call_args.args[1],words)
             dialog.close();win.close()
 
+    def test_clipador_ui_accepts_audio_without_transcript_without_starting_parakeet(self):
+        from unittest.mock import patch
+        from berofel.core.project import Clip
+        win=MainWindow()
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_ui_event_only_') as folder:
+            source=Path(folder)/'untranscribed.wav'
+            source.write_bytes(b'audio fixture')
+            clip=win.project.add_clip(Clip(str(source),0.,6.,kind='audio',
+                track_id=win.project.tracks[-1].id))
+            win.refresh([clip.id])
+            with patch('berofel.ui.window.QMessageBox.information') as information:
+                win.open_clipper()
+            dialog=win._clipper_dialog
+            self.assertIsNotNone(dialog)
+            information.assert_not_called()
+            self.assertEqual(dialog._clipper_context['clips'][0].id,clip.id)
+            self.assertEqual(dialog._clipper_context['words'],[])
+            self.assertIn('Parakeet não será iniciado',dialog.status.text())
+            dialog.minimum.setValue(3);dialog.maximum.setValue(5)
+            with patch('berofel.ui.window.analyze_clip_candidates',return_value={
+                    'clips':[],'candidates':[],'events':[],
+                    'stats':{'elapsed_seconds':.01,'cache_hits':0,'cache_misses':1,
+                             'decoded_seconds':6.,'candidate_count':0,'rss_mb':None}}) as analyze, \
+                 patch('berofel.services.parakeet_asr.transcribe_file') as parakeet:
+                dialog._analyze()
+                deadline=time.monotonic()+5
+                while time.monotonic()<deadline and dialog.cancel_button.isEnabled():
+                    QTest.qWait(25)
+            analyze.assert_called_once()
+            self.assertEqual(analyze.call_args.args[0][0].id,clip.id)
+            self.assertEqual(analyze.call_args.args[1],[])
+            parakeet.assert_not_called()
+            self.assertIn('sem nova transcrição',dialog.status.text())
+            dialog.close();win.close()
+
     def test_clipador_ui_labels_event_only_candidates_and_keeps_time_trims(self):
         dialog=ClipperDialog()
         candidate={'id':'event-1','clip_id':'clip-1','title':'Gameplay',
