@@ -26,7 +26,10 @@ from .discourse_features import (analyze_discourse, content_terms, discourse_rol
     text_tiling_boundaries)
 from .ffmpeg import ffmpeg_path, media_info
 
-CLIPPER_VERSION = 5
+CLIPPER_VERSION = 6
+# Keep the persisted v5 feature keys compatible: the PCM/waveform extraction
+# format and algorithm did not change. Bump this independently only when they do.
+FEATURE_EXTRACTOR_VERSION = 5
 FEATURE_RATE = 16_000
 FEATURE_FRAME_MS = 20
 CACHE_SCHEMA = 1
@@ -89,7 +92,7 @@ def clipper_cache_dir() -> Path:
 
 
 def _features_key(source: str, start: float, end: float, mode: str = 'pcm') -> str:
-    return digest({'version': CLIPPER_VERSION, 'source': source_identity(source),
+    return digest({'version': FEATURE_EXTRACTOR_VERSION, 'source': source_identity(source),
         'start': round(float(start), 4), 'end': round(float(end), 4),
         'stream': 0, 'sample_rate': FEATURE_RATE, 'frame_ms': FEATURE_FRAME_MS,
         'mode': mode})

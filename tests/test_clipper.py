@@ -231,6 +231,30 @@ class ClipperTests(unittest.TestCase):
         self.assertNotEqual(first['candidates'][0]['text'],third['candidates'][0]['text'])
         self.assertTrue(fourth['candidates'])
 
+    def test_profile_change_reuses_acoustic_feature_cache_without_pcm_decode(self):
+        import wave
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_profile_cache_') as folder:
+            source=Path(folder)/'talk.wav'
+            rate=16000
+            samples=(.04*np.sin(2*np.pi*180*np.arange(rate*4)/rate)).astype('<f4')
+            pcm=np.clip(samples*32767,-32768,32767).astype('<i2')
+            with wave.open(str(source),'wb') as audio:
+                audio.setnchannels(1);audio.setsampwidth(2);audio.setframerate(rate)
+                audio.writeframes(pcm.tobytes())
+            clip=Clip(str(source),0.,4.,kind='audio')
+            words=transcript(source,count=19,step=.2)
+            cache=Path(folder)/'cache'
+            with patch('berofel.services.clipper._audio_pcm_chunks',
+                       wraps=__import__('berofel.services.clipper',fromlist=['_audio_pcm_chunks'])._audio_pcm_chunks) as decode:
+                first=analyze_clips([clip],words,ClipperOptions(3.,4.,5,6.,'Geral'),
+                                    cache_dir=cache)
+                second=analyze_clips([clip],words,ClipperOptions(3.,4.,5,6.,'Gameplay'),
+                                     cache_dir=cache)
+        self.assertEqual(decode.call_count,1)
+        self.assertTrue(first['candidates'])
+        self.assertTrue(second['candidates'])
+        self.assertGreaterEqual(second['stats']['cache_hits'],1)
+
     def test_ffmpeg_decodes_audio_in_small_stream_and_persists_reusable_rms_frames(self):
         import wave
         with tempfile.TemporaryDirectory(prefix='bfs_clipper_ffmpeg_') as folder:

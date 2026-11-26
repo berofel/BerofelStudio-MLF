@@ -49,7 +49,7 @@ Quando há PCM medido, mas nenhum pico relativo à fala é encontrado, a dimens�
 
 ## Cache e desempenho
 
-- Os arrays RMS/pico/clip de PCM e waveform proxy são caches separados, indexados por identidade da fonte, intervalo, taxa, tamanho de quadro e versão do extrator.
+- Os arrays RMS/pico/clip de PCM e waveform proxy são caches separados, indexados por identidade da fonte, intervalo, taxa, tamanho de quadro e versão própria do extrator acústico. A chave permanece na versão 5 porque o extrator/formato não mudou; a versão do ranking avançou para 6. Assim, resultados editoriais antigos são invalidados e as features existentes podem ser mantidas. Alterar ranking, perfis ou regras de texto invalida candidatos/resultados, mas mantém essas features.
 - Resultados incluem texto/timestamps, opções, perfil, modo e versão da regra. Alterar duração/perfil pode recalcular candidatos e ranking, mas nunca solicita uma nova transcrição. As características de áudio continuam reutilizáveis.
 - `score_clip` e avisos agora recortam os arrays com busca binária, em vez de criar uma máscara sobre todos os frames para cada candidato. A busca de tópicos internos também limita a consulta às fronteiras dentro do candidato.
 - O cache segue em `%LOCALAPPDATA%\BFS\cache\clipper` ou `BEROFEL_CLIPPER_CACHE`; os artefatos reconhecidos estão sujeitos ao limite configurável `BEROFEL_CLIPPER_CACHE_MAX_MB`. Cache corrompido é ignorado e pode ser refeito.
@@ -70,7 +70,7 @@ Referências consultadas em 25/11/2026; não copiamos código de terceiros:
 
 ## Testes e limites conhecidos
 
-Testes determinísticos existentes cobrem timestamps, bordas, pergunta/resposta, mudanças de tópico, ironia heurística, RMS/picos, cache e deduplicação. Esta alteração acrescenta cobertura de componentes/perfis, leitura de waveform em cache sem decode, tolerância a baixo ganho e distinção entre áudio medido e evento detectado. Os 32 testes focados de `test_clip_audio_signals.py` e `test_clipper.py` passaram. A primeira execução da suíte completa encontrou uma regressão Qt: a tarefa consultava `self.timeline.visual_cache`, embora o cache pertença a `self.timeline.view`. A referência foi corrigida e o teste real de despacho Qt passou. A última execução de `python -m unittest discover -s tests -q` passou em **613 testes (607 aprovados, 6 skips)** em 69,765 s. `pytest` não está instalado, mas a suíte existente é `unittest`; não foi instalado outro pacote. `py_compile` dos arquivos alterados e `git diff --check` também passaram.
+Testes determinísticos existentes cobrem timestamps, bordas, pergunta/resposta, mudanças de tópico, ironia heurística, RMS/picos, cache e deduplicação. Esta alteração acrescenta cobertura de componentes/perfis, leitura de waveform em cache sem decode, tolerância a baixo ganho, distinção entre áudio medido e evento detectado e reutilização de PCM ao mudar perfil. Os 33 testes focados de `test_clip_audio_signals.py` e `test_clipper.py` passaram. A primeira execução da suíte completa encontrou uma regressão Qt: a tarefa consultava `self.timeline.visual_cache`, embora o cache pertença a `self.timeline.view`. A referência foi corrigida e o teste real de despacho Qt passou. A última execução de `python -m unittest discover -s tests -q` passou em **614 testes (608 aprovados, 6 skips)** em 66,335 s. `pytest` não está instalado, mas a suíte existente é `unittest`; não foi instalado outro pacote. `py_compile` dos arquivos alterados e `git diff --check` também passaram.
 
 ### Benchmark sintético de escala (25/11/2026)
 
