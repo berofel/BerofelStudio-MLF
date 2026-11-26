@@ -121,6 +121,33 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             finally:
                 panel.close()
 
+    def test_quality_result_shows_speech_rate_only_with_word_timestamps(self):
+        with patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
+             patch('berofel.services.qwen3_purec_tts.is_ready',return_value=False):
+            panel=NarrationPanel()
+            try:
+                panel.set_quality_result({
+                    'audio_rms_dbfs':-20.0,'audio_peak_dbfs':-3.0,
+                    'audio_clipped_fraction':0.0,'audio_warnings':[],
+                    'word_error_rate':0.0,'character_error_rate':0.0,
+                    'recognized_text':'Hoje vamos editar.',
+                    'speech_rate':{'wpm_wall':90.0,'wpm_active':130.0,
+                                   'word_count':3},
+                })
+                self.assertIn('90 palavras/min no áudio',panel.status.text())
+                self.assertIn('130 palavras/min em fala ativa (3 palavras)',
+                              panel.status.text())
+                panel.set_quality_result({
+                    'audio_rms_dbfs':-20.0,'audio_peak_dbfs':-3.0,
+                    'audio_clipped_fraction':0.0,'audio_warnings':[],
+                    'word_error_rate':0.0,'character_error_rate':0.0,
+                    'recognized_text':'Hoje vamos editar.',
+                    'speech_rate':{'wpm_wall':None,'wpm_active':None},
+                })
+                self.assertNotIn('palavras/min',panel.status.text())
+            finally:
+                panel.close()
+
     def test_purec_turbo_thread_budget_persists_between_panels(self):
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
              patch('berofel.services.qwen3_purec_tts.is_ready',return_value=True):

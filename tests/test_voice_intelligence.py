@@ -20,7 +20,7 @@ from berofel.services.voice_intelligence.speaker_fingerprint import (
     apply_emotion_direction, read_purec_emotion_direction,
 )
 from berofel.services.voice_intelligence.quality_inspector import (
-    calculate_temporal_coverage, calculate_text_error_rates,
+    calculate_speech_rate, calculate_temporal_coverage, calculate_text_error_rates,
     inspect_generated_wav_with_parakeet, inspect_pcm16_wav,
 )
 from berofel.services.voice_intelligence.acoustic_analyzer import (
@@ -627,6 +627,33 @@ class SpectralAcousticAnalysisTests(TestCase):
 
 
 class ParakeetQualityInspectionTests(TestCase):
+    def test_speech_rate_uses_word_timestamp_union_without_double_counting(self):
+        result = calculate_speech_rate([
+            {'text': 'Hoje', 'start': 0.0, 'end': 0.6},
+            {'text': 'vamos', 'start': 0.5, 'end': 1.0},
+            {'text': 'lá', 'start': 2.0, 'end': 2.5},
+        ], 4.0)
+        self.assertEqual(result['word_count'], 3)
+        self.assertAlmostEqual(result['active_speech_seconds'], 1.5)
+        self.assertAlmostEqual(result['wpm_wall'], 45.0)
+        self.assertAlmostEqual(result['wpm_active'], 120.0)
+        self.assertAlmostEqual(result['active_fraction'], .375)
+        self.assertEqual(result['timestamp_basis'], 'parakeet_word_timestamps')
+
+    def test_speech_rate_skips_invalid_words_and_reports_missing_timestamps(self):
+        result = calculate_speech_rate([
+            {'text': 'inválida', 'start': 2.0, 'end': 1.0},
+            {'text': 'fora do áudio', 'start': 8.0, 'end': 9.0},
+            {'text': 'válida', 'start': .25, 'end': .75},
+            {'text': 'sem tempos'},
+        ], 2.0)
+        self.assertEqual(result['word_count'], 1)
+        self.assertAlmostEqual(result['wpm_wall'], 30.0)
+        missing = calculate_speech_rate([{'text': 'somente segmento'}], 5.0)
+        self.assertIsNone(missing['wpm_wall'])
+        self.assertIsNone(missing['wpm_active'])
+        self.assertIn('unavailable', missing['note'])
+
     def test_temporal_coverage_flags_long_tail_for_manual_review_only(self):
         result = calculate_temporal_coverage([
             {'start': 2.0, 'end': 3.1}, {'start': 4.0, 'end': 4.8}], 7.0)
@@ -678,6 +705,7 @@ class ParakeetQualityInspectionTests(TestCase):
             self.assertEqual(result['provider'], 'CPUExecutionProvider')
             self.assertEqual(result['asr_model'], 'Parakeet TDT v3 ONNX INT8')
             self.assertTrue(result['review_required'])
+            self.assertIsNone(result['speech_rate']['wpm_active'])
             self.assertAlmostEqual(result['audio_duration_seconds'], 1.0)
             self.assertLess(result['audio_rms_dbfs'], 0)
             self.assertFalse(result['audio_digitally_silent'])
@@ -719,6 +747,8 @@ class ParakeetQualityInspectionTests(TestCase):
             self.assertEqual(first['word_error_rate'], 0)
             self.assertGreater(second['word_error_rate'], 0)
             self.assertEqual(second['recognized_text'], asr_result['text'])
+            self.assertEqual(second['speech_rate']['word_count'], 1)
+            self.assertAlmostEqual(second['speech_rate']['wpm_active'], 300.0)
             parakeet.assert_called_once()
             payload = next(asr_cache.rglob('*.json')).read_text(encoding='utf-8')
             self.assertNotIn(str(audio), payload)

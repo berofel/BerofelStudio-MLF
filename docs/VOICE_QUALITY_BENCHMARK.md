@@ -1,5 +1,9 @@
 # Qualidade e benchmark vocal — estado da etapa
 
+## Métrica de ritmo a partir dos timestamps existentes
+
+O inspetor de qualidade e o painel de narração calculam WPM total e WPM em fala ativa usando a saída por palavra do Parakeet TDT v3. Intervalos sobrepostos são unidos para evitar dupla contagem da duração ativa; palavras sem limites válidos e pontos fora da duração do WAV são descartados. Se o Parakeet retornar somente segmentos, os dois ritmos ficam indisponíveis. A métrica não gera timestamps, não dispara uma segunda transcrição e não representa nota de naturalidade.
+
 O ASR usado no fluxo BVI é **Parakeet TDT v3 ONNX INT8 em CPU**, junto ao Silero VAD local. Faster-Whisper não faz parte desta rota e não foi usado nos resultados abaixo.
 
 ## Smoke test local Parakeet em amostra autorizada (26/11/2026)

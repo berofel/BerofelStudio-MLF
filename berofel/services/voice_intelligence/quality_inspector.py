@@ -101,6 +101,69 @@ def calculate_temporal_coverage(words, audio_duration: float | None) -> dict:
     }
 
 
+def calculate_speech_rate(words, audio_duration: float | None) -> dict:
+    """Estimate spoken-word rate from real Parakeet word timestamps.
+
+    ``wpm_wall`` uses the complete WAV duration. ``wpm_active`` uses the union
+    of valid word intervals, so overlaps in ASR alignment are not double
+    counted. These are diagnostics, not a calibrated speaking-style score.
+    No timestamps are synthesized when the adapter only provides segments.
+    """
+    duration = None
+    try:
+        candidate = float(audio_duration)
+        if math.isfinite(candidate) and candidate > 0:
+            duration = candidate
+    except (TypeError, ValueError):
+        pass
+
+    intervals: list[tuple[float, float]] = []
+    word_count = 0
+    for word in words or ():
+        if not isinstance(word, dict) or not str(word.get("text") or "").strip():
+            continue
+        try:
+            start, end = float(word.get("start")), float(word.get("end"))
+        except (TypeError, ValueError):
+            continue
+        if not (math.isfinite(start) and math.isfinite(end) and end > start):
+            continue
+        start = max(0.0, start)
+        if duration is not None:
+            end = min(duration, end)
+        if end <= start:
+            continue
+        word_count += 1
+        intervals.append((start, end))
+
+    if not intervals:
+        return {"word_count": 0, "active_speech_seconds": None,
+                "wpm_wall": None, "wpm_active": None,
+                "timestamp_basis": "parakeet_word_timestamps",
+                "note": "No valid Parakeet word timestamps; speech rate unavailable."}
+
+    intervals.sort()
+    active = 0.0
+    start, end = intervals[0]
+    for next_start, next_end in intervals[1:]:
+        if next_start <= end:
+            end = max(end, next_end)
+        else:
+            active += end - start
+            start, end = next_start, next_end
+    active += end - start
+
+    return {
+        "word_count": word_count,
+        "active_speech_seconds": active,
+        "wpm_wall": (60.0 * word_count / duration if duration is not None else None),
+        "wpm_active": 60.0 * word_count / active if active > 0 else None,
+        "active_fraction": (min(1.0, active / duration) if duration is not None else None),
+        "timestamp_basis": "parakeet_word_timestamps",
+        "note": "Approximate diagnostic from ASR word boundaries; not a voice-quality score.",
+    }
+
+
 def inspect_pcm16_wav(path: str | Path, *, block_seconds: float = 1.0) -> dict:
     """Measure normalized mono PCM16 in bounded blocks (no whole-file load)."""
     if block_seconds <= 0:
@@ -411,10 +474,12 @@ def inspect_generated_wav_with_parakeet(
                     pass
     audio_duration = audio_metrics["audio_duration_seconds"]
     temporal = calculate_temporal_coverage(result.get("words"), audio_duration)
+    speech_rate = calculate_speech_rate(result.get("words"), audio_duration)
     rates = calculate_text_error_rates(expected_spoken_text, recognized)
     return {
         **rates,
         **temporal,
+        "speech_rate": speech_rate,
         **audio_metrics,
         "recognized_text": recognized,
         "verification_skipped_reason": verification_skipped_reason,

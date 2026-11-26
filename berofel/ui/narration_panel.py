@@ -1743,6 +1743,7 @@ class NarrationPanel(QScrollArea):
         cer = float(result.get('character_error_rate', 0.0)) * 100
         recognized = str(result.get('recognized_text') or '').strip()
         trailing = result.get('trailing_gap_seconds')
+        speech_rate = result.get('speech_rate') or {}
         audio_warnings = result.get('audio_warnings') or []
         audio_note = (f"\nÁudio: RMS {float(result.get('audio_rms_dbfs', 0)):.1f} dBFS · "
                       f"pico {float(result.get('audio_peak_dbfs', 0)):.1f} dBFS · "
@@ -1751,6 +1752,13 @@ class NarrationPanel(QScrollArea):
             audio_note += f"\n{result['verification_skipped_reason']}"
         if audio_warnings:
             audio_note += "\n" + " ".join(str(warning) for warning in audio_warnings)
+        wpm_wall = speech_rate.get('wpm_wall')
+        wpm_active = speech_rate.get('wpm_active')
+        if wpm_wall is not None and wpm_active is not None:
+            audio_note += (f"\nRitmo estimado pelos timestamps do Parakeet: "
+                           f"{float(wpm_wall):.0f} palavras/min no áudio · "
+                           f"{float(wpm_active):.0f} palavras/min em fala ativa "
+                           f"({int(speech_rate.get('word_count', 0))} palavras).")
         timing_note = (f'\nFim reconhecido em {result.get("last_recognized_word_end_seconds"):.2f} s; '
                        f'intervalo restante {float(trailing):.2f} s. Confira o final ouvindo.'
                        if result.get('review_ending') and trailing is not None and
