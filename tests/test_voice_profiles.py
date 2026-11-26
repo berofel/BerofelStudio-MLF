@@ -1,5 +1,6 @@
 """Persistent private voice reference profile tests."""
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -97,6 +98,29 @@ class VoiceProfileManagerTests(unittest.TestCase):
             Path(profile['sample_path']).write_bytes(b'changed')
             with self.assertRaisesRegex(ValueError,'alterada ou está corrompida'):
                 manager.get(profile['id'])
+
+    def test_reuses_verified_sample_hash_until_file_identity_changes(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(prefix='bfs_profile_hash_cache_') as folder:
+            root = Path(folder)
+            source = root / 'voice.wav'
+            source.write_bytes(b'RIFF' + b'a' * 300)
+            manager = VoiceProfileManager(root / 'profiles')
+            profile = manager.create('Voz longa', source)
+            sample = Path(profile['sample_path'])
+            original_hash = manager._hash_file
+            with patch.object(manager, '_hash_file', wraps=original_hash) as hash_file:
+                manager.get(profile['id'])
+                manager.list_profiles()
+                manager.get(profile['id'])
+                self.assertEqual(hash_file.call_count, 0)
+
+                before = sample.stat()
+                sample.write_bytes(b'RIFF' + b'b' * 300)
+                os.utime(sample, ns=(before.st_atime_ns, before.st_mtime_ns + 5_000_000_000))
+                with self.assertRaisesRegex(ValueError, 'alterada ou está corrompida'):
+                    manager.get(profile['id'])
+                self.assertEqual(hash_file.call_count, 1)
 
     def test_rejects_manifest_path_traversal_before_opening_external_files(self):
         with tempfile.TemporaryDirectory(prefix='bfs_voice_profiles_') as folder:

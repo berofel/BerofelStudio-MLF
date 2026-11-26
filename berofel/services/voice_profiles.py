@@ -37,6 +37,16 @@ class VoiceProfileManager:
         self.directory = Path(directory).expanduser().resolve()
         self.samples = self.directory / 'samples'
         self.manifest = self.directory / 'profiles.json'
+        # Profile samples can be long recordings. Verify the full digest once
+        # per stable file identity in this manager instead of rereading every
+        # voice whenever the UI refreshes its profile list.
+        self._verified_samples: dict[str, tuple[int, int, int, int, str]] = {}
+
+    @staticmethod
+    def _sample_identity(sample: Path) -> tuple[int, int, int, int]:
+        stat = sample.stat()
+        return (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns,
+                getattr(stat, 'st_ino', 0))
 
     def _read(self) -> dict[str, dict]:
         if not self.manifest.exists():
@@ -110,8 +120,18 @@ class VoiceProfileManager:
         sample = (self.directory / item['sample']).resolve()
         if not sample.is_file():
             raise FileNotFoundError(f'A cópia local do perfil “{item["name"]}” não foi encontrada: {sample}')
-        if item['sample_sha256'] and self._hash_file(sample) != item['sample_sha256']:
-            raise ValueError(f'A cópia local do perfil “{item["name"]}” foi alterada ou está corrompida.')
+        expected_hash = item['sample_sha256']
+        if expected_hash:
+            identity = self._sample_identity(sample)
+            cache_key = str(sample)
+            cached = self._verified_samples.get(cache_key)
+            if (cached is None or cached[:4] != identity or
+                    cached[4] != expected_hash):
+                actual_hash = self._hash_file(sample)
+                if actual_hash != expected_hash:
+                    self._verified_samples.pop(cache_key, None)
+                    raise ValueError(f'A cópia local do perfil “{item["name"]}” foi alterada ou está corrompida.')
+                self._verified_samples[cache_key] = (*identity, actual_hash)
         return dict(item, sample_path=str(sample))
 
     def create(self, name: str, source: str | Path, language: str = 'portuguese',
@@ -155,12 +175,15 @@ class VoiceProfileManager:
                 'authorized': bool(authorized),
                 'created_utc': datetime.now(timezone.utc).isoformat(timespec='seconds'),
             }
+            identity = self._sample_identity(target)
             profiles[profile_id] = item
             try:
                 self._write(profiles)
             except Exception:
                 target.unlink(missing_ok=True)
                 raise
+            self._verified_samples[str(target.resolve())] = (*identity,
+                                                               item['sample_sha256'])
             return dict(item, sample_path=str(target.resolve()))
         finally:
             try:
@@ -215,6 +238,7 @@ class VoiceProfileManager:
         except ValueError as exc:
             raise ValueError('O perfil aponta para um arquivo fora da pasta privada.') from exc
         self._write(profiles)
+        self._verified_samples.pop(str(sample), None)
         try:
             sample.unlink(missing_ok=True)
         except OSError:
