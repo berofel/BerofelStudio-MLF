@@ -24,6 +24,8 @@ from .clip_audio_signals import (FrameFeatures, align_events_to_conversation,
     select_diverse_clips)
 from .discourse_features import (analyze_discourse, content_terms, discourse_role,
     text_tiling_boundaries)
+from .clip_visual_signals import (read_cached_visual_signals,
+    score_cached_visual_interval)
 from .ffmpeg import ffmpeg_path, media_info
 
 CLIPPER_VERSION = 6
@@ -61,6 +63,7 @@ class ClipperOptions:
     relative_rise_db: float = 6.0
     profile: str = 'Geral'
     mode: str = 'Equilibrado'
+    analyze_visual: bool = False
 
     def __post_init__(self):
         if not 3 <= float(self.min_seconds) <= 300:
@@ -82,7 +85,8 @@ class ClipperOptions:
                 'max_seconds': float(self.max_seconds),
                 'max_candidates': int(self.max_candidates),
                 'relative_rise_db': float(self.relative_rise_db),
-                'profile': self.profile,'mode':self.mode}
+                'profile': self.profile,'mode':self.mode,
+                'analyze_visual':bool(self.analyze_visual)}
 
 
 def clipper_cache_dir() -> Path:
@@ -798,7 +802,8 @@ def _cache_path(cache_dir: Path, key: str) -> Path:
 
 def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOptions | None = None,
                   *, control=None, progress=None, stage=None,
-                  cache_dir: Path | None = None, waveform_provider=None) -> dict:
+                  cache_dir: Path | None = None, waveform_provider=None,
+                  visual_provider=None) -> dict:
     """Rank candidate windows from saved words and optional measured audio.
 
     This function never calls a language model, renders video, or changes a project.
@@ -808,6 +813,7 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
     root=Path(cache_dir or clipper_cache_dir())
     started=time.monotonic()
     results=[];hits=misses=0;decoded_seconds=0.;frames_seen=0
+    visual_frames_reused=visual_cache_hits=0
     path_words={}
     for word in transcript_words:
         try:key=str(Path(word.get('source','')).resolve())
@@ -886,15 +892,35 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
         turns=_utterances(words)
         events=align_events_to_conversation(events,turns)
         events=[dict(event,clip_id=clip.id,title=clip.title,source=source) for event in events]
+        visual_signals=None
+        if opts.analyze_visual and visual_provider is not None:
+            if stage:stage(f'Clipador • miniaturas em cache · {position+1}/{total}')
+            visual_signals=read_cached_visual_signals(
+                source,clip.start,clip.end,visual_provider,cache_dir=root,
+                control=control)
+            if visual_signals is not None:
+                visual_frames_reused+=visual_signals.frame_count
+                visual_cache_hits+=int(visual_signals.cache_hit)
         candidates=[]
         word_starts=[int(word['start_ms']) for word in words]
         for candidate in _candidate_spans(words,opts):
             if control:control.checkpoint()
+            visual=(score_cached_visual_interval(visual_signals,
+                candidate['start_ms'],candidate['end_ms'])
+                if opts.analyze_visual else {'score':None,'coverage':0.,
+                    'frames':0,'reason':''})
+            if visual.get('score') is not None:
+                candidate['visual_score']=visual['score']
+                candidate['text_reasons'].append(
+                    f"{visual['reason']} ({visual['coverage']:.0%} de cobertura)")
             ranked=score_clip(candidate,events,frames,opts.profile)
             candidate_events=[event for event in events
                 if event['start_ms']<candidate['end_ms'] and
                    event['end_ms']>candidate['start_ms']]
             warnings=list(ranked['warnings'])
+            if opts.analyze_visual and visual.get('score') is None:
+                warnings.append(visual.get('reason') or
+                    'Análise visual solicitada, mas nenhum cache visual utilizável foi fornecido.')
             if audio_warning:warnings.append(audio_warning)
             elif frames is not None and frames.level_kind=='pcm_rms':
                 left=int(np.searchsorted(frames.times_ms,candidate['start_ms'],side='left'))
@@ -918,6 +944,9 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                 'score_profile':ranked['profile'],'score_components':ranked['components'],
                 'evidence_coverage':ranked['evidence_coverage'],
                 'text_rank_score':candidate.get('text_rank_score'),
+                'visual_score':visual.get('score'),
+                'visual_coverage':visual.get('coverage',0.),
+                'visual_frames':visual.get('frames',0),
                 'audio_level_source':frames.level_kind if frames is not None else None,
                 'warnings':warnings,'events':candidate_events,
                 'irony_suspected':bool(candidate.get('irony_suspected',False)),
@@ -964,6 +993,8 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
         'stats':{'cache_hits':hits,'cache_misses':misses,'decoded_seconds':round(decoded_seconds,3),
             'profile':opts.profile,'mode':opts.mode,
             'feature_frames':frames_seen,'candidate_count':candidate_count,
+            'visual_frames_reused':visual_frames_reused,
+            'visual_cache_hits':visual_cache_hits,
             'irony_candidates':sum(bool(c.get('irony_suspected')) for item in results for c in item['candidates']),
             'topic_boundary_candidates':sum(
                 float(c.get('topic_shift_before',0.))>=.52 or

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QDialog,
-    QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton,
+    QCheckBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout)
 from .wheel_controls import (WheelGuardComboBox as QComboBox,
     WheelGuardDoubleSpinBox as QDoubleSpinBox, WheelGuardSpinBox as QSpinBox)
@@ -66,6 +66,15 @@ class ClipperDialog(QDialog):
         self.mode.setToolTip('Rápido: waveform em cache; Equilibrado: PCM + regras; Avançado: PCM + TextRank local. Todos reutilizam a transcrição Parakeet.')
         options.addWidget(self.mode)
         root.addLayout(options)
+
+        visual_row=QHBoxLayout()
+        self.visual_analysis=QCheckBox('Análise visual opcional · somente miniaturas já em cache')
+        self.visual_analysis.setToolTip(
+            'Compara mudanças entre miniaturas existentes da timeline. Não solicita novos quadros, '
+            'não decodifica o vídeo e não identifica semanticamente o que aparece.')
+        visual_row.addWidget(self.visual_analysis)
+        visual_row.addStretch(1)
+        root.addLayout(visual_row)
 
         self.status=QLabel('Analise somente o alcance escolhido na aba Ações IA.')
         self.status.setWordWrap(True)
@@ -140,7 +149,7 @@ class ClipperDialog(QDialog):
             return None
         return ClipperOptions(self.minimum.value(),self.maximum.value(),
             self.maximum_candidates.value(),self.sensitivity.value(),self.profile.currentText(),
-            self.mode.currentText())
+            self.mode.currentText(),self.visual_analysis.isChecked())
 
     def _analyze(self):
         options=self.options()
@@ -151,7 +160,7 @@ class ClipperDialog(QDialog):
         self.analyze_button.setEnabled(not busy)
         self.cancel_button.setEnabled(busy)
         for widget in (self.minimum,self.maximum,self.maximum_candidates,self.sensitivity,
-                       self.profile,self.mode):
+                       self.profile,self.mode,self.visual_analysis):
             widget.setEnabled(not busy)
         if busy:self.status.setText('Calculando em segundo plano; você pode continuar editando a timeline.')
 

@@ -256,6 +256,10 @@ class ActionsUITests(unittest.TestCase):
         dialog=ClipperDialog()
         self.assertEqual(dialog.options().min_seconds,15.)
         self.assertEqual(dialog.options().max_seconds,60.)
+        self.assertFalse(dialog.options().analyze_visual)
+        dialog.visual_analysis.setChecked(True)
+        self.assertTrue(dialog.options().analyze_visual)
+        dialog.visual_analysis.setChecked(False)
         candidate={'id':'candidate-1','clip_id':'clip-1','title':'Teste',
             'source_start':1.,'source_end':8.,'duration':7.,'score':74.,
             'text':'Uma fala de teste.','reasons':['Fecha em limite de frase'],

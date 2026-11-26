@@ -3926,7 +3926,8 @@ class MainWindow(QMainWindow):
         def worker(progress,control=None,stage=None):
             return analyze_clip_candidates(selected,words,options,control=control,
                                            progress=progress,stage=stage,
-                                           waveform_provider=self.timeline.view.visual_cache)
+                                           waveform_provider=self.timeline.view.visual_cache,
+                                           visual_provider=self.timeline.view.visual_cache)
         def ready(result):
             self._clipper_task=None
             if self._closing or not dialog:return
