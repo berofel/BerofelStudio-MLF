@@ -454,7 +454,8 @@ class ActionsUITests(unittest.TestCase):
     def test_clipador_ui_labels_event_only_candidates_and_keeps_time_trims(self):
         dialog=ClipperDialog()
         candidate={'id':'event-1','clip_id':'clip-1','title':'Gameplay',
-            'source_start':4.,'source_end':16.,'duration':12.,'score':60.,
+            'source_start':4.,'source_end':16.,'source_duration':12.,
+            'duration':6.,'playback_rate':2.,'score':60.,
             'text':'','transcript_available':False,
             'suggested_title':'Mudança visual detectada',
             'reasons':['Sem transcrição persistida; candidato baseado somente em sinais observados'],
@@ -471,12 +472,16 @@ class ActionsUITests(unittest.TestCase):
             'word_spans':[]}
         dialog.set_results({'candidates':[candidate],'events':[],'stats':{}})
         self.assertEqual(dialog.table.item(0,3).text(),'Mudança visual detectada')
+        self.assertIn('Fonte 4.00–16.00s · timeline 6.0s · 2×',
+                      dialog.table.item(0,2).text())
         self.assertIn('Sem transcrição',dialog.table.item(0,4).text())
         self.assertTrue(dialog.start_boundary.isEnabled())
         self.assertIn('novidade espectral 0.63',dialog.table.item(0,5).text())
         dialog.start_boundary.setCurrentIndex(dialog.start_boundary.findData(3000))
         adjusted=dialog.table.item(0,0).data(Qt.ItemDataRole.UserRole)
         self.assertEqual(adjusted['source_start'],3.)
+        self.assertEqual(adjusted['duration'],6.5)
+        self.assertEqual(adjusted['source_duration'],13.)
         self.assertEqual(adjusted['suggested_title'],'Mudança visual detectada')
         self.assertTrue(any('por tempo' in warning for warning in adjusted['warnings']))
         transcript_gap=dict(candidate,transcript_present=True)
@@ -511,11 +516,14 @@ class ActionsUITests(unittest.TestCase):
             self.assertIn('já estava em cache',dialog.table.item(0,3).toolTip())
             dialog.close()
 
-    def test_custom_voice_panel_defaults_to_full_clone_backend_and_keeps_other_profiles(self):
-        with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True):
+    def test_custom_voice_panel_keeps_original_manual_and_other_profiles_available(self):
+        with patch('berofel.services.qwen3_purec_tts.is_ready',return_value=False), \
+             patch('berofel.services.qwen3_native_tts.is_ready',return_value=True):
             panel=NarrationPanel()
         panel.voice.setCurrentIndex(panel.voice.findData('__custom__'))
+        panel.clone_engine.setCurrentIndex(panel.clone_engine.findData('qwen3-tts-local'))
         self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
+        self.assertIn('Manual · Original',panel.clone_engine.currentText())
         self.assertGreaterEqual(panel.clone_engine.findData('qwen3-tts-local'),0)
         self.assertGreaterEqual(panel.clone_engine.findData('qwen3-tts-native-q4'),0)
         self.assertGreaterEqual(panel.clone_engine.findData('qwen3-tts-native-q4-balanced'),0)
