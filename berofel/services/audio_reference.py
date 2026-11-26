@@ -17,7 +17,7 @@ _PROMPT_MAX_SECONDS = 30.0
 _REFERENCE_ACOUSTIC_MIN_SECONDS = 2.0
 # Bump whenever candidate selection, trimming, resampling or conditioning
 # preparation changes; cached speaker prompts must not survive a new window.
-REFERENCE_PREPARATION_VERSION = 9
+REFERENCE_PREPARATION_VERSION = 11
 REFERENCE_WINDOW_CACHE_VERSION = 1
 VOICE_REFERENCE_REPORT_VERSION = 1
 _SILENCE_THRESHOLD_DB = -38
@@ -221,6 +221,59 @@ def _rank_reference_shortlist(shortlist_records: list[dict], acoustics: dict,
     return rank_reference_candidates(measured, acoustics)
 
 
+def _distributed_reference_shortlist(ranked: list, duration: float,
+                                     limit: int = 8) -> list:
+    """Choose acoustically comparable candidates across the whole recording.
+
+    ``ranked`` is already ordered by cheap VAD evidence. Selecting only its
+    first rows biases long, uniformly voiced recordings toward the beginning.
+    This keeps the PCM scan bounded while reserving one high-ranked candidate
+    per temporal region, then fills unused slots from the global ranking.
+    """
+    if limit <= 0 or not ranked:
+        return []
+    # Ignore empty windows when the speech scan found any active candidate;
+    # otherwise endpoints containing leading/trailing silence can stretch
+    # the target range and consume the small PCM-read budget.
+    active = [item for item in ranked if float(item.active_seconds) > 0.0]
+    candidates = active or ranked
+    if len(candidates) <= limit or duration <= 0:
+        return candidates[:limit]
+    # Use inclusive target points spanning the candidate speech timeline. A
+    # conventional ``limit``-wide set of bins targets their midpoints, which
+    # samples only the inner 1/limit..(limit-1)/limit of a long recording and
+    # can miss useful speech at its beginning and end.
+    centers = [float(item.start) + float(item.duration) / 2.0
+               for item in candidates]
+    first_center, last_center = min(centers), max(centers)
+    if last_center <= first_center:
+        return ranked[:limit]
+    targets = [first_center + (last_center - first_center) * index / (limit - 1)
+               for index in range(limit)] if limit > 1 else [(first_center + last_center) / 2.0]
+    ordered = sorted(zip(candidates, centers), key=lambda pair: pair[1])
+    selected = []
+    used = set()
+    gap = (last_center - first_center) / max(1, limit - 1)
+    for target in targets:
+        # Keep each detailed PCM read close to its temporal target, while
+        # choosing the best VAD candidate among similarly located windows.
+        local = [(item, center) for item, center in ordered
+                 if abs(center - target) <= max(gap * .25, .001)
+                 and (float(item.start), float(item.duration)) not in used]
+        if not local:
+            local = [(item, center) for item, center in ordered
+                     if (float(item.start), float(item.duration)) not in used]
+        if not local:
+            break
+        item, _center = min(local, key=lambda pair: (
+            abs(pair[1] - target), -float(pair[0].score),
+            -float(pair[0].active_seconds), -float(pair[0].active_fraction)))
+        key = (float(item.start), float(item.duration))
+        used.add(key)
+        selected.append(item)
+    return selected
+
+
 @lru_cache(maxsize=32)
 def _best_reference_window(path: str, size: int, mtime_ns: int) -> tuple[float, float, float]:
     """Scan the full source for quiet gaps and choose its cleanest 30 s window.
@@ -285,6 +338,16 @@ def _best_reference_window(path: str, size: int, mtime_ns: int) -> tuple[float, 
         for length in lengths:
             candidates.update((max(0.0, min(duration - length, point)), length)
                               for point in (start, end, start - length, end - length))
+            # A continuous hour-long speech region has no quiet boundaries to
+            # create internal alternatives. Sample that region at half-window
+            # strides, preserving a final window exactly at its far edge.
+            if end - start >= length:
+                stride = max(1.0, length * .5)
+                last_start = max(start, end - length)
+                step_count = int((last_start - start) // stride)
+                candidates.update((min(last_start, start + step * stride), length)
+                                  for step in range(step_count + 1))
+                candidates.add((last_start, length))
 
     def active_seconds(window_start: float, length: float) -> float:
         window_end = window_start + length
@@ -306,7 +369,7 @@ def _best_reference_window(path: str, size: int, mtime_ns: int) -> tuple[float, 
     # noisy 30-second window cannot win merely by being long.
     from .voice_intelligence.reference_selector import rank_reference_candidates
     preliminary = rank_reference_candidates(candidate_records)
-    shortlist = preliminary[:8]
+    shortlist = _distributed_reference_shortlist(preliminary, duration, limit=8)
     acoustics = {}
     for item in shortlist:
         metrics = _candidate_acoustic_metrics(source, binary, item.start, item.duration)

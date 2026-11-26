@@ -346,7 +346,24 @@ class PureCEmotionVectorMathTests(TestCase):
 class ReferenceWindowRankingTests(TestCase):
     def test_reference_selection_revision_invalidates_conditioning_cache(self):
         from berofel.services.audio_reference import REFERENCE_PREPARATION_VERSION
-        self.assertEqual(REFERENCE_PREPARATION_VERSION, 9)
+        self.assertEqual(REFERENCE_PREPARATION_VERSION, 11)
+
+    def test_reference_acoustic_shortlist_samples_full_timeline_before_pcm_scans(self):
+        from berofel.services.audio_reference import _distributed_reference_shortlist
+        from berofel.services.voice_intelligence.reference_selector import (
+            rank_reference_candidates)
+        candidates = [
+            {'start': float(start), 'duration': 30., 'active_seconds': 30.,
+             'active_fraction': 1.}
+            for start in range(0, 3600 - 30 + 1, 15)]
+        ranked = rank_reference_candidates(candidates)
+        shortlist = _distributed_reference_shortlist(ranked, 3600., limit=8)
+        centers = [item.start + item.duration / 2 for item in shortlist]
+        self.assertEqual(len(shortlist), 8)
+        self.assertEqual(centers, sorted(centers))
+        self.assertLess(centers[0], 30.)
+        self.assertGreater(centers[-1], 3570.)
+        self.assertGreaterEqual(centers[-1] - centers[0], 3540.)
 
     def test_pitch_trackability_is_optional_selection_evidence_not_identity(self):
         from berofel.services.voice_intelligence.reference_selector import (

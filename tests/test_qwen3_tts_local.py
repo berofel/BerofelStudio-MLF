@@ -482,6 +482,27 @@ class QwenLocalCloneTests(unittest.TestCase):
                             for call in run.call_args_list
                             for arg in call.args[0]))
 
+    def test_hour_long_uniform_speech_scans_pcm_candidates_across_full_timeline(self):
+        from berofel.services.audio_reference import _best_reference_window
+        source='hour-long-reference.wav'
+        measured=[]
+        def measure(_source,_binary,start,duration):
+            measured.append((float(start),float(duration)))
+            return {'rms_dbfs':-24.,'clipped_fraction':0.,
+                    'near_silence_fraction':0.,'pitch_trackability':.8}
+        with patch('berofel.services.ffmpeg.ffmpeg_path',return_value='ffmpeg'), \
+             patch('berofel.services.ffmpeg.media_info',return_value=(3600.,False,True)), \
+             patch('berofel.services.audio_reference._silero_speech_regions',
+                   return_value=[(0.,3600.)]), \
+             patch('berofel.services.audio_reference._candidate_acoustic_metrics',
+                   side_effect=measure):
+            _best_reference_window(source,123,456)
+        self.assertEqual(len(measured),8)
+        self.assertLess(measured[0][0],300.)
+        self.assertGreater(measured[-1][0],3540.)
+        centers=[start+length/2 for start,length in measured]
+        self.assertGreaterEqual(centers[-1]-centers[0],3540.)
+
     def test_real_ffmpeg_scan_selects_later_voice_activity_without_changing_source(self):
         import numpy as np
         from scipy.io import wavfile
