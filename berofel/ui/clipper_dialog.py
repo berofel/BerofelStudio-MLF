@@ -16,6 +16,7 @@ from berofel.services.clip_audio_signals import CLIP_SCORE_PROFILES
 
 class ClipperDialog(QDialog):
     analyze_requested=Signal(object)
+    transcribe_requested=Signal()
     cancel_requested=Signal()
     preview_requested=Signal(object)
     insert_requested=Signal(object)
@@ -116,6 +117,13 @@ class ClipperDialog(QDialog):
         self.status.setWordWrap(True)
         self.status.setStyleSheet('color:#ffbe83;background:#202329;border-left:3px solid #f5822b;padding:6px;')
         root.addWidget(self.status)
+        self.transcribe_button=QPushButton('Transcrever faltantes com Parakeet')
+        self.transcribe_button.setToolTip(
+            'Executa a transcrição somente nos blocos sem palavras salvas, pelo pipeline Parakeet existente. '
+            'Não inicia Whisper nem outro reconhecedor.')
+        self.transcribe_button.setVisible(False)
+        self.transcribe_button.clicked.connect(self.transcribe_requested.emit)
+        root.addWidget(self.transcribe_button)
         boundary_row=QHBoxLayout()
         boundary_row.addWidget(QLabel('Ajuste por palavra · início'))
         self.start_boundary=QComboBox();self.start_boundary.setMinimumWidth(150)
@@ -206,12 +214,19 @@ class ClipperDialog(QDialog):
 
     def set_busy(self,busy: bool):
         self.analyze_button.setEnabled(not busy)
+        self.transcribe_button.setEnabled(not busy)
         self.cancel_button.setEnabled(busy)
         for widget in (self.minimum,self.maximum,self.maximum_candidates,self.sensitivity,
                        self.profile,self.mode,self.visual_analysis):
             widget.setEnabled(not busy)
         self.weight_group.setEnabled(not busy)
         if busy:self.status.setText('Calculando em segundo plano; você pode continuar editando a timeline.')
+
+    def set_missing_transcripts(self, missing):
+        names=list(missing or [])
+        self.transcribe_button.setVisible(bool(names))
+        self.transcribe_button.setText(
+            f'Transcrever {len(names)} bloco(s) sem texto com Parakeet')
 
     def set_results(self,result: dict):
         self.set_busy(False)

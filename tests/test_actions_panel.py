@@ -397,7 +397,8 @@ class ActionsUITests(unittest.TestCase):
             information.assert_not_called()
             self.assertEqual(dialog._clipper_context['clips'][0].id,clip.id)
             self.assertEqual(dialog._clipper_context['words'],[])
-            self.assertIn('Parakeet não será iniciado',dialog.status.text())
+            self.assertIn('solicitar a transcrição Parakeet',dialog.status.text())
+            self.assertTrue(dialog.transcribe_button.isVisible())
             dialog.minimum.setValue(3);dialog.maximum.setValue(5)
             with patch('berofel.ui.window.analyze_clip_candidates',return_value={
                     'clips':[],'candidates':[],'events':[],
@@ -413,6 +414,20 @@ class ActionsUITests(unittest.TestCase):
             self.assertEqual(analyze.call_args.args[1],[])
             parakeet.assert_not_called()
             self.assertIn('sem nova transcrição',dialog.status.text())
+            report={'source':str(source.resolve()),'start':0.,'end':6.,'words':[
+                {'id':'p1','source':str(source.resolve()),'source_start':.2,
+                 'source_end':.5,'text':'teste','probability':None}]}
+            with patch('berofel.ui.window.run_analysis',return_value={'reports':[report]}) as transcribe:
+                dialog.transcribe_button.click()
+                deadline=time.monotonic()+5
+                while time.monotonic()<deadline and dialog.cancel_button.isEnabled():
+                    QTest.qWait(25)
+            transcribe.assert_called_once()
+            self.assertEqual(transcribe.call_args.kwargs['mode'],'transcribe')
+            self.assertEqual(transcribe.call_args.kwargs['known_words'],{})
+            self.assertEqual([word['text'] for word in win.project.transcripts],['teste'])
+            self.assertFalse(dialog.transcribe_button.isVisible())
+            self.assertIn('serão reutilizados',dialog.status.text())
             dialog.close();win.close()
 
     def test_clipador_ui_labels_event_only_candidates_and_keeps_time_trims(self):

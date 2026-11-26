@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 from pathlib import Path
 import os
 import re
@@ -11,7 +13,7 @@ import time
 import wave
 from typing import Callable
 
-from .ai_cache import digest
+from .ai_cache import digest, file_sha256
 from .voice_intelligence.text_normalizer import NORMALIZER_VERSION, normalize_pt_br
 from .voice_intelligence.narrative_interpreter import plan_narrative_interpretation
 from .voice_intelligence.pronunciation_dictionary import (
@@ -125,6 +127,7 @@ _TEXT_CHUNK_CHARS = {
     'qwen3-tts-native-q4': 4800,
     'qwen3-tts-native-q4-balanced': 4800,
 }
+NARRATION_SEGMENT_MANIFEST_VERSION = 1
 
 
 def qwen_output_token_budget(text: str) -> int:
@@ -216,15 +219,114 @@ def _merge_narration_wavs(paths: list[str], destination: Path, control=None) -> 
     return duration
 
 
+def _write_narration_segment_manifest(destination: Path, request: NarrationRequest,
+                                      source_text: str, spoken_text: str,
+                                      chunks: list[str], part_paths: list[str]) -> Path:
+    """Persist exact PCM-frame/text boundaries for a long narration.
+
+    Source-text offsets are included only when text normalization did not
+    change the string. Otherwise they are explicitly null rather than guessed.
+    The sidecar is local beside the generated WAV and stores no voice path,
+    profile embedding, or reference audio.
+    """
+    if len(chunks) != len(part_paths):
+        raise ValueError('A lista de trechos não corresponde aos WAVs gerados.')
+    source_offsets_available = source_text == spoken_text
+    segments = []
+    search_from = 0
+    frame_cursor = 0
+    sample_rate = None
+    channels = None
+    sample_width = None
+    for index, (text, path) in enumerate(zip(chunks, part_paths), 1):
+        # The splitter can collapse a separator (for example, multiple spaces
+        # or a newline between sentences) to one space in the backend request.
+        # Match the exact token sequence with flexible whitespace, retaining
+        # offsets into the original spoken text rather than fabricating spans.
+        tokens = str(text).split()
+        if not tokens:
+            raise ValueError('Não foi possível alinhar um trecho ao texto falado original.')
+        pattern = r'\s+'.join(re.escape(token) for token in tokens)
+        match = re.search(pattern, spoken_text[search_from:])
+        if match is None:
+            raise ValueError('Não foi possível alinhar um trecho ao texto falado original.')
+        text_start = search_from + match.start()
+        text_end = search_from + match.end()
+        search_from = text_end
+        while search_from < len(spoken_text) and spoken_text[search_from].isspace():
+            search_from += 1
+        with wave.open(path, 'rb') as audio:
+            params = audio.getparams()
+            if params.nframes <= 0:
+                raise ValueError(f'O WAV do trecho {index} está vazio.')
+            if sample_rate is None:
+                sample_rate, channels, sample_width = (
+                    params.framerate, params.nchannels, params.sampwidth)
+            elif (params.framerate, params.nchannels, params.sampwidth) != (
+                    sample_rate, channels, sample_width):
+                raise ValueError('Os trechos possuem formatos WAV incompatíveis.')
+            start_frame = frame_cursor
+            frame_cursor += params.nframes
+            segments.append({
+                'index': index,
+                'spoken_text': text,
+                'spoken_text_start': text_start,
+                'spoken_text_end': text_end,
+                'source_text_start': text_start if source_offsets_available else None,
+                'source_text_end': text_end if source_offsets_available else None,
+                'start_frame': start_frame,
+                'end_frame': frame_cursor,
+                'start_seconds': round(start_frame / sample_rate, 6),
+                'end_seconds': round(frame_cursor / sample_rate, 6),
+            })
+    if not sample_rate:
+        raise ValueError('Não há amostras para montar o manifesto da narração.')
+    manifest = {
+        'schema_version': NARRATION_SEGMENT_MANIFEST_VERSION,
+        'audio_sha256': file_sha256(destination),
+        'source_text_sha256': hashlib.sha256(source_text.encode('utf-8')).hexdigest(),
+        'spoken_text_sha256': hashlib.sha256(spoken_text.encode('utf-8')).hexdigest(),
+        'source_offsets_available': source_offsets_available,
+        'engine': request.engine,
+        'language': request.language,
+        'sample_rate': sample_rate,
+        'channels': channels,
+        'sample_width_bytes': sample_width,
+        'total_frames': frame_cursor,
+        'segments': segments,
+    }
+    target = destination.with_suffix('.segments.json')
+    fd, temporary = tempfile.mkstemp(prefix='.narration-segments-', suffix='.tmp',
+                                     dir=str(destination.parent))
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as stream:
+            json.dump(manifest, stream, ensure_ascii=False, indent=2,
+                      sort_keys=True, allow_nan=False)
+            stream.write('\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+    return target
+
+
 def _generate_long_narration(request: NarrationRequest, chunks: list[str],
                              progress=None, runner=None, control=None,
-                             stage=None, audio_chunk=None) -> dict:
+                             stage=None, audio_chunk=None, *,
+                             source_text: str | None = None,
+                             spoken_text: str | None = None) -> dict:
     """Generate bounded requests sequentially and return one reusable WAV."""
     from dataclasses import replace
     destination_folder = persistent_folder(request.project_path)
     destination_folder.mkdir(parents=True, exist_ok=True)
     generated: list[str] = []
     results: list[dict] = []
+    source_text = request.text if source_text is None else source_text
+    spoken_text = request.text if spoken_text is None else spoken_text
     with tempfile.TemporaryDirectory(prefix='bfs_narration_parts_') as scratch:
         for index, text in enumerate(chunks, 1):
             if control:
@@ -255,6 +357,15 @@ def _generate_long_narration(request: NarrationRequest, chunks: list[str],
             destination = destination_folder / f'{safe_title}_{stamp}_{suffix}_completa_{duplicate}.wav'
             duplicate += 1
         duration = _merge_narration_wavs(generated, destination, control)
+        manifest_path = ''
+        manifest_warning = ''
+        try:
+            manifest_path = str(_write_narration_segment_manifest(
+                destination, request, source_text, spoken_text, chunks, generated))
+        except (OSError, ValueError, wave.Error) as exc:
+            # The joined narration remains valid if optional timing metadata
+            # cannot be written; the result reports that limitation clearly.
+            manifest_warning = f'Manifesto de trechos indisponível: {exc}'
     return {'path': str(destination), 'duration': duration,
         'cache_hit': all(bool(item.get('cache_hit')) for item in results),
         'prompt_cache_hit': all(bool(item.get('prompt_cache_hit')) for item in results),
@@ -263,7 +374,9 @@ def _generate_long_narration(request: NarrationRequest, chunks: list[str],
         'title': request.title, 'voice': request.voice, 'language': request.language,
         'emotion_by_example': bool(request.emotion_by_example),
         'chunk_count': len(chunks), 'continuous_wav': True,
-        'generation_seconds': sum(float(item.get('generation_seconds', 0.0)) for item in results)}
+        'generation_seconds': sum(float(item.get('generation_seconds', 0.0)) for item in results),
+        'segment_manifest_path': manifest_path,
+        'segment_manifest_warning': manifest_warning}
 
 
 def generate_narration(request: NarrationRequest, progress: Callable | None = None,
@@ -304,7 +417,9 @@ def generate_narration(request: NarrationRequest, progress: Callable | None = No
         validate_clone_conditioning(request)
         validate_request(request.text, request.voice, request.language, request.consent)
         result = _generate_long_narration(request, chunks, progress, runner,
-                                          control, stage, audio_chunk)
+                                          control, stage, audio_chunk,
+                                          source_text=source_text,
+                                          spoken_text=speech_text)
         result.update({'source_text': source_text, 'spoken_text': speech_text,
                        'pronunciation_terms_applied': pronunciation_terms,
                        'text_normalizer_version': NORMALIZER_VERSION,

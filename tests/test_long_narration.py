@@ -1,3 +1,5 @@
+import hashlib
+import json
 import tempfile
 import wave
 import types
@@ -52,7 +54,7 @@ class LongNarrationTests(TestCase):
             root = Path(folder)
             reference = root / 'voice.wav'
             self._write_wav(reference, frames=240)
-            text = 'Uma fala longa em português. ' * 90
+            text = ('Uma fala longa em português. ' * 90).strip()
             request = NarrationRequest(text=text, voice=str(reference),
                 language='english', consent=True, engine='qwen3-tts-purec-int8',
                 project_path=str(root / 'project.bfs'))
@@ -77,6 +79,62 @@ class LongNarrationTests(TestCase):
             with wave.open(result['path'], 'rb') as audio:
                 self.assertEqual(audio.getnframes(), len(calls) * 24000)
                 self.assertEqual(audio.getframerate(), 24000)
+            manifest_path = Path(result['segment_manifest_path'])
+            self.assertTrue(manifest_path.is_file())
+            self.assertEqual(result['segment_manifest_warning'], '')
+            manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+            self.assertEqual(manifest['schema_version'], 1)
+            self.assertTrue(manifest['source_offsets_available'])
+            self.assertEqual(manifest['total_frames'], len(calls) * 24000)
+            self.assertEqual(manifest['audio_sha256'], hashlib.sha256(
+                Path(result['path']).read_bytes()).hexdigest())
+            cursor = 0
+            for segment in manifest['segments']:
+                self.assertEqual(segment['start_frame'], cursor)
+                self.assertGreater(segment['end_frame'], segment['start_frame'])
+                cursor = segment['end_frame']
+                start, end = segment['spoken_text_start'], segment['spoken_text_end']
+                aligned = ' '.join(result['spoken_text'][start:end].split())
+                self.assertEqual(aligned, ' '.join(segment['spoken_text'].split()))
+                self.assertEqual(segment['source_text_start'], start)
+                self.assertEqual(segment['source_text_end'], end)
+            self.assertEqual(cursor, manifest['total_frames'])
+
+    def test_manifest_with_ptbr_normalization_does_not_guess_source_offsets(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            reference = root / 'voice.wav'
+            self._write_wav(reference, frames=240)
+            text = 'O produto custa R$ 25,00. ' * 90
+            request = NarrationRequest(text=text, voice=str(reference),
+                language='portuguese', consent=True, engine='qwen3-tts-purec-int8',
+                project_path=str(root / 'project.bfs'))
+            calls = []
+
+            def fake_backend(req, **_kwargs):
+                calls.append(req.text)
+                out = root / f'currency-{len(calls)}.wav'
+                self._write_wav(out, frames=12000)
+                return {'path': str(out), 'duration': .5, 'cache_hit': False,
+                        'prompt_cache_hit': False, 'generation_seconds': .25}
+
+            purec = types.ModuleType('berofel.services.qwen3_purec_tts')
+            purec.generate_purec_clone = fake_backend
+            with patch.dict(sys.modules, {'berofel.services.qwen3_purec_tts': purec}):
+                result = generate_narration(request)
+
+            manifest = json.loads(Path(result['segment_manifest_path']).read_text(
+                encoding='utf-8'))
+            self.assertGreater(len(calls), 1)
+            self.assertNotEqual(result['source_text'], result['spoken_text'])
+            self.assertFalse(manifest['source_offsets_available'])
+            self.assertTrue(all(segment['source_text_start'] is None and
+                                segment['source_text_end'] is None
+                                for segment in manifest['segments']))
+            for segment in manifest['segments']:
+                start, end = segment['spoken_text_start'], segment['spoken_text_end']
+                aligned = ' '.join(result['spoken_text'][start:end].split())
+                self.assertEqual(aligned, ' '.join(segment['spoken_text'].split()))
 
     def test_long_script_interpretation_is_planned_once_for_whole_text(self):
         with tempfile.TemporaryDirectory() as folder:

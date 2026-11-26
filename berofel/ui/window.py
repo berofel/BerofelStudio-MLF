@@ -3887,8 +3887,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self,'Mídia incompatível',
                 'Selecione ao menos um bloco de áudio ou vídeo. O Clipador não inicia uma transcrição.')
             return
-        missing=[clip.title or clip.id[:8] for clip in usable
-                 if not words_in_clip(self.project,clip)]
+        missing_clips=[clip for clip in usable
+                       if not words_in_clip(self.project,clip)]
+        missing=[clip.title or clip.id[:8] for clip in missing_clips]
         source_paths={str(Path(clip.source).resolve()) for clip in usable}
         words=[dict(word) for word in self.project.transcripts
             if str(Path(word.get('source','')).resolve()) in source_paths]
@@ -3897,9 +3898,12 @@ class MainWindow(QMainWindow):
         dialog=ClipperDialog(self)
         dialog.set_thumbnail_provider(self.timeline.view.visual_cache)
         dialog._clipper_context={'clips':copy.deepcopy(usable),'targets':copy.deepcopy(targets),
-            'originals':originals,'words':words,'missing':missing}
+            'originals':originals,'words':words,'missing':missing,
+            'missing_clip_ids':[clip.id for clip in missing_clips]}
         dialog.analyze_requested.connect(
             lambda options,dlg=dialog:self._run_clipper(dlg,options))
+        dialog.transcribe_requested.connect(
+            lambda dlg=dialog:self._transcribe_clipper_missing(dlg))
         dialog.cancel_requested.connect(lambda dlg=dialog:self._cancel_clipper(dlg))
         dialog.preview_requested.connect(self.preview_clipper_candidate)
         dialog.insert_requested.connect(
@@ -3910,9 +3914,79 @@ class MainWindow(QMainWindow):
         dialog.show()
         dialog.raise_()
         if missing:
-            dialog.status.setText('Sem transcrição em parte do alcance: esses blocos serão avaliados '
-                'somente pelos sinais de áudio/miniaturas disponíveis; o Parakeet não será iniciado. '
-                'Use Equilibrado ou Avançado para medir o áudio original quando necessário.')
+            dialog.set_missing_transcripts(missing)
+            dialog.status.setText('Sem transcrição em parte do alcance. Você pode analisar pelos sinais '
+                'disponíveis agora ou solicitar a transcrição Parakeet somente desses blocos.')
+
+    def _transcribe_clipper_missing(self,dialog):
+        """Run the editor's cached Parakeet pipeline only for clips with no saved words."""
+        context=getattr(dialog,'_clipper_context',None)
+        if not context:return
+        if self._ai_busy or self.active_task is not None:
+            QMessageBox.information(dialog,'Clipador Inteligente',
+                'Aguarde a tarefa em andamento antes de transcrever os blocos faltantes.')
+            return
+        missing_ids=set(context.get('missing_clip_ids',()))
+        clips=[clip for clip in context['clips'] if clip.id in missing_ids]
+        if not clips:
+            dialog.set_missing_transcripts([])
+            dialog.status.setText('Todos os blocos deste alcance já possuem transcrição salva.')
+            return
+        if not scope_is_still_valid(self.project,context['originals'],context['targets']):
+            QMessageBox.warning(dialog,'Alcance alterado',
+                'O projeto mudou desde que este Clipador foi aberto. Feche e abra a ferramenta novamente.')
+            return
+        options=self._ai_options()
+        captured=copy.deepcopy({target.original_id:self.project.clip(target.original_id)
+                                for target in context['targets']})
+        dialog.set_busy(True)
+        dialog.status.setText(
+            f'Parakeet TDT v3 ONNX INT8/CPU: transcrevendo {len(clips)} bloco(s) sem texto salvo. '
+            'O resultado será guardado no projeto e no cache existente.')
+
+        def worker(progress,control=None,stage=None):
+            return run_analysis(clips,options=options,progress=progress,
+                control=control,stage=stage,mode='transcribe',known_words={})
+
+        def ready(data):
+            self._clipper_task=None
+            if self._closing or not dialog:return
+            if not scope_is_still_valid(self.project,captured,context['targets']):
+                dialog.set_busy(False)
+                QMessageBox.warning(dialog,'Alcance alterado',
+                    'A mídia mudou durante a transcrição. O resultado permanece no cache; reabra o Clipador para atualizar os tempos.')
+                return
+            reports=data.get('reports',[])
+            if reports:
+                self.snapshot()
+                merge_reports(self.project,reports)
+                record_coverage(self.project,reports,
+                    transcript_model_identity(options),options.language)
+                self.refresh([clip.id for clip in clips])
+                self._autosave()
+            source_paths={str(Path(clip.source).resolve()) for clip in context['clips']}
+            context['words']=[dict(word) for word in self.project.transcripts
+                if str(Path(word.get('source','')).resolve()) in source_paths]
+            remaining=[clip for clip in context['clips'] if not words_in_clip(self.project,clip)]
+            context['missing_clip_ids']=[clip.id for clip in remaining]
+            context['missing']=[clip.title or clip.id[:8] for clip in remaining]
+            dialog.set_missing_transcripts(context['missing'])
+            dialog.set_busy(False)
+            dialog.status.setText(
+                f'Transcrição Parakeet concluída: {len(reports)} bloco(s) processado(s), '
+                f'{len(context["missing"])} ainda sem palavras. Clique em “Analisar com configurações” '
+                'para atualizar os candidatos; transcrição e timestamps serão reutilizados.')
+
+        task=self._task(worker,ready,label='Clipador · Parakeet TDT v3 ONNX INT8/CPU')
+        if task is None:
+            dialog.set_busy(False)
+            return
+        self._clipper_task=task
+        task.signals.cancelled.connect(lambda dlg=dialog:dlg.set_busy(False))
+        task.signals.error.connect(lambda _message,dlg=dialog:dlg.set_busy(False))
+        task.signals.finished.connect(
+            lambda current=task:setattr(self,'_clipper_task',None)
+            if self._clipper_task is current else None)
 
     def _run_clipper(self,dialog,options):
         context=getattr(dialog,'_clipper_context',None)
