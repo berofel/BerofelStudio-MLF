@@ -68,6 +68,22 @@ Referências consultadas em 25/11/2026; não copiamos código de terceiros:
 
 ## Testes e limites conhecidos
 
-Testes determinísticos existentes cobrem timestamps, bordas, pergunta/resposta, mudanças de tópico, ironia heurística, RMS/picos, cache e deduplicação. Esta alteração acrescenta cobertura de componentes/perfis e leitura de waveform em cache sem decode. Os 30 testes focados de `test_clip_audio_signals.py` e `test_clipper.py` passaram. A primeira execução da suíte completa encontrou uma regressão Qt: a tarefa consultava `self.timeline.visual_cache`, embora o cache pertença a `self.timeline.view`. A referência foi corrigida, o teste real de despacho Qt passou e a execução seguinte de `python -m unittest discover -s tests -q` passou em **611 testes, com 6 skips**, em 66,686 s. `pytest` não está instalado, mas a suíte existente é `unittest`; não foi instalado outro pacote. `py_compile` dos arquivos alterados e `git diff --check` também passaram.
+Testes determinísticos existentes cobrem timestamps, bordas, pergunta/resposta, mudanças de tópico, ironia heurística, RMS/picos, cache e deduplicação. Esta alteração acrescenta cobertura de componentes/perfis e leitura de waveform em cache sem decode. Os 30 testes focados de `test_clip_audio_signals.py` e `test_clipper.py` passaram. A primeira execução da suíte completa encontrou uma regressão Qt: a tarefa consultava `self.timeline.visual_cache`, embora o cache pertença a `self.timeline.view`. A referência foi corrigida, o teste real de despacho Qt passou e a execução final de `python -m unittest discover -s tests -q` passou em **611 testes, com 6 skips**, em 67,022 s. Após a busca binária local, os 30 testes focados passaram novamente. `pytest` não está instalado, mas a suíte existente é `unittest`; não foi instalado outro pacote. `py_compile` dos arquivos alterados e `git diff --check` também passaram.
 
-Não há nesta execução gravações humanas anotadas para calcular Precision@K, Recall, erro de limites ou qualidade editorial, nem foi executado benchmark end-to-end de 5–120 min ou coleta de CPU/RAM no Ryzen 7 5700G. Logo, nenhuma melhoria de qualidade editorial ou meta de desempenho é declarada medida. A análise espectral/fluxo, F0, adaptação por feedback, deteção visual e acontecimentos sem fala continuam como melhorias futuras, e não são declaradas implementadas. A interface foi exercitada por teste Qt offscreen, não por inspeção manual de uma janela visível.
+### Benchmark sintético de escala (25/11/2026)
+
+`python scripts/benchmark_clip_engine_synthetic.py --repeats 3 --output relatorio.json` gera transcrição determinística repetitiva e mede somente o motor textual/candidatos. No ensaio exploratório de uma repetição por cenário, com 691/2.763/8.286/11.048/16.572 palavras para 5/20/60/80/120 minutos, todos os modos usaram `Clip(kind="image")`: **não houve PCM, VAD, Parakeet ou extração de vídeo**. Os tempos são tempo de parede de uma execução, em segundos; memória é o maior aumento de RSS observado por amostragem de 10 ms, não um pico garantido.
+
+| Duração do texto sintético | Rápido | Equilibrado | Avançado | Maior aumento de RSS amostrado entre modos |
+|---:|---:|---:|---:|---:|
+| 5 min | 0,282 | 0,280 | 0,277 | 1,23 MiB |
+| 20 min | 1,065 | 1,080 | 1,109 | 3,60 MiB |
+| 60 min | 3,211 | 3,293 | 3,346 | 8,99 MiB |
+| 80 min | 4,297 | 4,293 | 4,457 | 6,67 MiB |
+| 120 min | 6,432 | 6,406 | 6,647 | 11,44 MiB |
+
+O Avançado acrescenta TextRank local; sem áudio, Rápido e Equilibrado percorreram essencialmente a mesma rota textual. Isto mede escala computacional da fixture, não p50/p95, qualidade de clipes, desempenho no Ryzen 7 5700G ou pipeline real. No modo Equilibrado, o tempo de CPU foi 0,281/1,078/3,297/4,281/6,391 s, com 7 candidatos retornados em cada tamanho. Nenhuma melhoria editorial é declarada medida.
+
+A primeira passagem do benchmark encontrou custo alto ao coletar as palavras próximas de cada candidato: a serialização examinava toda a transcrição por candidato. A consulta foi alterada para limites binários sobre timestamps ordenados. O ensaio subsequente de 15 cenários (uma repetição por combinação) terminou em aproximadamente 60 s no total; o maior caso, 120 min sintéticos/16.572 palavras, concluiu em 6,4–6,7 s por modo.
+
+Não há gravações humanas anotadas nesta execução para calcular Precision@K, Recall, erro de limites ou qualidade editorial, nem foi executado benchmark end-to-end ou coleta de CPU/RAM no Ryzen 7 5700G. A análise espectral/fluxo, F0, adaptação por feedback, deteção visual e acontecimentos sem fala continuam como melhorias futuras. A interface foi exercitada por teste Qt offscreen, não por inspeção manual de janela visível.

@@ -817,6 +817,7 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
         events=align_events_to_conversation(events,turns)
         events=[dict(event,clip_id=clip.id,title=clip.title,source=source) for event in events]
         candidates=[]
+        word_starts=[int(word['start_ms']) for word in words]
         for candidate in _candidate_spans(words,opts):
             if control:control.checkpoint()
             ranked=score_clip(candidate,events,frames,opts.profile)
@@ -833,6 +834,9 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
             candidate_id=digest({'clip_id':clip.id,'start_ms':candidate['start_ms'],
                                   'end_ms':candidate['end_ms']})[:16]
             start_choices,end_choices=_boundary_choices(words,candidate,opts)
+            span_left=bisect_left(word_starts,candidate['start_ms']-3000)
+            span_right=bisect_right(word_starts,candidate['end_ms']+3000)
+            local_words=words[span_left:span_right]
             candidates.append({'id':candidate_id,'clip_id':clip.id,'title':clip.title,
                 'source':source,'source_start':candidate['start_ms']/1000.,
                 'source_end':candidate['end_ms']/1000.,
@@ -855,7 +859,7 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                 'topic_shift_internal':float(candidate.get('topic_shift_internal',0.)),
                 'word_spans':[{'start_ms':int(word['start_ms']),
                     'end_ms':int(word['end_ms']),'text':str(word['text'])}
-                    for word in words
+                    for word in local_words
                     if int(word['start_ms'])>=candidate['start_ms']-3000 and
                        int(word['end_ms'])<=candidate['end_ms']+3000],
                 'start_choices':start_choices,'end_choices':end_choices,
