@@ -511,6 +511,28 @@ class ClipperTests(unittest.TestCase):
         self.assertAlmostEqual(frames.frame_ms,100.)
         self.assertFalse(provider.request)
 
+    def test_result_cache_invalidates_when_timeline_waveform_arrives_later(self):
+        class ChangingWaveform:
+            peaks=None
+            def get_wave(self,source,at,request=False):
+                if self.peaks is None:return None
+                return {'offset':0.,'step':.1,'peaks':self.peaks}
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_waveform_refresh_') as folder:
+            source=Path(folder)/'source.wav';source.write_bytes(b'fixture')
+            clip=Clip(str(source),0.,36.,kind='audio')
+            words=transcript(source,count=180,step=.2)
+            provider=ChangingWaveform();cache=Path(folder)/'cache'
+            options=ClipperOptions(8.,16.,5,6.,mode='Rápido')
+            missing=analyze_clips([clip],words,options,cache_dir=cache,
+                                  waveform_provider=provider)
+            self.assertFalse(missing['clips'][0]['audio_available'])
+            provider.peaks=[.08+.02*(index%7) for index in range(360)]
+            refreshed=analyze_clips([clip],words,options,cache_dir=cache,
+                                    waveform_provider=provider)
+        self.assertTrue(refreshed['clips'][0]['audio_available'])
+        self.assertEqual(refreshed['stats']['cache_misses'],1)
+        self.assertGreaterEqual(refreshed['stats']['cache_hits'],1)
+
     def test_quick_audio_mode_without_complete_waveform_does_not_decode(self):
         class MissingWaveform:
             def get_wave(self, source, at, request=False):

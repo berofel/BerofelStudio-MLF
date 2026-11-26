@@ -110,11 +110,47 @@ def clipper_cache_dir() -> Path:
             Path.home() / '.cache' / 'BerofelStudio' / 'clipper')
 
 
-def _features_key(source: str, start: float, end: float, mode: str = 'pcm') -> str:
-    return digest({'version': FEATURE_EXTRACTOR_VERSION, 'source': source_identity(source),
+def _waveform_cache_signature(provider, source: str, start: float, end: float):
+    """Identify the existing cached waveform tiles without requesting work."""
+    if provider is None or end <= start:
+        return None
+    first=int(start//60)*60
+    last=int((end-1e-9)//60)*60
+    if hasattr(provider,'waveform_path'):
+        signatures=[]
+        for tile in range(first,last+1,60):
+            try:
+                path=Path(provider.waveform_path(source,tile))
+                stat=path.stat()
+                signatures.append((tile,path.name,stat.st_size,stat.st_mtime_ns))
+            except (AttributeError,OSError,TypeError,ValueError):
+                signatures.append((tile,None))
+        return digest({'provider':'timeline-waveform-file-v1','tiles':signatures})
+    if not hasattr(provider,'get_wave'):
+        return digest({'provider':type(provider).__qualname__,'available':False})
+    signatures=[]
+    for tile in range(first,last+1,60):
+        try:
+            data=provider.get_wave(source,tile,request=False)
+            if not isinstance(data,Mapping):
+                signatures.append((tile,None));continue
+            peaks=np.asarray(data['peaks'],dtype='<f4')
+            signatures.append((tile,float(data['offset']),float(data['step']),
+                              hashlib.sha256(peaks.tobytes()).hexdigest()))
+        except (AttributeError,KeyError,TypeError,ValueError):
+            signatures.append((tile,None))
+    return digest({'provider':'waveform-content-v1','tiles':signatures})
+
+
+def _features_key(source: str, start: float, end: float, mode: str = 'pcm',
+                  input_signature: str | None = None) -> str:
+    payload={'version': FEATURE_EXTRACTOR_VERSION, 'source': source_identity(source),
         'start': round(float(start), 4), 'end': round(float(end), 4),
         'stream': 0, 'sample_rate': FEATURE_RATE, 'frame_ms': FEATURE_FRAME_MS,
-        'mode': mode})
+        'mode': mode}
+    if input_signature is not None:
+        payload['input_signature']=input_signature
+    return digest(payload)
 
 
 def _load_features(path: Path, offset_ms: float) -> FrameFeatures | None:
@@ -247,7 +283,8 @@ def _audio_pcm_chunks(source: str, start: float, duration: float, control=None,
 
 def audio_features(source: str, start: float, end: float, *, control=None,
                    progress=None, cache_dir: Path | None = None,
-                   waveform_provider=None, waveform_only: bool = False
+                   waveform_provider=None, waveform_only: bool = False,
+                   waveform_signature: str | None = None
                    ) -> tuple[FrameFeatures | None, bool]:
     """Return cached waveform or PCM frames and whether they were reused.
 
@@ -262,7 +299,10 @@ def audio_features(source: str, start: float, end: float, *, control=None,
     except (OSError, ValueError):
         return None, False
     mode='waveform' if waveform_only else 'pcm'
-    key = _features_key(source, start, end, mode)
+    if waveform_only and waveform_signature is None:
+        waveform_signature=_waveform_cache_signature(
+            waveform_provider,source,start,end)
+    key = _features_key(source, start, end, mode,waveform_signature)
     path = (cache_dir or clipper_cache_dir()) / 'features' / key[:2] / f'{key}.npz'
     cached = _load_features(path, start * 1000.)
     if cached is not None:
@@ -1110,14 +1150,21 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
         if control:control.checkpoint()
         source=str(Path(clip.source).resolve())
         words=_normalise_words(clip,path_words.get(source,[]))
+        waveform_signature=(
+            _waveform_cache_signature(waveform_provider,source,clip.start,clip.end)
+            if opts.mode=='Rápido' and clip.kind in ('audio','video') and
+               getattr(clip,'include_audio',True) else None)
         try:
             identity=source_identity(source)
         except (OSError,ValueError):
             identity={'path':source,'missing':True}
-        result_key=digest({'schema':CACHE_SCHEMA,'version':CLIPPER_VERSION,
+        result_identity={'schema':CACHE_SCHEMA,'version':CLIPPER_VERSION,
             'source':identity,'start':round(clip.start,4),
             'end':round(clip.end,4),'words':words,'options':opts.as_dict(),
-            'timebase':'absolute-source-ms'})
+            'timebase':'absolute-source-ms'}
+        if opts.mode=='Rápido' and waveform_provider is not None:
+            result_identity['waveform_signature']=waveform_signature
+        result_key=digest(result_identity)
         result_path=_cache_path(root,result_key)
         try:
             cached=json.loads(result_path.read_text(encoding='utf-8'))
@@ -1153,7 +1200,8 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                         progress(position+.9*fraction,total)
                 frames,feature_hit=audio_features(source,clip.start,clip.end,control=control,
                     progress=audio_progress,cache_dir=root,waveform_provider=waveform_provider,
-                    waveform_only=opts.mode=='Rápido')
+                    waveform_only=opts.mode=='Rápido',
+                    waveform_signature=waveform_signature)
                 if feature_hit:hits+=1
                 elif frames is not None:decoded_seconds+=clip.end-clip.start
             except Exception as exc:
