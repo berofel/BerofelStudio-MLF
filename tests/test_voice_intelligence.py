@@ -559,6 +559,74 @@ class ParakeetQualityInspectionTests(TestCase):
             self.assertFalse(seen['path'].exists())
             self.assertEqual(len(stages), 2)
 
+    def test_inspector_reuses_local_parakeet_asr_by_audio_hash_but_recompares_text(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            audio = root / 'generated.wav'
+            audio.write_bytes(b'RIFF' + b'unchanged synthesized audio' * 4)
+            asr_cache = root / 'private-cache'
+
+            def ffmpeg_runner(command, **_kwargs):
+                with wave.open(command[-1], 'wb') as wav:
+                    wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(16000)
+                    wav.writeframes(struct.pack('<h', 4000) * 16000)
+                return Mock(returncode=0, stdout='', stderr='')
+
+            asr_result = {'text': 'voz reconhecida pelo Parakeet',
+                'segments': [{'text': 'voz reconhecida pelo Parakeet'}],
+                'words': [{'text': 'voz', 'start': 0.1, 'end': 0.3}],
+                'backend': 'onnxruntime-cpu'}
+            with patch('berofel.services.voice_intelligence.quality_inspector._parakeet_cache_identity',
+                       return_value={'model': 'parakeet-tdt-v3-int8', 'threads': 4}), \
+                 patch('berofel.services.parakeet_asr.transcribe_file',
+                       return_value=asr_result) as parakeet:
+                first = inspect_generated_wav_with_parakeet(audio,
+                    'voz reconhecida pelo Parakeet', ffmpeg='ffmpeg',
+                    runner=ffmpeg_runner, cache_directory=asr_cache)
+                second = inspect_generated_wav_with_parakeet(audio,
+                    'texto esperado diferente', ffmpeg='ffmpeg',
+                    runner=Mock(side_effect=AssertionError('cache deveria evitar FFmpeg')),
+                    cache_directory=asr_cache, threads=8)
+
+            self.assertFalse(first['cache_hit'])
+            self.assertTrue(second['cache_hit'])
+            self.assertEqual(first['word_error_rate'], 0)
+            self.assertGreater(second['word_error_rate'], 0)
+            self.assertEqual(second['recognized_text'], asr_result['text'])
+            parakeet.assert_called_once()
+            payload = next(asr_cache.rglob('*.json')).read_text(encoding='utf-8')
+            self.assertNotIn(str(audio), payload)
+            self.assertNotIn('texto esperado diferente', payload)
+
+    def test_inspector_invalidates_corrupt_cache_and_changed_audio(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            audio = root / 'generated.wav'
+            audio.write_bytes(b'RIFF' + b'audio version one' * 5)
+            cache = root / 'cache'
+            def ffmpeg_runner(command, **_kwargs):
+                with wave.open(command[-1], 'wb') as wav:
+                    wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(16000)
+                    wav.writeframes(struct.pack('<h', 3500) * 16000)
+                return Mock(returncode=0, stdout='', stderr='')
+            with patch('berofel.services.voice_intelligence.quality_inspector._parakeet_cache_identity',
+                       return_value={'model': 'fixture-v1'}), \
+                 patch('berofel.services.parakeet_asr.transcribe_file',
+                       return_value={'text':'fala reconhecida','words':[],
+                                     'backend':'onnxruntime-cpu'}) as parakeet:
+                first = inspect_generated_wav_with_parakeet(audio, 'fala reconhecida',
+                    ffmpeg='ffmpeg', runner=ffmpeg_runner, cache_directory=cache)
+                self.assertFalse(first['cache_hit'])
+                next(cache.rglob('*.json')).write_text('{corrupt', encoding='utf-8')
+                recovered = inspect_generated_wav_with_parakeet(audio, 'fala reconhecida',
+                    ffmpeg='ffmpeg', runner=ffmpeg_runner, cache_directory=cache)
+                self.assertFalse(recovered['cache_hit'])
+                audio.write_bytes(b'RIFF' + b'audio version two' * 5)
+                changed = inspect_generated_wav_with_parakeet(audio, 'fala reconhecida',
+                    ffmpeg='ffmpeg', runner=ffmpeg_runner, cache_directory=cache)
+            self.assertFalse(changed['cache_hit'])
+            self.assertEqual(parakeet.call_count, 3)
+
     def test_silent_output_is_reported_and_skips_parakeet(self):
         with tempfile.TemporaryDirectory() as folder:
             audio = Path(folder) / 'voice.wav'
