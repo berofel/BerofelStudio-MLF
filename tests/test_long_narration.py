@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from berofel.services.narration_service import (
     NarrationRequest, _split_narration_text, generate_narration,
+    load_narration_segment_manifest, regenerate_narration_segment,
     qwen_output_token_budget,
 )
 
@@ -83,7 +84,7 @@ class LongNarrationTests(TestCase):
             self.assertTrue(manifest_path.is_file())
             self.assertEqual(result['segment_manifest_warning'], '')
             manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-            self.assertEqual(manifest['schema_version'], 1)
+            self.assertEqual(manifest['schema_version'], 2)
             self.assertTrue(manifest['source_offsets_available'])
             self.assertEqual(manifest['total_frames'], len(calls) * 24000)
             self.assertEqual(manifest['audio_sha256'], hashlib.sha256(
@@ -99,6 +100,100 @@ class LongNarrationTests(TestCase):
                 self.assertEqual(segment['source_text_start'], start)
                 self.assertEqual(segment['source_text_end'], end)
             self.assertEqual(cursor, manifest['total_frames'])
+
+    def test_selective_regeneration_replaces_one_pcm_span_and_keeps_source(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            reference = root / 'voice.wav'
+            self._write_wav(reference, frames=240)
+            request = NarrationRequest(
+                text=('Esta é uma frase de teste para regeneração seletiva. ' * 70),
+                voice=str(reference), language='english', consent=True,
+                engine='qwen3-tts-purec-int8',
+                project_path=str(root / 'project.bfs'))
+            original_calls = []
+
+            def fake_backend(req, **_kwargs):
+                original_calls.append(req.text)
+                path = root / f'part-{len(original_calls)}.wav'
+                self._write_constant_wav(path, frames=24000,
+                                         value=len(original_calls) * 100)
+                return {'path': str(path), 'duration': 1.0, 'cache_hit': False,
+                        'prompt_cache_hit': False, 'generation_seconds': .2}
+
+            purec = types.ModuleType('berofel.services.qwen3_purec_tts')
+            purec.generate_purec_clone = fake_backend
+            with patch.dict(sys.modules, {'berofel.services.qwen3_purec_tts': purec}):
+                result = generate_narration(request)
+
+            self.assertGreaterEqual(len(original_calls), 2)
+            manifest = load_narration_segment_manifest(result['path'], request)
+            selected = 1
+            target = manifest['segments'][selected]
+            source_bytes = Path(result['path']).read_bytes()
+            source_hash = hashlib.sha256(source_bytes).hexdigest()
+            replacement = root / 'replacement.wav'
+            seen = []
+
+            def fake_regeneration(part_request, **kwargs):
+                seen.append((part_request.text, kwargs.get('_prepared_text')))
+                self._write_constant_wav(replacement, frames=12000, value=777)
+                return {'path': str(replacement), 'duration': .5, 'cache_hit': False}
+
+            with patch('berofel.services.narration_service.generate_narration',
+                       side_effect=fake_regeneration):
+                updated = regenerate_narration_segment(
+                    result['path'], request, selected)
+
+            self.assertEqual(seen, [(target['spoken_text'], True)])
+            self.assertEqual(hashlib.sha256(Path(result['path']).read_bytes()).hexdigest(),
+                             source_hash)
+            self.assertNotEqual(Path(updated['path']), Path(result['path']))
+            with wave.open(result['path'], 'rb') as old, \
+                    wave.open(updated['path'], 'rb') as new:
+                rate = old.getframerate()
+                start = int(target['start_frame']); end = int(target['end_frame'])
+                old.setpos(0); prefix = old.readframes(start)
+                old.setpos(end); suffix = old.readframes(old.getnframes() - end)
+                new.setpos(0)
+                self.assertEqual(new.readframes(start), prefix)
+                self.assertEqual(new.readframes(12000), b'\x09\x03' * 12000)
+                self.assertEqual(new.readframes(new.getnframes() - start - 12000), suffix)
+                self.assertEqual(new.getnframes(), old.getnframes() - (end-start) + 12000)
+                self.assertAlmostEqual(updated['duration'], new.getnframes() / rate)
+            updated_manifest = load_narration_segment_manifest(updated['path'], request)
+            self.assertEqual(updated_manifest['segments'][selected]['end_frame'] -
+                             updated_manifest['segments'][selected]['start_frame'], 12000)
+
+    def test_segment_manifest_rejects_changed_script_and_audio(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            reference = root / 'voice.wav'
+            self._write_wav(reference, frames=240)
+            request = NarrationRequest(text='Palavra de roteiro. ' * 100,
+                voice=str(reference), language='english', consent=True,
+                engine='qwen3-tts-purec-int8', project_path=str(root / 'project.bfs'))
+            calls = []
+
+            def fake_backend(req, **_kwargs):
+                calls.append(req.text)
+                path = root / f'short-{len(calls)}.wav'
+                self._write_wav(path, frames=24000)
+                return {'path': str(path), 'duration': 1.0, 'cache_hit': False,
+                        'prompt_cache_hit': False, 'generation_seconds': .2}
+
+            purec = types.ModuleType('berofel.services.qwen3_purec_tts')
+            purec.generate_purec_clone = fake_backend
+            with patch.dict(sys.modules, {'berofel.services.qwen3_purec_tts': purec}):
+                result = generate_narration(request)
+            changed_script = NarrationRequest(**{**request.__dict__,
+                'text':request.text + ' Mudança.'})
+            with self.assertRaisesRegex(ValueError, 'roteiro mudou'):
+                load_narration_segment_manifest(result['path'], changed_script)
+            with Path(result['path']).open('ab') as stream:
+                stream.write(b'changed')
+            with self.assertRaisesRegex(ValueError, 'offsets de trechos'):
+                load_narration_segment_manifest(result['path'], request)
 
     def test_manifest_with_ptbr_normalization_does_not_guess_source_offsets(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -173,3 +268,12 @@ class LongNarrationTests(TestCase):
             audio.setsampwidth(2)
             audio.setframerate(24000)
             audio.writeframes(b'\x01\x00' * frames)
+
+    @staticmethod
+    def _write_constant_wav(path, frames, value):
+        sample = int(value).to_bytes(2, 'little', signed=True)
+        with wave.open(str(path), 'wb') as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(24000)
+            audio.writeframes(sample * frames)

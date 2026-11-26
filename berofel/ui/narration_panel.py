@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 import hashlib
+import json
 from pathlib import Path
 import subprocess
 
@@ -50,7 +51,9 @@ class NarrationPanel(QScrollArea):
         self.on_transcribe_reference = None
         self.on_verify_last = None
         self.on_compare_identity = None
+        self.on_regenerate_segment = None
         self.last_audio = ''
+        self.last_request = None
         self.last_spoken_text = ''
         self.last_engine = ''
         self.last_threads = None
@@ -408,6 +411,12 @@ class NarrationPanel(QScrollArea):
         self.listen.setEnabled(False)
         self.listen.clicked.connect(self._listen)
         layout.addWidget(self.listen)
+        self.regenerate_segment=QPushButton('↻ Regenerar um trecho da narração longa')
+        self.regenerate_segment.setEnabled(False)
+        self.regenerate_segment.setToolTip(
+            'Refaz somente um trecho com o mesmo texto e perfil, preserva as demais amostras e cria um WAV novo.')
+        self.regenerate_segment.clicked.connect(self._regenerate_segment)
+        layout.addWidget(self.regenerate_segment)
         self.verify_last=QPushButton('✓ Verificar texto com Parakeet local')
         self.verify_last.setEnabled(False)
         self.verify_last.setToolTip(
@@ -436,6 +445,7 @@ class NarrationPanel(QScrollArea):
             (self.generate_file,'♬ Gerar somente o WAV','♬ Gerar WAV'),
             (self.add_last,'＋ Adicionar última narração à timeline','＋ Adicionar WAV'),
             (self.listen,'♫ Ouvir a última narração','♫ Ouvir narração'),
+            (self.regenerate_segment,'↻ Regenerar um trecho da narração longa','↻ Regenerar trecho'),
             (self.verify_last,'✓ Verificar texto com Parakeet local','✓ Verificar com Parakeet'),
             (self.compare_identity,'◉ Comparar identidade vocal · experimental','◉ Comparar identidade'),
             (self.listen_previous,'♫ Ouvir geração anterior','♫ Ouvir anterior'),
@@ -1476,6 +1486,7 @@ class NarrationPanel(QScrollArea):
         self.insert.setDisabled(busy)
         self.generate_file.setDisabled(busy)
         self.verify_last.setDisabled(bool(busy) or not bool(self.last_spoken_text))
+        self.regenerate_segment.setDisabled(bool(busy) or not self._has_regenerable_segments())
         self.set_identity_check_busy(bool(busy))
         if busy:
             self.status.setText('Qwen3-TTS em processo local isolado; o modelo é reutilizado durante esta sessão.')
@@ -1484,8 +1495,10 @@ class NarrationPanel(QScrollArea):
                    threads: int | None = None, title: str='',
                    reference_window: dict | None=None, conditioning_mode: str='',
                    source_text: str='', spoken_text: str='',
-                   voice_reference_path: str='', voice_consent: bool=False):
+                   voice_reference_path: str='', voice_consent: bool=False,
+                   request: NarrationRequest | None=None):
         self.last_audio = path
+        self.last_request = request
         self.last_spoken_text = str(spoken_text or source_text or '')
         self.last_engine = str(engine or '')
         self.last_threads = threads
@@ -1508,6 +1521,7 @@ class NarrationPanel(QScrollArea):
             bool(self.last_voice_consent) and bool(self.last_reference_path) and
             Path(self.last_reference_path).is_file() and Path(path).is_file())
         self.add_last.setEnabled(True)
+        self.regenerate_segment.setEnabled(self._has_regenerable_segments())
         reference_note=''
         if engine=='qwen3-tts-local' and reference_window:
             start=float(reference_window.get('start',0))
@@ -1519,6 +1533,41 @@ class NarrationPanel(QScrollArea):
         self.status.setText(f'WAV pronto · {mode} ({duration:.1f}s). ' +
                             ('Reaproveitado do cache.' if cache_hit else 'Salvo no cache.') +
                             reference_note+'\n' + str(Path(path)))
+
+    def _has_regenerable_segments(self) -> bool:
+        if not self.last_audio or not self.last_request:
+            return False
+        return Path(self.last_audio).with_suffix('.segments.json').is_file()
+
+    def _regenerate_segment(self):
+        if not self._has_regenerable_segments() or not self.on_regenerate_segment:
+            return
+        sidecar=Path(self.last_audio).with_suffix('.segments.json')
+        try:
+            manifest=json.loads(sidecar.read_text(encoding='utf-8'))
+            if manifest.get('schema_version')!=2 or not isinstance(manifest.get('segments'),list):
+                raise ValueError('Manifesto de trechos não compatível.')
+            segments=manifest['segments']
+            choices=[
+                f"Trecho {int(item.get('index', position + 1))} · "
+                f"{float(item.get('start_seconds', 0)):.1f}–"
+                f"{float(item.get('end_seconds', 0)):.1f}s · "
+                f"{str(item.get('spoken_text', '')).strip()[:100]}"
+                for position,item in enumerate(segments)
+            ]
+            if len(choices)<2:
+                raise ValueError('A narração não possui divisões recuperáveis.')
+        except (OSError,ValueError,TypeError,KeyError) as exc:
+            QMessageBox.warning(self,'Regenerar trecho',str(exc))
+            return
+        selected,ok=QInputDialog.getItem(
+            self,'Regenerar trecho da narração',
+            'Escolha uma parte. A operação gera um WAV novo e preserva o original:',
+            choices,0,False)
+        if ok and selected in choices:
+            self.regenerate_segment.setDisabled(True)
+            self.on_regenerate_segment(self.last_audio,self.last_request,
+                                       choices.index(selected))
 
     def _verify_last(self):
         if (self.last_audio and Path(self.last_audio).is_file() and

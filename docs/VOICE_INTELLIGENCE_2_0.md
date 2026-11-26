@@ -2,6 +2,14 @@
 
 ## Escopo implementado nesta etapa
 
+### Regeneração seletiva de narração longa
+
+Roteiros divididos em várias chamadas Qwen gravam um manifesto `.segments.json` com índices de texto e limites PCM exatos em frames. O sidecar de versão 2 vincula o WAV ao hash do conteúdo e confere roteiro original, arquivo de referência, motor, idioma e parâmetros de condicionamento antes de oferecer regeneração. Se qualquer dado-base mudou, a operação é bloqueada em vez de arriscar substituir o trecho errado.
+
+Na interface, **Regenerar um trecho da narração longa** permite escolher um único segmento. A ação sintetiza somente o texto falado daquele segmento com o perfil atual e cria um WAV contínuo novo. Os frames PCM dos outros segmentos são copiados em blocos limitados, sem decodificação/regravação dos vizinhos; os limites em frames e segundos são recalculados quando a nova parte tem duração diferente. A origem e a timeline existentes permanecem intactas, e o novo WAV entra na biblioteca para revisão/inserção manual. O áudio não é reproduzido automaticamente. Esta operação ainda não faz diagnóstico acústico automático nem laço automático de tentativas.
+
+Testes determinísticos verificam que só o trecho escolhido chega ao gerador, os vizinhos permanecem bit a bit idênticos, o hash/original permanece igual, a duração e os offsets seguintes são atualizados, e roteiro ou WAV alterado invalida o sidecar. A UI Qt offscreen verifica a seleção e o despacho do índice. A inferência real do trecho continua dependente de validação manual com o modelo local.
+
 `narrative_interpreter.py` adiciona uma análise determinística PT-BR por sentença, sem ASR/LLM, exposta como metadado do resultado da narração. Ela identifica pistas lexicais conservadoras, negação local, estados narrativos básicos e alvos prosódicos relativos. As confianças são heurísticas, não probabilidades calibradas. Essa análise **não muda o áudio**: no Pure C instalado, controles de emoção/prosódia por sentença ainda não foram validados, então nenhuma tag, velocidade ou pausa é injetada no texto sintetizado. A análise não entra na chave de áudio/cache. Ao ativar um controle real no futuro, ele precisará de capacidade detectada e ensaio acústico antes de afetar a saída.
 
 Benchmark isolado do planejador: cinco execuções sobre um texto sintético de 100.000 caracteres (2.679 frases), Python 3.12.10; mediana 1,4875 s, maior execução observada 1,4887 s e pico `tracemalloc` 4,497 MiB. Isso mede apenas as regras Python, não ASR, Qwen, áudio, RAM total do processo ou o Ryzen 7 5700G. A consulta WMI para identificar CPU/RAM foi negada no ambiente, portanto não atribuo esse número ao hardware de referência.

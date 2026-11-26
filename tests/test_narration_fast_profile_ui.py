@@ -44,6 +44,38 @@ class FastNarrationProfileUiTests(unittest.TestCase):
         self.assertTrue(Path(settings.fileName()).is_relative_to(
             Path(self.settings_dir.name)))
 
+    def test_long_narration_segment_action_dispatches_one_selected_span(self):
+        import json
+        from unittest.mock import Mock
+        from berofel.services.narration_service import NarrationRequest
+        from berofel.ui import narration_panel as panel_module
+        with tempfile.TemporaryDirectory(prefix='bfs_segment_ui_') as folder, \
+             patch('berofel.services.qwen3_tts_local.is_ready',return_value=False), \
+             patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
+             patch('berofel.services.qwen3_purec_tts.is_ready',return_value=False):
+            audio=Path(folder)/'long.wav'
+            audio.write_bytes(b'fixture')
+            audio.with_suffix('.segments.json').write_text(json.dumps({
+                'schema_version':2,'segments':[
+                    {'index':1,'start_seconds':0.,'end_seconds':1.,'spoken_text':'Primeira fala.'},
+                    {'index':2,'start_seconds':1.,'end_seconds':2.,'spoken_text':'Segunda fala.'},
+                ]}),encoding='utf-8')
+            request=NarrationRequest(text='Primeira fala. Segunda fala.',voice='voice.wav',
+                language='english',consent=True,engine='qwen3-tts-purec-int8')
+            panel=NarrationPanel()
+            try:
+                callback=Mock()
+                panel.on_regenerate_segment=callback
+                panel.set_result(str(audio),2.,False,request.engine,
+                    source_text=request.text,spoken_text=request.text,request=request)
+                self.assertTrue(panel.regenerate_segment.isEnabled())
+                with patch.object(panel_module.QInputDialog,'getItem',
+                                  return_value=('Trecho 2 · 1.0–2.0s · Segunda fala.',True)):
+                    panel._regenerate_segment()
+                callback.assert_called_once_with(str(audio),request,1)
+            finally:
+                panel.close()
+
     def test_reference_report_shows_spectral_metrics_as_non_identity_diagnostics(self):
         from PySide6.QtWidgets import QMessageBox
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \

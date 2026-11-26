@@ -127,7 +127,7 @@ _TEXT_CHUNK_CHARS = {
     'qwen3-tts-native-q4': 4800,
     'qwen3-tts-native-q4-balanced': 4800,
 }
-NARRATION_SEGMENT_MANIFEST_VERSION = 1
+NARRATION_SEGMENT_MANIFEST_VERSION = 2
 
 
 def qwen_output_token_budget(text: str) -> int:
@@ -284,6 +284,7 @@ def _write_narration_segment_manifest(destination: Path, request: NarrationReque
     manifest = {
         'schema_version': NARRATION_SEGMENT_MANIFEST_VERSION,
         'audio_sha256': file_sha256(destination),
+        'request_signature': _segment_request_signature(request),
         'source_text_sha256': hashlib.sha256(source_text.encode('utf-8')).hexdigest(),
         'spoken_text_sha256': hashlib.sha256(spoken_text.encode('utf-8')).hexdigest(),
         'source_offsets_available': source_offsets_available,
@@ -312,6 +313,184 @@ def _write_narration_segment_manifest(destination: Path, request: NarrationReque
         except FileNotFoundError:
             pass
     return target
+
+
+def _segment_request_signature(request: NarrationRequest) -> str:
+    """Fingerprint conditioning inputs without persisting private paths/audio."""
+    voice = Path(request.voice).expanduser()
+    voice_hash = file_sha256(voice) if voice.is_file() else ''
+    reference_text_hash = hashlib.sha256(
+        str(request.reference_text or '').encode('utf-8')).hexdigest()
+    return digest({
+        'engine': request.engine,
+        'language': request.language,
+        'voice_sha256': voice_hash,
+        'reference_text_sha256': reference_text_hash,
+        'reference_text_reviewed': bool(request.reference_text_reviewed),
+        'emotion_by_example': bool(request.emotion_by_example),
+        'consent': bool(request.consent),
+        'thread_count': request.thread_count,
+        'normalizer_version': NORMALIZER_VERSION,
+    })
+
+
+def load_narration_segment_manifest(audio_path: str | Path,
+                                   request: NarrationRequest) -> dict:
+    """Validate a sidecar before exposing segment-level actions in the UI."""
+    source = Path(audio_path).expanduser().resolve()
+    sidecar = source.with_suffix('.segments.json')
+    try:
+        manifest = json.loads(sidecar.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as exc:
+        raise ValueError('O manifesto de trechos não está disponível ou é inválido.') from exc
+    if manifest.get('schema_version') != NARRATION_SEGMENT_MANIFEST_VERSION:
+        raise ValueError('Este manifesto foi criado por outra versão e não pode regenerar trechos com segurança.')
+    if manifest.get('audio_sha256') != file_sha256(source):
+        raise ValueError('O WAV mudou desde a criação do manifesto; os offsets de trechos não são confiáveis.')
+    source_text_hash = hashlib.sha256(
+        str(request.text or '').encode('utf-8')).hexdigest()
+    if manifest.get('source_text_sha256') != source_text_hash:
+        raise ValueError('O roteiro mudou desde esta narração; os trechos não correspondem ao texto atual.')
+    if manifest.get('request_signature') != _segment_request_signature(request):
+        raise ValueError('A voz, o motor ou as configurações mudaram desde esta narração.')
+    if manifest.get('engine') != request.engine or manifest.get('language') != request.language:
+        raise ValueError('O motor ou idioma da solicitação não corresponde à narração salva.')
+    segments = manifest.get('segments')
+    try:
+        if not isinstance(segments, list) or len(segments) < 2:
+            raise ValueError
+        with wave.open(str(source), 'rb') as wav:
+            params = wav.getparams()
+            total_frames = params.nframes
+        if (params.comptype != 'NONE' or
+                int(manifest['total_frames']) != total_frames or
+                int(manifest['sample_rate']) != params.framerate or
+                int(manifest['channels']) != params.nchannels or
+                int(manifest['sample_width_bytes']) != params.sampwidth):
+            raise ValueError
+        cursor = 0
+        for expected_index, segment in enumerate(segments, 1):
+            start = int(segment['start_frame']); end = int(segment['end_frame'])
+            if (int(segment['index']) != expected_index or start != cursor or
+                    end <= start or end > total_frames or
+                    not str(segment.get('spoken_text') or '').strip()):
+                raise ValueError
+            cursor = end
+        if cursor != total_frames:
+            raise ValueError
+    except (OSError, wave.Error, KeyError, TypeError, ValueError) as exc:
+        raise ValueError('Os limites salvos não correspondem ao WAV PCM; regeneração seletiva bloqueada.') from exc
+    return manifest
+
+
+def regenerate_narration_segment(audio_path: str | Path, request: NarrationRequest,
+                                 segment_index: int, progress=None, runner=None,
+                                 control=None, stage=None, audio_chunk=None) -> dict:
+    """Regenerate one verified text segment into a new continuous WAV.
+
+    The source WAV and its sidecar are never overwritten. Existing neighboring
+    PCM frames are copied unchanged; only the selected text is sent to Qwen.
+    """
+    from dataclasses import replace
+
+    source = Path(audio_path).expanduser().resolve()
+    manifest = load_narration_segment_manifest(source, request)
+    segments = manifest['segments']
+    index = int(segment_index)
+    if not 0 <= index < len(segments):
+        raise IndexError('O trecho selecionado não existe no manifesto.')
+    target_segment = segments[index]
+    if control:
+        control.checkpoint()
+    if stage:
+        stage(f"Qwen · regenerando trecho {index + 1}/{len(segments)}")
+    part_request = replace(request, text=str(target_segment['spoken_text']),
+                           title=f'{request.title}_parte_{index + 1:04d}')
+    generated = generate_narration(part_request, progress=progress, runner=runner,
+        control=control, stage=stage, audio_chunk=audio_chunk, _prepared_text=True)
+    replacement_path = Path(generated['path'])
+    output_dir = persistent_folder(request.project_path)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output = output_dir / f'{source.stem}_trecho_{index + 1:04d}_{time.time_ns()}.wav'
+    temporary = output.with_name(f'.{output.name}.{os.getpid()}.tmp')
+    try:
+        with wave.open(str(source), 'rb') as original, \
+             wave.open(str(replacement_path), 'rb') as replacement, \
+             wave.open(str(temporary), 'wb') as merged:
+            original_params = original.getparams()
+            replacement_params = replacement.getparams()
+            original_format = (original_params.nchannels, original_params.sampwidth,
+                               original_params.framerate, original_params.comptype)
+            replacement_format = (replacement_params.nchannels, replacement_params.sampwidth,
+                                  replacement_params.framerate, replacement_params.comptype)
+            if original_format != replacement_format or original_params.comptype != 'NONE':
+                raise ValueError('O WAV regenerado precisa manter o formato PCM da narração original.')
+            start_frame = int(target_segment['start_frame'])
+            end_frame = int(target_segment['end_frame'])
+            merged.setnchannels(original_params.nchannels)
+            merged.setsampwidth(original_params.sampwidth)
+            merged.setframerate(original_params.framerate)
+            merged.setcomptype('NONE', 'not compressed')
+            original.setpos(0)
+            _copy_wave_frames(original, merged, start_frame, control)
+            replacement.rewind()
+            _copy_wave_frames(replacement, merged, replacement_params.nframes, control)
+            original.setpos(end_frame)
+            _copy_wave_frames(original, merged, original_params.nframes - end_frame, control)
+        if control:
+            control.checkpoint()
+        os.replace(temporary, output)
+        new_frames = []
+        frame_cursor = 0
+        for current_index, old in enumerate(segments):
+            duration_frames = (replacement_params.nframes if current_index == index else
+                               int(old['end_frame']) - int(old['start_frame']))
+            item = dict(old)
+            item['start_frame'] = frame_cursor
+            frame_cursor += duration_frames
+            item['end_frame'] = frame_cursor
+            rate = int(manifest['sample_rate'])
+            item['start_seconds'] = round(item['start_frame'] / rate, 6)
+            item['end_seconds'] = round(item['end_frame'] / rate, 6)
+            new_frames.append(item)
+        updated = dict(manifest)
+        updated['segments'] = new_frames
+        updated['total_frames'] = frame_cursor
+        updated['audio_sha256'] = file_sha256(output)
+        sidecar = output.with_suffix('.segments.json')
+        fd, sidecar_tmp = tempfile.mkstemp(prefix='.narration-segments-', suffix='.tmp',
+                                            dir=str(output.parent))
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as stream:
+                json.dump(updated, stream, ensure_ascii=False, indent=2,
+                          sort_keys=True, allow_nan=False)
+                stream.write('\n'); stream.flush(); os.fsync(stream.fileno())
+            os.replace(sidecar_tmp, sidecar)
+        finally:
+            try: os.unlink(sidecar_tmp)
+            except FileNotFoundError: pass
+        return {'path': str(output), 'duration': frame_cursor / int(manifest['sample_rate']),
+                'segment_manifest_path': str(sidecar), 'segment_index': index,
+                'generated_segment': generated}
+    finally:
+        temporary.unlink(missing_ok=True)
+        # A failed manifest write must not leave an orphan WAV that looks like
+        # a completed selective regeneration in the media library.
+        if output.exists() and not output.with_suffix('.segments.json').exists():
+            output.unlink(missing_ok=True)
+
+
+def _copy_wave_frames(source, destination, frame_count: int, control=None,
+                      block_frames: int = 32768) -> None:
+    remaining = int(frame_count)
+    while remaining > 0:
+        if control:
+            control.checkpoint()
+        data = source.readframes(min(block_frames, remaining))
+        if not data:
+            raise wave.Error('O WAV terminou antes do limite de frames registrado.')
+        destination.writeframesraw(data)
+        remaining -= len(data) // (source.getnchannels() * source.getsampwidth())
 
 
 def _generate_long_narration(request: NarrationRequest, chunks: list[str],

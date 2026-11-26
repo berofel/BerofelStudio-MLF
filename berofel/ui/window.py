@@ -896,6 +896,7 @@ class MainWindow(QMainWindow):
         self.narration_panel.on_transcribe_reference=self.transcribe_narration_reference
         self.narration_panel.on_verify_last=self.verify_last_narration
         self.narration_panel.on_compare_identity=self.compare_last_narration_identity
+        self.narration_panel.on_regenerate_segment=self.regenerate_narration_segment_ui
         self.narration_panel.on_use_transcript=self.use_selected_transcript
         self.narration_panel.on_voice_eq_begin=self.begin_voice_eq_edit
         self.narration_panel.on_voice_eq_change=self.apply_voice_eq_edit
@@ -1507,7 +1508,7 @@ class MainWindow(QMainWindow):
                 result.get('engine',''),result.get('threads'),result.get('title',''),
                 result.get('reference_window'),conditioning_mode,
                 result.get('source_text',''),result.get('spoken_text',''),
-                request.voice,request.consent)
+                request.voice,request.consent,request)
             self._register_narration_media(path)
             if add_to_timeline:
                 self.add_last_narration_to_timeline(path,duration,result['title'],position)
@@ -1522,6 +1523,47 @@ class MainWindow(QMainWindow):
             self._ai_busy=False
             self.narration_panel.busy(False)
         task.signals.finished.connect(finish)
+
+    def regenerate_narration_segment_ui(self, audio_path: str,
+                                        request: NarrationRequest,
+                                        segment_index: int):
+        """Regenerate one manifest-verified narration span without touching the source WAV."""
+        if self._ai_busy or self.active_task is not None:
+            QMessageBox.information(self,'Regenerar trecho',
+                'Aguarde o processamento atual antes de regenerar um trecho.')
+            self.narration_panel.busy(False)
+            return
+        from berofel.services.narration_service import regenerate_narration_segment
+        panel=self.narration_panel
+        prior_text=panel.last_spoken_text
+        prior_title=panel.last_title
+        self._ai_busy=True
+        panel.busy(True)
+
+        def ready(result):
+            path=result['path']
+            panel.set_result(path,result['duration'],False,request.engine,
+                request.thread_count,f'{prior_title} · trecho {segment_index + 1} regenerado',
+                conditioning_mode=('speaker-embedding-only'
+                    if request.engine in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8',
+                                          'qwen3-tts-native-q4','qwen3-tts-native-q4-balanced')
+                    else 'audio+transcript'),
+                source_text=request.text,spoken_text=prior_text,
+                voice_reference_path=request.voice,voice_consent=request.consent,
+                request=request)
+            self._register_narration_media(path)
+            panel.status.setText(
+                f'Trecho {segment_index + 1} regenerado. As demais amostras foram preservadas. '
+                'O WAV original continua disponível; a nova versão foi salva separadamente.')
+            self.statusBar().showMessage('Trecho regenerado em um novo WAV, sem substituir o original.')
+
+        task=self._task(regenerate_narration_segment,ready,audio_path,request,
+            segment_index,label='Qwen3-TTS · regeneração seletiva de narração')
+        if task is None:
+            self._ai_busy=False
+            panel.busy(False)
+            return
+        task.signals.finished.connect(lambda:(setattr(self,'_ai_busy',False),panel.busy(False)))
 
     def verify_last_narration(self, audio_path: str, expected_text: str):
         """Explicitly verify a completed narration with local Parakeet TDT."""

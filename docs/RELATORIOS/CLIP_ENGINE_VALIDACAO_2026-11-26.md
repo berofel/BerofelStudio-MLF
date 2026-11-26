@@ -77,3 +77,18 @@ Foi acrescentado um teste Qt de regressão que abre um clipe sem transcrição e
 - Testes focados: Clipador **25/25**, sinais de áudio **18/18**, sinais visuais **8/8**, e novo teste Qt de entrada sem transcrição **1/1**.
 - Benchmark sintético atual, uma repetição por célula, 5/20/60/80/120 min: Rápido **0,290/1,097/3,290/4,394/6,615 s**; Equilibrado **0,286/1,098/3,298/4,433/6,598 s**; Avançado **0,294/1,143/3,432/4,556/6,856 s**. No caso de 120 min, aumento de RSS amostrado foi 12,6/7,9/8,1 MiB, respectivamente. Cada cenário retornou sete candidatos, zero chamadas Parakeet e zero segundos de áudio decodificado: este benchmark mede somente transcrição sintética e construção/ranking de candidatos, não pipeline real nem qualidade editorial.
 - A pasta de mídia mencionada em `D:\Edição CapCut\vídeos` não existe neste ambiente. Não foi possível executar benchmark novo com gravação real nem avaliação humana.
+
+## Reauditoria nesta rodada
+
+Branch atual: `feat/berofel-clip-engine-mmr`. O serviço ativo foi confirmado como `berofel/services/parakeet_asr.py`: `onnx-asr.load_model("nemo-parakeet-tdt-0.6b-v3", quantization="int8")`, `CPUExecutionProvider`, `.with_timestamps()`, entradas WAV PCM16 mono 16 kHz. A rota do Clip Engine recebe palavras persistidas do projeto; `analyze_clips` não importa ou instancia o modelo. A ação opcional separada de completar transcrições chama o pipeline Parakeet já existente, não um segundo reconhecedor.
+
+Nesta rodada foram executados no venv do aplicativo:
+
+- `test_clipper.py`: 27/27 passaram.
+- `test_clip_visual_signals.py`: 8/8 passaram.
+- `test_long_narration.py`: 8/8 passaram, incluindo preservação dos frames vizinhos ao regenerar um trecho.
+- `test_narration_fast_profile_ui.py`: 20/20 passaram em Qt offscreen, incluindo seleção/dispatch da regeneração segmentada.
+- `test_clip_audio_signals.py`: 22/22 passaram.
+- Suíte completa, executada com `%LOCALAPPDATA%\BFS\venv\Scripts\python.exe -m unittest discover -s tests -q`: **655 testes, OK, 6 ignorados**, em 68,279 s. Um teste negativo de CLI imprimiu a mensagem de argumento inválido esperada e a suíte terminou sem falhas.
+
+O inventário de janelas do Windows não mostrou o BerofelStudio aberto e este checkout não contém um executável compilado para iniciar; não houve nova leitura de mídia real, sessão visível, exportação nem avaliação humana nesta rodada. Os resultados end-to-end e sintéticos citados acima são medições anteriores e não devem ser interpretados como benchmark novo. O F0 não está no ranking do Clip Engine; as features atuais são RMS, pico, clipping, fluxo espectral e ZCR. Sons/ações/emoções não são classificados semanticamente. A pontuação continua uma ordenação editorial heurística e o conjunto humano para Precision@K/Recall ainda não existe nesta validação.
