@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import calendar
 import re
 
-NORMALIZER_VERSION = 2
+NORMALIZER_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -124,9 +124,9 @@ def _date(match: re.Match[str]) -> str:
                      else calendar.monthrange(year, month)[1])
     if day > days_in_month:
         return match.group(0)
-    # A two-digit year stays a year value; it is not expanded to a century.
+    # A two-digit year stays a year value; do not guess which century it means.
     day_text = "primeiro" if day == 1 else _integer(day)
-    year_text = _integer(year) if year >= 1000 else _digits(f"{year:02d}")
+    year_text = _integer(year)
     return f"{day_text} de {_MONTHS[month - 1]} de {year_text}"
 
 
@@ -156,7 +156,7 @@ def _time(match: re.Match[str]) -> str:
 _PATTERN = re.compile(
     r"(?<![\w/.])(?:"
     r"(?P<currency>R\$\s*(?P<amount>(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?))"
-    r"|(?P<date>(?P<day>\d{1,2})/(?P<month>\d{1,2})/(?P<year>\d{2,4}))"
+    r"|(?P<date>(?P<day>\d{1,2})/(?P<month>\d{1,2})/(?P<year>\d{2}(?:\d{2})?))"
     r"|(?P<time>(?P<hour>\d{1,2})h(?P<minute>\d{2})?)"
     r"|(?P<ordinal>(?P<ordinal_number>\d{1,3})(?P<ordinal_suffix>º|ª))"
     r"|(?P<unit>(?P<quantity>(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d+)?)\s*"
@@ -189,7 +189,7 @@ def _replace(match: re.Match[str]) -> tuple[str, str] | None:
         number = int(match.group("ordinal_number"))
         suffix = match.group("ordinal_suffix")
         forms = _ORDINALS_M if suffix == "º" else _ORDINALS_F
-        if number > len(forms):
+        if not 1 <= number <= len(forms):
             return None
         result = forms[number - 1]
         return result, "ordinal"
@@ -197,7 +197,9 @@ def _replace(match: re.Match[str]) -> tuple[str, str] | None:
         amount = _amount(match.group("quantity"))
         unit = match.group("unit_name").casefold()
         forms = _UNIT_FORMS[unit]
-        singular = match.group("quantity").replace(".", "").replace(",", ".") in {"1", "1.0"}
+        normalized = match.group("quantity").replace(".", "").replace(",", ".")
+        whole, _dot, fraction = normalized.partition(".")
+        singular = int(whole) == 1 and not any(digit != "0" for digit in fraction)
         return f"{amount} {forms[0 if singular else 1]}", "unit"
     if match.group("decimal"):
         return _amount(match.group("decimal")), "decimal"

@@ -78,6 +78,17 @@ class PortugueseSpeechNormalizerTests(TestCase):
         self.assertEqual(result.spoken, text)
         self.assertEqual(normalize_pt_br(result.spoken).spoken, result.spoken)
 
+    def test_zero_ordinals_and_ambiguous_three_digit_years_are_preserved(self):
+        text='0º, 0ª, 23/11/123, 23/11/26, 23/11/2026'
+        result=normalize_pt_br(text)
+        self.assertEqual(result.spoken,
+            '0º, 0ª, 23/11/123, vinte e três de novembro de vinte e seis, '
+            'vinte e três de novembro de dois mil e vinte e seis')
+
+    def test_decimal_one_uses_singular_unit(self):
+        self.assertEqual(normalize_pt_br('1,00 GB e 1,01 GB').spoken,
+                         'um vírgula zero zero gigabyte e um vírgula zero um gigabytes')
+
 
 class DeterministicNarrativeInterpreterTests(TestCase):
     def test_detects_clear_ptbr_emotion_and_narrative_states(self):
@@ -353,6 +364,8 @@ class VoiceReferenceReportCacheTests(TestCase):
                 second=audio_reference.inspect_voice_reference(source)
             self.assertFalse(first['cache_hit'])
             self.assertTrue(second['cache_hit'])
+            self.assertEqual(first['source_sha256'],file_sha256(source))
+            self.assertEqual(second['source_sha256'],first['source_sha256'])
             self.assertEqual(inspect.call_count,1)
             payload=next(cache.rglob('*.json')).read_text(encoding='utf-8')
             self.assertNotIn(str(source),payload)

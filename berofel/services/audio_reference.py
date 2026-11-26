@@ -552,7 +552,7 @@ def inspect_voice_reference(voice: str | Path) -> dict:
     with _VOICE_REPORT_LOCK:
         cached=_read_voice_report_cache(cache_path,cache_key)
         if cached is not None:
-            return cached
+            return dict(cached,source_sha256=source_hash)
         report=_inspect_voice_reference_uncached(source)
         report['cache_hit']=False
         cache_report={key:value for key,value in report.items() if key!='cache_hit'}
@@ -561,4 +561,4 @@ def inspect_voice_reference(voice: str | Path) -> dict:
         except (OSError,TypeError,ValueError):
             # A read-only cache location must never block cloning preparation.
             pass
-        return report
+        return dict(report,source_sha256=source_hash)

@@ -148,6 +148,7 @@ class VoiceProfileManagerTests(unittest.TestCase):
             manager=VoiceProfileManager(root/'profiles')
             profile=manager.create('Perfil local',source,authorized=True)
             saved=manager.save_acoustic_fingerprint(profile['id'],{
+                'source_sha256':profile['sample_sha256'],
                 'duration':12.0,'rms_dbfs':-20.0,'absolute_source_path':'C:/private.wav',
                 'reference_text':'private words','pitch_features':{'f0_median_hz':145.0},
                 'acoustic_features':{'snr_db':None,'snr_confidence':'unavailable'},
@@ -162,6 +163,9 @@ class VoiceProfileManagerTests(unittest.TestCase):
             self.assertNotIn('unexpected_nan',json.dumps(reopened))
             self.assertFalse(reopened['interpretation']['pitch_is_speaker_identity'])
             self.assertTrue((root/'profiles'/'intelligence'/f"{profile['id']}.json").is_file())
+            with self.assertRaisesRegex(ValueError,'não corresponde exatamente'):
+                manager.save_acoustic_fingerprint(profile['id'],{
+                    'source_sha256':'0'*64,'duration':99.0})
 
     def test_purec_vector_metadata_validates_existing_cache_without_copying_vector(self):
         import struct
@@ -193,7 +197,8 @@ class VoiceProfileManagerTests(unittest.TestCase):
             root=Path(folder);source=root/'voice.wav';source.write_bytes(b'RIFF'+b'a'*300)
             manager=VoiceProfileManager(root/'profiles')
             profile=manager.create('Perfil local',source)
-            manager.save_acoustic_fingerprint(profile['id'],{'duration':5.0})
+            manager.save_acoustic_fingerprint(profile['id'],{
+                'source_sha256':profile['sample_sha256'],'duration':5.0})
             metadata=root/'profiles'/'intelligence'/f"{profile['id']}.json"
             self.assertTrue(metadata.is_file())
             manager.delete(profile['id'])

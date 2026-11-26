@@ -4,7 +4,7 @@ Referências consultadas em 25–26/11/2026. Branches `main` são mutáveis; o b
 
 | Técnica / componente | Fonte e versão | Licença observada | Uso local e evidência |
 |---|---|---|---|
-| Normalização textual PT-BR | Regras locais, versão `NORMALIZER_VERSION=2` | Código do projeto | `text_normalizer.py`; testes determinísticos; sem modelo |
+| Normalização textual PT-BR | Regras locais, versão `NORMALIZER_VERSION=3` | Código do projeto | `text_normalizer.py`; testes determinísticos; sem modelo |
 | Medidas acústicas por quadro | RMS, pico, crest factor, ZCR, F0/YIN e percentis; `ACOUSTIC_FEATURE_VERSION=2`, `PITCH_FEATURE_VERSION=1` | Fórmulas DSP padrão; implementação própria; NumPy BSD-3-Clause instalado no app | `acoustic_analyzer.py`; paridade vetorizada NumPy/fallback testada; SNR continua explicitamente indisponível |
 | Descritores espectrais/MFCC | rFFT Hann, centroide, rolloff 85%, flatness, Mel triangular, DCT-II ortonormal; `SPECTRAL_FEATURE_VERSION=2` | Implementação própria inspirada nas definições públicas de [librosa MFCC](https://librosa.org/doc/main/api/generated/librosa.feature.mfcc.html); NumPy BSD-3-Clause instalado no app | `analyze_spectral_f32le`; fixtures de tom, ruído e silêncio; até 120 quadros por padrão; não é embedding nem identifica locutor |
 | Periodicidade acústica | Proxy de HNR por autocorrelação linear com padding FFT adequado | Fórmula aproximada local; Praat documenta Harmonicity/HNR, mas o proxy não replica seu algoritmo | Exposto somente como diagnóstico rotulado; [definição Praat](https://praat.org/manual/Harmonicity.html); sem calibração humana, não é score de qualidade |

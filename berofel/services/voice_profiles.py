@@ -228,6 +228,8 @@ class VoiceProfileManager:
         profile = self.get(str(profile_id))
         if not isinstance(report, dict):
             raise ValueError('Relatório acústico inválido.')
+        if report.get('source_sha256') != profile['sample_sha256']:
+            raise ValueError('O relatório acústico não corresponde exatamente à amostra salva.')
         def finite(value):
             if value is None or isinstance(value, (str, bool, int)):
                 return value
