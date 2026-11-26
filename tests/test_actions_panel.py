@@ -426,7 +426,8 @@ class ActionsUITests(unittest.TestCase):
             'events':[{'kind':'cached_thumbnail_change'}],
             'audio_available':False,'checked':False,'start_ms':4000,'end_ms':16000,
             'min_duration_ms':8000,'max_duration_ms':16000,
-            'score_components':{'audio':None,'visual':1.},'evidence_coverage':.2,
+            'score_components':{'audio':None,'visual':1.},'spectral_novelty':.63,
+            'evidence_coverage':.2,
             'start_choices':[{'ms':3000,'word':'evento ± tempo'},
                              {'ms':4000,'word':'evento ± tempo'}],
             'end_choices':[{'ms':16000,'word':'evento ± tempo'},
@@ -436,6 +437,7 @@ class ActionsUITests(unittest.TestCase):
         self.assertEqual(dialog.table.item(0,3).text(),'Mudança visual detectada')
         self.assertIn('Sem transcrição',dialog.table.item(0,4).text())
         self.assertTrue(dialog.start_boundary.isEnabled())
+        self.assertIn('novidade espectral 0.63',dialog.table.item(0,5).text())
         dialog.start_boundary.setCurrentIndex(dialog.start_boundary.findData(3000))
         adjusted=dialog.table.item(0,0).data(Qt.ItemDataRole.UserRole)
         self.assertEqual(adjusted['source_start'],3.)

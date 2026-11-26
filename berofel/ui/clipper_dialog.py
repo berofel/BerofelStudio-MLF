@@ -239,6 +239,9 @@ class ClipperDialog(QDialog):
                     'value':'informação','payoff':'desfecho','rhythm':'ritmo','visual':'visual'}
             measured=[f"{labels.get(key,key)} {value:.2f}" for key,value in components.items()
                       if value is not None]
+            spectral=candidate.get('spectral_novelty')
+            if spectral is not None:
+                measured.append(f"novidade espectral {float(spectral):.2f}")
             if measured:evidence+='  ·  componentes: '+', '.join(measured)
             if candidate.get('text_rank_score') is not None:
                 evidence+=f"  ·  TextRank local {float(candidate['text_rank_score']):.2f}"

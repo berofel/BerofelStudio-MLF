@@ -8,6 +8,15 @@ from berofel.services.clip_audio_signals import (
 
 
 class ClipAudioTests(unittest.TestCase):
+    def test_feature_contract_rejects_nonfinite_and_unsorted_cache_data(self):
+        base=dict(times_ms=np.asarray([0.,20.]),rms_dbfs=np.asarray([-30.,-30.]),
+                  peak_dbfs=np.asarray([-20.,-20.]),clip_fraction=np.zeros(2),
+                  frame_ms=20.,sample_rate=16000)
+        with self.assertRaises(ValueError):
+            FrameFeatures(**dict(base,spectral_flux=np.asarray([0.,np.nan])))
+        with self.assertRaises(ValueError):
+            FrameFeatures(**dict(base,times_ms=np.asarray([20.,0.])))
+
     def test_frame_stream_equivalent_to_whole(self):
         rng = np.random.default_rng(44)
         pcm = (rng.normal(size=16000 * 3) * 0.06).astype(np.float32)
@@ -15,6 +24,27 @@ class ClipAudioTests(unittest.TestCase):
         b = extract_frames_from_chunks([pcm[:1001], pcm[1001:17481], pcm[17481:]], 16000)
         np.testing.assert_allclose(a.rms_dbfs, b.rms_dbfs)
         np.testing.assert_allclose(a.peak_dbfs, b.peak_dbfs)
+        np.testing.assert_allclose(a.spectral_flux, b.spectral_flux, atol=1e-7)
+        np.testing.assert_allclose(a.zero_crossing_rate, b.zero_crossing_rate, atol=1e-7)
+
+    def test_spectral_flux_marks_frequency_change_without_level_change(self):
+        rate=16000
+        t=np.arange(rate*2,dtype=np.float32)/rate
+        signal=np.where(t<1.,np.sin(2*np.pi*220*t),
+                        np.sin(2*np.pi*1800*t)).astype(np.float32)*.08
+        frames=extract_frames_from_chunks([signal[:11321],signal[11321:]],rate)
+        at_change=int(np.argmin(np.abs(frames.times_ms-1000.)))
+        around=frames.spectral_flux[max(0,at_change-2):at_change+3]
+        away=frames.spectral_flux[10:40]
+        self.assertGreater(float(np.max(around)),float(np.max(away))*10+1e-5)
+        candidate=dict(start_ms=frames.times_ms[max(0,at_change-1)],
+            end_ms=frames.times_ms[at_change+2],context_score=.8,
+            hook_score=.7,boundary_score=.8)
+        ranked=score_clip(candidate,[],frames)
+        self.assertIsNotNone(ranked['spectral_novelty'])
+        self.assertGreaterEqual(ranked['spectral_novelty'],.25)
+        self.assertTrue(any('Mudança espectral relativa' in text
+                            for text in ranked['reasons']))
 
     def test_surge_matches_speech_and_timing(self):
         rng = np.random.default_rng(2)

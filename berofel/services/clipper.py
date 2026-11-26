@@ -28,10 +28,10 @@ from .clip_visual_signals import (read_cached_visual_signals,
     score_cached_visual_interval, detect_cached_visual_events)
 from .ffmpeg import ffmpeg_path, media_info
 
-CLIPPER_VERSION = 8
+CLIPPER_VERSION = 9
 # Keep the persisted v5 feature keys compatible: the PCM/waveform extraction
 # format and algorithm did not change. Bump this independently only when they do.
-FEATURE_EXTRACTOR_VERSION = 5
+FEATURE_EXTRACTOR_VERSION = 6
 FEATURE_RATE = 16_000
 FEATURE_FRAME_MS = 20
 CACHE_SCHEMA = 1
@@ -126,8 +126,15 @@ def _load_features(path: Path, offset_ms: float) -> FrameFeatures | None:
             peak = data['peak_dbfs'].astype(np.float32, copy=True)
             clipped = data['clip_fraction'].astype(np.float32, copy=True)
             level_kind = str(data['level_kind'].item()) if 'level_kind' in data else 'pcm_rms'
+            spectral_flux = (data['spectral_flux'].astype(np.float32, copy=True)
+                             if 'spectral_flux' in data and
+                             data['spectral_flux'].size == rms.size else None)
+            zero_crossing_rate = (data['zero_crossing_rate'].astype(np.float32, copy=True)
+                                  if 'zero_crossing_rate' in data and
+                                  data['zero_crossing_rate'].size == rms.size else None)
         times = offset_ms + np.arange(len(rms), dtype=np.float64) * frame_ms
-        return FrameFeatures(times, rms, peak, clipped, frame_ms, rate, level_kind)
+        return FrameFeatures(times, rms, peak, clipped, frame_ms, rate, level_kind,
+                             spectral_flux, zero_crossing_rate)
     except (OSError, ValueError, KeyError, EOFError):
         return None
 
@@ -142,7 +149,12 @@ def _save_features(path: Path, frames: FrameFeatures, offset_ms: float):
                 offset_ms=np.asarray([offset_ms], np.float64),
                 rms_dbfs=frames.rms_dbfs, peak_dbfs=frames.peak_dbfs,
                 clip_fraction=frames.clip_fraction,
-                level_kind=np.asarray(frames.level_kind))
+                level_kind=np.asarray(frames.level_kind),
+                spectral_flux=(frames.spectral_flux if frames.spectral_flux is not None
+                               else np.empty(0,dtype=np.float32)),
+                zero_crossing_rate=(frames.zero_crossing_rate
+                                    if frames.zero_crossing_rate is not None
+                                    else np.empty(0,dtype=np.float32)))
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
@@ -1269,6 +1281,7 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                 'score_profile':ranked['profile'],'score_components':ranked['components'],
                 'evidence_coverage':ranked['evidence_coverage'],
                 'text_rank_score':candidate.get('text_rank_score'),
+                'spectral_novelty':ranked.get('spectral_novelty'),
                 'visual_score':(ranked['components'].get('visual')
                     if candidate.get('event_only') else visual.get('score')),
                 'visual_coverage':visual.get('coverage',0.),
