@@ -14,6 +14,9 @@ from berofel.services.voice_intelligence.text_normalizer import (
 )
 from berofel.services.voice_intelligence.capabilities import inspect_purec_capabilities
 from berofel.services.voice_intelligence.reference_selector import rank_reference_candidates
+from berofel.services.voice_intelligence.speaker_fingerprint import (
+    apply_emotion_direction, read_purec_emotion_direction,
+)
 from berofel.services.voice_intelligence.quality_inspector import (
     calculate_temporal_coverage, calculate_text_error_rates,
     inspect_generated_wav_with_parakeet, inspect_pcm16_wav,
@@ -266,6 +269,45 @@ class PureCCapabilityTests(TestCase):
             self.assertEqual(manifest['cli']['emotion_direction_files'], ['dir_joy.bin'])
             self.assertEqual(set(manifest['cli']['emotion_direction_files_invalid']),
                              {'dir_sad.bin', 'dir_unknown.bin', 'dir_fear.bin'})
+
+
+class PureCEmotionVectorMathTests(TestCase):
+    def test_direction_asset_format_is_validated(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            good = root / 'dir_joy.bin'
+            good.write_bytes(struct.pack('<1024f', *([1 / 32] * 1024)))
+            self.assertEqual(len(read_purec_emotion_direction(good)), 1024)
+            (root / 'dir_other.bin').write_bytes(good.read_bytes())
+            with self.assertRaises(ValueError):
+                read_purec_emotion_direction(root / 'dir_other.bin')
+            (root / 'dir_fear.bin').write_bytes(bytes(4096))
+            with self.assertRaises(ValueError):
+                read_purec_emotion_direction(root / 'dir_fear.bin')
+            (root / 'dir_sad.bin').write_bytes(struct.pack('<1024f', *([float('nan')] + [0.0] * 1023)))
+            with self.assertRaises(ValueError):
+                read_purec_emotion_direction(root / 'dir_sad.bin')
+
+    def test_emotion_displacement_preserves_original_vector_norm(self):
+        original = tuple([1.0] + [0.0] * 1023)
+        direction = tuple([0.0, 1.0] + [0.0] * 1022)
+        unchanged = apply_emotion_direction(original, direction, strength=0)
+        shifted = apply_emotion_direction(original, direction, strength=0.25)
+        self.assertEqual(unchanged, original)
+        self.assertAlmostEqual(math.sqrt(sum(value * value for value in shifted)), 1.0)
+        self.assertGreater(shifted[1], 0.0)
+        self.assertNotEqual(shifted, original)
+
+    def test_emotion_displacement_rejects_unbounded_or_invalid_vectors(self):
+        original = tuple([1.0] + [0.0] * 1023)
+        direction = tuple([0.0, 1.0] + [0.0] * 1022)
+        for strength in (-0.01, 0.36, float('inf'), float('nan')):
+            with self.assertRaises(ValueError):
+                apply_emotion_direction(original, direction, strength=strength)
+        with self.assertRaises(ValueError):
+            apply_emotion_direction(original[:-1], direction)
+        with self.assertRaises(ValueError):
+            apply_emotion_direction(original, tuple([0.0] * 1024))
 
 
 class ReferenceWindowRankingTests(TestCase):

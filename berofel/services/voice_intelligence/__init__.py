@@ -11,6 +11,9 @@ from .pronunciation_dictionary import (PronunciationDictionary,
                                        apply_pronunciations)
 from .narrative_interpreter import (INTERPRETER_VERSION,
                                     plan_narrative_interpretation)
+from .speaker_fingerprint import (apply_emotion_direction,
+                                  read_purec_emotion_direction,
+                                  read_purec_xvector, cosine_similarity)
 
 __all__ = ["NormalizedSpeechText", "normalize_pt_br", "inspect_purec_capabilities",
            "calculate_text_error_rates", "calculate_temporal_coverage",
@@ -18,4 +21,6 @@ __all__ = ["NormalizedSpeechText", "normalize_pt_br", "inspect_purec_capabilitie
            "analyze_pcm_f32le", "analyze_pitch_yin_f32le", "analyze_spectral_f32le",
            "PronunciationDictionary",
            "apply_pronunciations", "INTERPRETER_VERSION",
-           "plan_narrative_interpretation"]
+           "plan_narrative_interpretation", "apply_emotion_direction",
+           "read_purec_emotion_direction", "read_purec_xvector",
+           "cosine_similarity"]
