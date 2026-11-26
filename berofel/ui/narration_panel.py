@@ -164,6 +164,7 @@ class NarrationPanel(QScrollArea):
         self.activate_cloning = QPushButton('')
         self.activate_cloning.hide()
         self.clone_engine = QComboBox()
+        self.clone_engine.addItem('Escolha o motor de narração', '__select_engine__')
         try:
             from berofel.services.qwen3_purec_tts import is_ready as purec_qwen_ready
             if purec_qwen_ready():
@@ -172,9 +173,9 @@ class NarrationPanel(QScrollArea):
                 self.clone_engine.addItem('Turbo — Pure C Mixer · 6 threads',
                                            'qwen3-tts-purec-mixed')
                 self.clone_engine.insertSeparator(self.clone_engine.count())
-            self.clone_engine.addItem('Recomendado para clonagem · Original Qwen3-TTS Base', 'qwen3-tts-local')
+            self.clone_engine.addItem('Manual · Original Qwen3-TTS Base', 'qwen3-tts-local')
         except (OSError,ValueError,ImportError):
-            self.clone_engine.addItem('Original · Qwen3-TTS Base', 'qwen3-tts-local')
+            self.clone_engine.addItem('Manual · Original Qwen3-TTS Base', 'qwen3-tts-local')
         try:
             from berofel.services.qwen3_native_tts import is_ready as native_qwen_ready
             if native_qwen_ready():
@@ -508,9 +509,9 @@ class NarrationPanel(QScrollArea):
         self.quantize.toggled.connect(self._schedule_preferences_save)
         self.name.textChanged.connect(self._schedule_preferences_save)
         self._update_custom()
-        # The historical default was Pure C INT8, which omits ref_text. Keep
-        # existing fast profiles available, but use the full Base ICL path for
-        # the default PT-BR workflow and migrate incompatible saved defaults.
+        # Pure C is the default only for a fresh preference set. Previously
+        # persisted engine choices remain untouched; Original is a deliberate
+        # manual option because it has the full audio+transcript path.
         self._ensure_ptbr_clone_backend()
         self.set_clip(None)
         self._make_controls_responsive()
@@ -794,9 +795,12 @@ class NarrationPanel(QScrollArea):
         if language_index>=0:self.language.setCurrentIndex(language_index)
         if not self._voice_profile_id(voice):
             self.sample_path.setText(str(settings.value('narration/sample_path','')))
-        engine=str(settings.value('narration/clone_engine','qwen3-tts-local'))
+        default_engine=('qwen3-tts-purec-mixed'
+                        if self.clone_engine.findData('qwen3-tts-purec-mixed')>=0
+                        else '__select_engine__')
+        engine=str(settings.value('narration/clone_engine',default_engine))
         index=self.clone_engine.findData(engine)
-        if index<0:index=self.clone_engine.findData('qwen3-tts-local')
+        if index<0:index=self.clone_engine.findData('__select_engine__')
         if index>=0:self.clone_engine.setCurrentIndex(index)
         try:thread_count=int(settings.value('narration/purec_threads',6))
         except (TypeError,ValueError):thread_count=6
@@ -815,16 +819,17 @@ class NarrationPanel(QScrollArea):
         self._preferences_timer.start()
 
     def _ensure_ptbr_clone_backend(self,*_args):
-        """Keep PT-BR Pure C selectable; never silently switch the user's engine."""
+        """Report unsupported PT-BR backends without silently changing selection."""
         if self.language.currentData()!='portuguese':
             return
         engine=self.clone_engine.currentData()
         if engine in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8','qwen3-tts-local'):
             return
-        index=self.clone_engine.findData('qwen3-tts-local')
-        if index>=0:
-            self.clone_engine.setCurrentIndex(index)
-            self.status.setText('Este perfil ainda não foi validado para PT-BR; usando Original Qwen3 Base.')
+        if engine=='__select_engine__':
+            return
+        self.status.setText(
+            'Este motor ainda não foi validado para PT-BR. A seleção foi preservada; '
+            'a geração será bloqueada até escolher um motor compatível.')
 
     def _prewarm_selected_fast_profile(self,*_args):
         """Warm the Turbo model only after the user selects a saved voice/mode."""
@@ -1400,6 +1405,13 @@ class NarrationPanel(QScrollArea):
 
     def _generate(self, add_to_timeline: bool):
         self._ensure_ptbr_clone_backend()
+        engine=self.clone_engine.currentData()
+        if engine in (None,'','__select_engine__'):
+            QMessageBox.information(
+                self,'Motor de narração',
+                'Escolha um motor de narração. Pure C é o caminho padrão quando está instalado; '
+                'Original Qwen3-TTS Base permanece disponível como escolha manual.')
+            return
         selected_voice=self.voice.currentData()
         profile_id=self._voice_profile_id(selected_voice)
         custom = selected_voice == '__custom__' or bool(profile_id)
@@ -1427,7 +1439,6 @@ class NarrationPanel(QScrollArea):
         if not voice or not Path(voice).is_file():
             QMessageBox.warning(self,'Amostra de voz','Escolha uma gravação de referência válida antes de gerar.')
             return
-        engine=self.clone_engine.currentData() or 'qwen3-tts-local'
         emotion_by_example=(engine in ('qwen3-tts-purec-mixed','qwen3-tts-purec-int8')
                             and self.use_emotional_reference.isChecked())
         req = NarrationRequest(text=self.text.toPlainText(), voice=voice,

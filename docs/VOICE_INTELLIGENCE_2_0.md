@@ -1,5 +1,11 @@
 # Berofel Voice Intelligence 2.0 — integração inicial
 
+## Seleção explícita do motor de narração
+
+Em um perfil de preferências novo, a interface principal e o painel multivozes selecionam Turbo Pure C Mixed quando o executável está instalado. Uma opção já persistida pelo usuário é preservada; isso evita reescrever uma escolha anterior como se fosse nova. O backend Python Original permanece identificado como opção manual. Se Pure C não estiver instalado e não houver uma preferência existente, a UI solicita escolha do motor em vez de iniciar Original silenciosamente. Nenhuma inferência começa enquanto o placeholder estiver selecionado. Backends sem validação de PT-BR exibem o aviso e não são trocados automaticamente.
+
+Essa mudança de seleção não altera pesos, modelo, runtime, perfil vocal nem síntese. Ela só torna explícita a rota usada por novos perfis e preserva preferências existentes. A validação foi feita pelos testes Qt automatizados de seleção/persistência e guarda contra geração sem motor escolhido; não substitui teste manual de instalação em outra máquina.
+
 ## Escopo implementado nesta etapa
 
 ### Regeneração seletiva de narração longa

@@ -168,21 +168,59 @@ class FastNarrationProfileUiTests(unittest.TestCase):
             finally:
                 restored.close()
 
-    def test_ptbr_defaults_original_but_keeps_purec_as_explicit_speed_choice(self):
+    def test_ptbr_defaults_to_purec_when_available_and_keeps_original_manual(self):
+        from PySide6.QtCore import QSettings
+        QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
+                  'Berofel','BerofelStudio').remove('narration/clone_engine')
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True), \
              patch('berofel.services.qwen3_purec_tts.is_ready',return_value=True):
             panel=NarrationPanel()
             try:
                 panel.language.setCurrentIndex(panel.language.findData('portuguese'))
-                self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
-                self.assertIn('Recomendado para clonagem',panel.clone_engine.currentText())
-                self.assertIn('sem token separado de sotaque',panel.license_note.text())
+                self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-purec-mixed')
+                self.assertIn('Turbo — Pure C Mixer',panel.clone_engine.currentText())
                 panel.language.setCurrentIndex(panel.language.findData('english'))
                 panel.clone_engine.setCurrentIndex(
-                    panel.clone_engine.findData('qwen3-tts-purec-int8'))
+                    panel.clone_engine.findData('qwen3-tts-local'))
+                self.assertIn('Manual · Original',panel.clone_engine.currentText())
                 panel.language.setCurrentIndex(panel.language.findData('portuguese'))
-                self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-purec-int8')
-                self.assertIn('x-vector',panel.license_note.text())
+                self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
+                self.assertFalse(panel.clone_engine.isHidden())
+            finally:
+                panel.close()
+
+    def test_original_is_preserved_when_it_was_explicitly_saved(self):
+        from PySide6.QtCore import QSettings
+        settings=QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
+                           'Berofel','BerofelStudio')
+        settings.setValue('narration/clone_engine','qwen3-tts-local')
+        with patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
+             patch('berofel.services.qwen3_purec_tts.is_ready',return_value=True):
+            panel=NarrationPanel()
+            try:
+                self.assertEqual(panel.clone_engine.currentData(),'qwen3-tts-local')
+                self.assertIn('Manual · Original',panel.clone_engine.currentText())
+            finally:
+                panel.close()
+
+    def test_original_requires_manual_selection_when_purec_is_not_installed(self):
+        from PySide6.QtWidgets import QMessageBox
+        from unittest.mock import Mock
+        from PySide6.QtCore import QSettings
+        QSettings(QSettings.Format.IniFormat,QSettings.Scope.UserScope,
+                  'Berofel','BerofelStudio').remove('narration/clone_engine')
+        with patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
+             patch('berofel.services.qwen3_purec_tts.is_ready',return_value=False), \
+             patch.object(QMessageBox,'information') as information:
+            panel=NarrationPanel()
+            try:
+                panel.on_generate=Mock()
+                self.assertEqual(panel.clone_engine.currentData(),'__select_engine__')
+                panel._generate(False)
+                panel.on_generate.assert_not_called()
+                information.assert_called_once()
+                self.assertIn('Original Qwen3-TTS Base permanece disponível como escolha manual',
+                              information.call_args.args[2])
             finally:
                 panel.close()
 

@@ -32,8 +32,6 @@ class MultiVoicePanel(QWidget):
         self.voice_profiles = VoiceProfileManager()
         self._profile_sha256: dict[str, str] = {}
         self._profiles_by_id: dict[str, dict] = {}
-        self._forcing_ptbr_backend = False
-        self._ptbr_backend_notice = False
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
@@ -50,6 +48,7 @@ class MultiVoicePanel(QWidget):
             purec_ready = is_ready()
         except (ImportError, OSError, ValueError):
             purec_ready = False
+        self.engine.addItem('Escolha o motor de narração', '__select_engine__')
         self._recommended_ids = set()
         if purec_ready:
             self.engine.addItem('Equilibrado — Pure C INT8 · 6 threads', 'qwen3-tts-purec-int8')
@@ -73,9 +72,11 @@ class MultiVoicePanel(QWidget):
             if available:
                 self.engine.addItem(label, engine_id)
         saved_engine = self._settings().value('narration/multivoice_engine',
-                                               'qwen3-tts-local')
+                                               ('qwen3-tts-purec-mixed' if purec_ready
+                                                else '__select_engine__'))
         idx = self.engine.findData(saved_engine)
-        self.engine.setCurrentIndex(idx if idx >= 0 else (0 if purec_ready else self.engine.count()-1))
+        self.engine.setCurrentIndex(idx if idx >= 0 else
+            self.engine.findData('__select_engine__'))
         self.engine.currentIndexChanged.connect(self._save_engine)
         engine_row.addWidget(self.engine, 1)
         root.addWidget(engine_box)
@@ -267,23 +268,17 @@ class MultiVoicePanel(QWidget):
             for profile_id in profile_ids)
 
     def _ensure_ptbr_engine(self, *_):
-        """Do not silently replace an explicitly selected Pure C speed profile."""
-        if self._forcing_ptbr_backend or not self._ptbr_profile_selected():
+        """Preserve selection and report PT-BR backends without validation."""
+        if not self._ptbr_profile_selected():
             return
         engine = self.engine.currentData()
         if engine in ('qwen3-tts-local', 'qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8'):
             return
-        index = self.engine.findData('qwen3-tts-local')
-        if index < 0:
+        if engine == '__select_engine__':
             return
-        self._forcing_ptbr_backend = True
-        try:
-            self._ptbr_backend_notice = True
-            self.engine.setCurrentIndex(index)
-            self.status.setText(
-                'Este perfil ainda não foi validado para PT-BR; selecionado Original Qwen3 Base.')
-        finally:
-            self._forcing_ptbr_backend = False
+        self.status.setText(
+            'Este motor ainda não foi validado para PT-BR. A seleção foi preservada; '
+            'a geração será bloqueada até escolher um motor compatível.')
 
     def _update_engine_note(self, *_):
         if not hasattr(self, 'engine_note'):
@@ -316,10 +311,14 @@ class MultiVoicePanel(QWidget):
             for voice_ids in voices_by_profile.values() if len(voice_ids) > 1), [])
         notes = []
         engine_id = str(self.engine.currentData() or '')
-        if self._ptbr_backend_notice and self._ptbr_profile_selected():
+        if engine_id == '__select_engine__':
+            notes.append('Escolha um motor para gerar. Pure C é o padrão quando está instalado; '
+                         'Original Qwen3 Base permanece como opção manual.')
+        if (engine_id in ('qwen3-tts-native-q4', 'qwen3-tts-native-q4-balanced') and
+                self._ptbr_profile_selected()):
             notes.append(
-                'PT-BR: Original Qwen3 Base selecionado para condicionar a clonagem '
-                'com a gravação e a transcrição de cada perfil.')
+                'Este backend ainda não foi validado para PT-BR. Escolha Original manualmente '
+                'ou use um dos perfis Pure C identificados como compatíveis.')
         if self._ptbr_profile_selected() and engine_id in (
                 'qwen3-tts-purec-mixed', 'qwen3-tts-purec-int8'):
             notes.append(
@@ -396,6 +395,8 @@ class MultiVoicePanel(QWidget):
                                           sorted(voice_totals.items(), key=lambda item: int(item[0][1:]))))
 
     def build_script(self, title: str = 'Roteiro multivozes', timeline_start: float = 0.0):
+        if self.engine.currentData() in (None, '', '__select_engine__'):
+            raise ValueError('Escolha manualmente o motor de narração antes de gerar o roteiro.')
         assignments = {}
         for voice_id, combo in self.assignments.items():
             profile_id = combo.currentData()
