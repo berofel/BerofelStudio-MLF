@@ -1,7 +1,8 @@
 # Clip Engine — eventos em lacunas da transcrição
 
-Data: 26/11/2026  
-Branch: `feat/berofel-clip-engine`  
+Data: 26/11/2026
+
+Branch: `feat/berofel-clip-engine`
 Versão do editor: `0.10.0-alpha.4`
 
 ## Causa encontrada
