@@ -6,10 +6,12 @@ from functools import lru_cache
 import json
 import math
 import os
+import queue
 import re
 import tempfile
 import subprocess
 import threading
+import time
 from bisect import bisect_right
 from .ai_cache import digest, file_sha256
 
@@ -24,6 +26,12 @@ _SILENCE_THRESHOLD_DB = -38
 _SILENCE_MIN_SECONDS = .35
 _REFERENCE_SCAN_LOCK=threading.RLock()
 _VOICE_REPORT_LOCK=threading.RLock()
+
+
+def _check_reference_cancel(cancel_event) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        from .process_control import ProcessCancelled
+        raise ProcessCancelled('Análise da referência cancelada.')
 
 
 def _voice_report_cache_root() -> Path:
@@ -154,16 +162,45 @@ def _write_reference_window_cache(path: Path, key: str,
 
 
 def _candidate_acoustic_metrics(source: Path, binary: str,
-                                start: float, duration: float) -> dict | None:
+                                start: float, duration: float,
+                                cancel_event=None) -> dict | None:
     """Measure a bounded candidate window without retaining the whole source."""
     command = [binary, '-hide_banner', '-loglevel', 'error', '-nostdin',
         '-ss', f'{start:.3f}', '-i', str(source), '-map', '0:a:0', '-vn',
         '-t', f'{duration:.3f}', '-ac', '1', '-ar', '16000', '-f', 'f32le',
         '-acodec', 'pcm_f32le', 'pipe:1']
+    process = None
     try:
-        result = subprocess.run(command, capture_output=True, timeout=max(30, int(duration * 3)),
-            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        if cancel_event is None:
+            result = subprocess.run(command, capture_output=True,
+                timeout=max(30, int(duration * 3)),
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        else:
+            process = subprocess.Popen(command, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            deadline = time.monotonic() + max(30, int(duration * 3))
+            while True:
+                _check_reference_cancel(cancel_event)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    process.kill()
+                    process.communicate()
+                    return None
+                try:
+                    stdout, stderr = process.communicate(timeout=min(.2, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            result = subprocess.CompletedProcess(command, process.returncode,
+                                                stdout=stdout, stderr=stderr)
     except (OSError, subprocess.TimeoutExpired):
+        return None
+    except Exception:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.communicate()
+        _check_reference_cancel(cancel_event)
         return None
     # A few test/platform runners may not expose captured stdout. Acoustic
     # ranking is an optional refinement, so missing PCM must fall back to the
@@ -274,14 +311,15 @@ def _distributed_reference_shortlist(ranked: list, duration: float,
     return selected
 
 
-@lru_cache(maxsize=32)
-def _best_reference_window(path: str, size: int, mtime_ns: int) -> tuple[float, float, float]:
+def _scan_reference_window(path: str, size: int, mtime_ns: int,
+                           cancel_event=None) -> tuple[float, float, float]:
     """Scan the full source for quiet gaps and choose its cleanest 30 s window.
 
     This is an acoustic activity scan, not voice recognition: background music
     may count as activity. It deliberately does not load the whole recording
     into RAM or pass a long recording to Qwen.
     """
+    _check_reference_cancel(cancel_event)
     source = Path(path)
     from .ffmpeg import ffmpeg_path, media_info
     binary = ffmpeg_path()
@@ -292,24 +330,42 @@ def _best_reference_window(path: str, size: int, mtime_ns: int) -> tuple[float, 
     lengths = sorted({min(duration, candidate) for candidate in
                       (_PROMPT_MAX_SECONDS, 20.0, 15.0, 10.0, 6.0, 3.0)
                       if min(duration, candidate) > 0}, reverse=True)
-    speech_regions=_silero_speech_regions(source,binary,duration)
+    speech_regions=_silero_speech_regions(source,binary,duration,cancel_event)
     if speech_regions:
         active_regions=speech_regions
     else:
         command = [binary, '-hide_banner', '-nostdin', '-i', str(source), '-vn',
             '-af', f'silencedetect=noise={_SILENCE_THRESHOLD_DB}dB:d={_SILENCE_MIN_SECONDS}',
             '-f', 'null', '-']
-        try:
-            result = subprocess.run(command, capture_output=True, text=True,
-                encoding='utf-8', errors='replace', timeout=max(120, int(duration * 2)),
-                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError('A análise acústica da referência excedeu o tempo limite.') from exc
-        if result.returncode and 'silence_' not in result.stderr:
-            raise RuntimeError('Não foi possível analisar o áudio da referência: ' + result.stderr[-500:])
+        deadline = time.monotonic() + max(120, int(duration * 2))
+        with tempfile.TemporaryFile() as stderr_file:
+            try:
+                process = subprocess.Popen(command, stdout=subprocess.DEVNULL,
+                    stderr=stderr_file,
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            except OSError as exc:
+                raise RuntimeError('Não foi possível iniciar a análise acústica da referência.') from exc
+            while process.poll() is None:
+                try:
+                    _check_reference_cancel(cancel_event)
+                except Exception:
+                    process.kill()
+                    process.wait()
+                    raise
+                if time.monotonic() >= deadline:
+                    process.kill()
+                    process.wait()
+                    raise RuntimeError('A análise acústica da referência excedeu o tempo limite.')
+                time.sleep(.1)
+            result_code = process.returncode
+            stderr_file.seek(0, os.SEEK_END)
+            stderr_file.seek(max(0, stderr_file.tell() - 2000))
+            stderr_text = stderr_file.read().decode('utf-8', 'replace')
+        if result_code and 'silence_' not in stderr_text:
+            raise RuntimeError('Não foi possível analisar o áudio da referência: ' + stderr_text[-500:])
         silences: list[tuple[float, float]] = []
         opened: float | None = None
-        for line in result.stderr.splitlines():
+        for line in stderr_text.splitlines():
             start_match = re.search(r'silence_start:\s*(-?[\d.]+)', line)
             end_match = re.search(r'silence_end:\s*(-?[\d.]+)', line)
             if start_match:opened = max(0.0, float(start_match.group(1)))
@@ -372,7 +428,9 @@ def _best_reference_window(path: str, size: int, mtime_ns: int) -> tuple[float, 
     shortlist = _distributed_reference_shortlist(preliminary, duration, limit=8)
     acoustics = {}
     for item in shortlist:
-        metrics = _candidate_acoustic_metrics(source, binary, item.start, item.duration)
+        _check_reference_cancel(cancel_event)
+        metrics = _candidate_acoustic_metrics(source, binary, item.start,
+                                              item.duration, cancel_event)
         if metrics is not None:
             acoustics[(item.start, item.duration)] = metrics
     # Only compare acoustic scores on candidates actually measured; otherwise
@@ -386,6 +444,13 @@ def _best_reference_window(path: str, size: int, mtime_ns: int) -> tuple[float, 
     ranked = _rank_reference_shortlist(shortlist_records, acoustics, preliminary)
     selected = ranked[0]
     return selected.start, selected.duration, selected.active_fraction
+
+
+@lru_cache(maxsize=32)
+def _best_reference_window(path: str, size: int,
+                           mtime_ns: int) -> tuple[float, float, float]:
+    """Memoize uncancelled source scans; cancellable work bypasses this cache."""
+    return _scan_reference_window(path, size, mtime_ns)
 
 
 @lru_cache(maxsize=32)
@@ -425,9 +490,12 @@ def _reference_window_for_identity(path: str, size: int,
         return selected
 
 
-def _reference_window(source: Path) -> tuple[float, float, float]:
+def _reference_window(source: Path, cancel_event=None) -> tuple[float, float, float]:
     resolved = source.expanduser().resolve()
     stat = resolved.stat()
+    if cancel_event is not None:
+        return _scan_reference_window(str(resolved), stat.st_size,
+                                      stat.st_mtime_ns, cancel_event)
     return _reference_window_for_identity(str(resolved), stat.st_size, stat.st_mtime_ns)
 
 
@@ -443,8 +511,10 @@ def validate_reference_transcript(text: str, duration_seconds: float) -> None:
             'de outro trecho, informe a transcrição exata dessa janela ou deixe o campo vazio para usar x-vector-only.')
 
 
-def _silero_speech_regions(source: Path, binary: str, duration: float):
+def _silero_speech_regions(source: Path, binary: str, duration: float,
+                           cancel_event=None):
     """Use the already-installed Silero VAD in bounded chunks when available."""
+    _check_reference_cancel(cancel_event)
     try:
         import numpy as np
         from .parakeet_asr import detect_speech, load_vad
@@ -454,11 +524,39 @@ def _silero_speech_regions(source: Path, binary: str, duration: float):
     rate=16000;chunk_samples=rate*30;regions=[];process=None;offset=0
     command=[binary,'-hide_banner','-loglevel','error','-nostdin','-i',str(source),
         '-map','0:a:0','-vn','-ac','1','-ar',str(rate),'-f','f32le','-acodec','pcm_f32le','-']
+    reader = None
     try:
         process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        chunks = None
+        if cancel_event is not None:
+            chunks = queue.Queue()
+
+            def read_chunks():
+                try:
+                    while True:
+                        chunk = process.stdout.read(chunk_samples * 4)
+                        chunks.put(chunk)
+                        if not chunk:
+                            return
+                except Exception as exc:
+                    chunks.put(exc)
+
+            reader = threading.Thread(target=read_chunks,
+                                      name='BerofelReferenceAudioReader',
+                                      daemon=True)
+            reader.start()
         while True:
-            raw=process.stdout.read(chunk_samples*4)
+            _check_reference_cancel(cancel_event)
+            if chunks is None:
+                raw=process.stdout.read(chunk_samples*4)
+            else:
+                try:
+                    raw = chunks.get(timeout=.1)
+                except queue.Empty:
+                    continue
+                if isinstance(raw, BaseException):
+                    raise raw
             if not raw:break
             audio=np.frombuffer(raw[:len(raw)//4*4],dtype='<f4').copy()
             if audio.size:
@@ -468,11 +566,23 @@ def _silero_speech_regions(source: Path, binary: str, duration: float):
                     start=offset+float(span['start']);end=offset+float(span['end'])
                     if end>start:regions.append((start,min(duration,end)))
             offset+=len(audio)
-        process.communicate(timeout=30)
+        if reader is not None:
+            reader.join(timeout=1)
+        process.wait(timeout=30)
+        if process.stdout:
+            process.stdout.close()
         if process.returncode:raise RuntimeError('Silero não conseguiu analisar a referência.')
-    except Exception:
+    except Exception as exc:
         if process is not None and process.poll() is None:
-            process.kill();process.communicate()
+            process.kill()
+            process.wait()
+        if process is not None and process.stdout:
+            process.stdout.close()
+        if reader is not None:
+            reader.join(timeout=1)
+        from .process_control import ProcessCancelled
+        if isinstance(exc, ProcessCancelled):
+            raise
         return None
     return regions
 
@@ -498,7 +608,8 @@ def voice_reference_warnings(report: dict) -> list[str]:
 def prepare_audio_prompt(voice: str,output_path: str | Path,
                         ffmpeg: str | None=None, *, start_seconds: float | None=None,
                         duration_seconds: float | None=None,
-                        trim_outer_silence: bool=False) -> tuple[str,Path | None]:
+                        trim_outer_silence: bool=False,
+                        cancel_event=None) -> tuple[str,Path | None]:
     """Convert an audio file to mono PCM16/24 kHz for local voice conditioning.
 
     ``trim_outer_silence`` is reserved for the Qwen prompt copy. It removes
@@ -515,8 +626,9 @@ def prepare_audio_prompt(voice: str,output_path: str | Path,
     if ffmpeg is None:
         from .ffmpeg import ffmpeg_path
         ffmpeg=ffmpeg_path()
+    _check_reference_cancel(cancel_event)
     if start_seconds is None:
-        start, length, _active_fraction = _reference_window(source)
+        start, length, _active_fraction = _reference_window(source, cancel_event)
     else:
         from .ffmpeg import media_info
         source_duration=float(media_info(str(source))[0])
@@ -539,9 +651,27 @@ def prepare_audio_prompt(voice: str,output_path: str | Path,
     command += ['-t',f'{length:.3f}','-ac','1','-ar','24000',
         '-c:a','pcm_s16le',str(target)]
     try:
-        result=subprocess.run(command,capture_output=True,text=True,
-            encoding='utf-8',errors='replace',
-            creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        if cancel_event is None:
+            result=subprocess.run(command,capture_output=True,text=True,
+                encoding='utf-8',errors='replace',
+                creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        else:
+            process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            try:
+                while True:
+                    _check_reference_cancel(cancel_event)
+                    try:
+                        stdout,stderr=process.communicate(timeout=.2)
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+            except Exception:
+                if process.poll() is None:
+                    process.kill();process.communicate()
+                raise
+            result=subprocess.CompletedProcess(command,process.returncode,
+                                               stdout=stdout,stderr=stderr)
         if result.returncode or not target.is_file() or target.stat().st_size<=44:
             target.unlink(missing_ok=True)
             raise RuntimeError('Não foi possível converter a referência de voz para WAV PCM.')
@@ -551,13 +681,20 @@ def prepare_audio_prompt(voice: str,output_path: str | Path,
         raise
 
 
-def _inspect_voice_reference_uncached(voice: str | Path) -> dict:
+def _inspect_voice_reference_uncached(voice: str | Path, cancel_event=None) -> dict:
     """Measure a local reference sample before cloning, without changing it."""
     source=Path(voice).expanduser()
     if not source.is_file():
         raise FileNotFoundError('A gravação de referência não foi encontrada.')
     with tempfile.TemporaryDirectory(prefix='bfs_voice_check_') as folder:
-        normalized,_=prepare_audio_prompt(source,Path(folder)/'reference.wav')
+        _check_reference_cancel(cancel_event)
+        selection = (_reference_window(source, cancel_event)
+                     if cancel_event is not None else None)
+        normalized,_=prepare_audio_prompt(source,Path(folder)/'reference.wav',
+            start_seconds=selection[0] if selection else None,
+            duration_seconds=selection[1] if selection else None,
+            cancel_event=cancel_event)
+        _check_reference_cancel(cancel_event)
         import numpy as np
         from scipy.io import wavfile
         rate,pcm=wavfile.read(normalized)
@@ -605,7 +742,8 @@ def _inspect_voice_reference_uncached(voice: str | Path) -> dict:
                 'hnr_note': 'Optional spectral analysis unavailable.'}
         warnings=[]
         if duration<3: warnings.append('Amostra curta; grave ao menos 3 segundos de fala contínua.')
-        selected_start, _window_length, active_fraction = _reference_window(source)
+        selected_start, _window_length, active_fraction = (
+            selection if selection is not None else _reference_window(source))
         from .ffmpeg import media_info
         source_duration = float(media_info(str(source))[0])
         if source_duration > _PROMPT_MAX_SECONDS:
@@ -628,6 +766,7 @@ def _inspect_voice_reference_uncached(voice: str | Path) -> dict:
             'start': float(selected_start), 'duration': duration,
             'active_fraction': float(active_fraction),
             'active_seconds': duration * float(active_fraction)}, quality_acoustics)
+        _check_reference_cancel(cancel_event)
         return {'duration':duration,'source_duration':source_duration,
                 'selected_start':float(selected_start),'active_fraction':float(active_fraction),
                 'sample_rate':int(rate),'rms_dbfs':float(rms_dbfs),
@@ -643,7 +782,7 @@ def _inspect_voice_reference_uncached(voice: str | Path) -> dict:
                 'warnings':warnings}
 
 
-def inspect_voice_reference(voice: str | Path) -> dict:
+def inspect_voice_reference(voice: str | Path, cancel_event=None) -> dict:
     """Return a cached private acoustic report for an unchanged voice sample.
 
     The cache stores measurements only (no waveform, transcript, embedding or
@@ -654,6 +793,7 @@ def inspect_voice_reference(voice: str | Path) -> dict:
     source=Path(voice).expanduser().resolve()
     if not source.is_file():
         raise FileNotFoundError('A gravação de referência não foi encontrada.')
+    _check_reference_cancel(cancel_event)
     try:
         source_hash=file_sha256(source)
         dependencies=_voice_report_dependencies()
@@ -661,14 +801,20 @@ def inspect_voice_reference(voice: str | Path) -> dict:
         cache_key=digest({'source_sha256':source_hash,'dependencies':dependencies})
         cache_path=_voice_report_cache_root()/source_key[:2]/f'{source_key}-{cache_key}.json'
     except (OSError,RuntimeError,ValueError):
-        report=_inspect_voice_reference_uncached(source)
+        report=_inspect_voice_reference_uncached(source,cancel_event)
         report['cache_hit']=False
         return report
-    with _VOICE_REPORT_LOCK:
+    if cancel_event is None:
+        _VOICE_REPORT_LOCK.acquire()
+    else:
+        while not _VOICE_REPORT_LOCK.acquire(timeout=.1):
+            _check_reference_cancel(cancel_event)
+    try:
+        _check_reference_cancel(cancel_event)
         cached=_read_voice_report_cache(cache_path,cache_key)
         if cached is not None:
             return dict(cached,source_sha256=source_hash)
-        report=_inspect_voice_reference_uncached(source)
+        report=_inspect_voice_reference_uncached(source,cancel_event)
         report['cache_hit']=False
         cache_report={key:value for key,value in report.items() if key!='cache_hit'}
         try:
@@ -677,3 +823,5 @@ def inspect_voice_reference(voice: str | Path) -> dict:
             # A read-only cache location must never block cloning preparation.
             pass
         return dict(report,source_sha256=source_hash)
+    finally:
+        _VOICE_REPORT_LOCK.release()

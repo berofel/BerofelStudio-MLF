@@ -44,6 +44,24 @@ class FastNarrationProfileUiTests(unittest.TestCase):
         self.assertTrue(Path(settings.fileName()).is_relative_to(
             Path(self.settings_dir.name)))
 
+    def test_stale_voice_scan_callbacks_do_not_remove_new_scan(self):
+        source = str(Path('voice-reference.wav').resolve())
+        newer_task = object()
+        with patch('berofel.services.qwen3_tts_local.is_ready',return_value=False), \
+             patch('berofel.services.qwen3_native_tts.is_ready',return_value=False), \
+             patch('berofel.services.qwen3_purec_tts.is_ready',return_value=False):
+            panel = NarrationPanel()
+            panel._voice_reference_inspections[source] = newer_task
+            panel._voice_reference_inspection_modes[source] = 'report'
+            try:
+                panel._voice_reference_inspection_cancelled(object(), source)
+                panel._voice_reference_inspection_finished(
+                    object(), source, {'duration': 1.0}, None)
+                self.assertIs(panel._voice_reference_inspections[source], newer_task)
+                self.assertEqual(panel._voice_reference_inspection_modes[source], 'report')
+            finally:
+                panel.close()
+
     def test_long_narration_segment_action_dispatches_one_selected_span(self):
         import json
         from unittest.mock import Mock

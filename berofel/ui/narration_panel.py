@@ -4,6 +4,7 @@ import os
 import hashlib
 import json
 import inspect
+import threading
 from pathlib import Path
 import subprocess
 
@@ -28,18 +29,29 @@ _VOICE_REFERENCE_THREADS=set()
 
 
 class _VoiceReferenceInspection(QThread):
-    completed = Signal(str, object, object)
+    completed = Signal(object, str, object, object)
+    cancelled = Signal(object, str)
 
     def __init__(self, source: str):
         super().__init__()
         self.source = source
+        self.cancel_event = threading.Event()
+
+    def cancel(self):
+        self.cancel_event.set()
 
     def run(self):
         try:
             from berofel.services.audio_reference import inspect_voice_reference
-            self.completed.emit(self.source, inspect_voice_reference(self.source), None)
+            report = inspect_voice_reference(self.source,
+                                             cancel_event=self.cancel_event)
+            self.completed.emit(self, self.source, report, None)
         except Exception as exc:
-            self.completed.emit(self.source, None, str(exc))
+            from berofel.services.process_control import ProcessCancelled
+            if isinstance(exc, ProcessCancelled):
+                self.cancelled.emit(self, self.source)
+                return
+            self.completed.emit(self, self.source, None, str(exc))
 
 
 class NarrationPanel(QScrollArea):
@@ -1065,8 +1077,14 @@ class NarrationPanel(QScrollArea):
 
     def _start_voice_reference_inspection(self,source,mode):
         resolved=str(Path(source).expanduser().resolve())
+        # A newly selected sample supersedes any still-running full-file scan.
+        for pending_source,pending in tuple(self._voice_reference_inspections.items()):
+            if pending_source!=resolved and pending.isRunning():
+                pending.cancel()
+                self._voice_reference_inspection_modes.pop(pending_source,None)
         existing=self._voice_reference_inspections.get(resolved)
-        if existing and existing.isRunning():
+        if (existing and existing.isRunning() and
+                not existing.cancel_event.is_set()):
             if mode=='report':self._voice_reference_inspection_modes[resolved]=mode
             return
         self._voice_reference_inspection_modes[resolved]=mode
@@ -1075,10 +1093,19 @@ class NarrationPanel(QScrollArea):
         _VOICE_REFERENCE_THREADS.add(thread)
         thread.finished.connect(lambda task=thread:_VOICE_REFERENCE_THREADS.discard(task))
         thread.completed.connect(self._voice_reference_inspection_finished)
+        thread.cancelled.connect(self._voice_reference_inspection_cancelled)
         thread.start()
 
-    def _voice_reference_inspection_finished(self,source,report,error):
+    def _voice_reference_inspection_cancelled(self,task,source):
         resolved=str(Path(source).expanduser().resolve())
+        if self._voice_reference_inspections.get(resolved) is task:
+            self._voice_reference_inspections.pop(resolved,None)
+            self._voice_reference_inspection_modes.pop(resolved,None)
+
+    def _voice_reference_inspection_finished(self,task,source,report,error):
+        resolved=str(Path(source).expanduser().resolve())
+        if self._voice_reference_inspections.get(resolved) is not task:
+            return
         self._voice_reference_inspections.pop(resolved,None)
         mode=self._voice_reference_inspection_modes.pop(resolved,'')
         if error:

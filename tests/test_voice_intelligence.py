@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import math
+import threading
 import struct
 import subprocess
 import tempfile
@@ -453,6 +454,70 @@ class ReferenceWindowRankingTests(TestCase):
 
 
 class VoiceReferenceReportCacheTests(TestCase):
+    def test_cancel_interrupts_blocked_vad_pipe_reader_and_kills_child(self):
+        from types import ModuleType
+        from berofel.services import audio_reference
+        from berofel.services.process_control import ProcessCancelled
+
+        started = threading.Event()
+        released = threading.Event()
+
+        class BlockingPipe:
+            def read(self, _size):
+                started.set()
+                released.wait(2)
+                return b''
+
+            def close(self):
+                released.set()
+
+        class Process:
+            def __init__(self):
+                self.stdout = BlockingPipe()
+                self.returncode = None
+                self.killed = False
+
+            def poll(self):
+                return self.returncode
+
+            def kill(self):
+                self.killed = True
+                self.returncode = -9
+                released.set()
+
+            def wait(self, timeout=None):
+                return self.returncode
+
+        process = Process()
+        parakeet = ModuleType('berofel.services.parakeet_asr')
+        numpy = ModuleType('numpy')
+        parakeet.load_vad = lambda **_kwargs: object()
+        parakeet.detect_speech = lambda *_args, **_kwargs: []
+        cancel = threading.Event()
+        failure = []
+
+        def analyze():
+            try:
+                audio_reference._silero_speech_regions(
+                    Path('reference.wav'), 'ffmpeg', 60.0, cancel)
+            except Exception as exc:
+                failure.append(exc)
+
+        with patch.dict('sys.modules', {
+                'berofel.services.parakeet_asr': parakeet,
+                'numpy': numpy}), \
+             patch.object(audio_reference.subprocess, 'Popen', return_value=process):
+            worker = threading.Thread(target=analyze)
+            worker.start()
+            self.assertTrue(started.wait(1))
+            cancel.set()
+            worker.join(2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(process.killed)
+        self.assertEqual(len(failure), 1)
+        self.assertIsInstance(failure[0], ProcessCancelled)
+
     def test_persists_numeric_report_and_reuses_it_for_unchanged_sample(self):
         from berofel.services import audio_reference
         with tempfile.TemporaryDirectory() as folder:
