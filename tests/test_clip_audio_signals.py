@@ -197,6 +197,26 @@ class ClipAudioTests(unittest.TestCase):
         out = select_diverse_clips(ranked, max_clips=2, diversity_lambda=.75)
         self.assertEqual([item['score'] for item in out], [92, 78])
 
+    def test_mmr_does_not_treat_equal_times_in_different_sources_as_overlap(self):
+        candidates=[
+            {'id':'source-a','source':'a.mp4','start_ms':0,'end_ms':10000,
+             'score':90,'text':'motor elétrico aquece durante teste longo'},
+            {'id':'source-b','source':'b.mp4','start_ms':0,'end_ms':10000,
+             'score':80,'text':'receita brasileira leva farinha queijo tomate'},
+        ]
+        selected=select_diverse_clips(candidates,max_clips=2)
+        self.assertEqual({item['id'] for item in selected},{'source-a','source-b'})
+
+    def test_mmr_still_suppresses_overlapping_ranges_from_same_source(self):
+        candidates=[
+            {'id':'wide','source':'same.mp4','start_ms':0,'end_ms':10000,
+             'score':90,'text':'um assunto com várias palavras importantes'},
+            {'id':'nested','source':'same.mp4','start_ms':1000,'end_ms':9000,
+             'score':85,'text':'outro texto que não é igual ao primeiro'},
+        ]
+        selected=select_diverse_clips(candidates,max_clips=2)
+        self.assertEqual([item['id'] for item in selected],['wide'])
+
     def test_mmr_rejects_invalid_tradeoff_and_ignores_bad_intervals(self):
         with self.assertRaises(ValueError):
             select_diverse_clips([], diversity_lambda=1.1)

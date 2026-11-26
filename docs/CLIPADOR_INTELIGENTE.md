@@ -47,6 +47,8 @@ O grupo recolhido **Ajuste avançado de pesos · experimental** permite alterar 
 
 O campo **Pontuação mínima** filtra os candidatos classificados, entre 0 e 100. Ele não participa da identidade da análise persistida: aumentar ou reduzir o limite relê o ranking em cache, sem nova chamada ao Parakeet, reextração acústica, leitura de vídeo ou renderização. O painel informa quando todos os resultados ficaram abaixo do limite. Nota zero mantém a lista sem esse filtro.
 
+Depois de consultar os resultados em cache de cada bloco, o Clipador aplica o limite escolhido e faz uma seleção MMR final sobre todo o alcance. Assim, vários blocos da mesma origem não consomem posições com versões sobrepostas do mesmo acontecimento. A sobreposição temporal só é comparada quando a origem coincide; timestamps iguais em mídias diferentes não significam que sejam o mesmo evento. A comparação lexical continua sendo uma heurística de redundância, não uma prova de equivalência. As listas individuais em cache permanecem separadas e reutilizáveis; essa seleção global não altera transcrições, áudio nem timeline.
+
 ## Pontuação
 
 Os pesos iniciais estão em `clip_audio_signals.CLIP_SCORE_PROFILES`. Para cada candidato, usa-se a média ponderada dos componentes disponíveis:
@@ -63,7 +65,7 @@ Quando há PCM medido, mas nenhum pico relativo à fala é encontrado, a dimens�
 
 ## Cache e desempenho
 
-- Os arrays RMS/pico/clipping/fluxo espectral/ZCR de PCM e waveform proxy são caches separados, indexados por identidade da fonte, intervalo, taxa, tamanho de quadro e versão própria do extrator acústico. A versão do extrator é 6 e a do ranking é 9. O ranking antigo é invalidado para expor a nova dimensão; features PCM antigas são recalculadas uma vez porque não continham fluxo espectral. Nenhum Parakeet é executado por essas invalidações. Alterar ranking, perfil ou regras textuais depois disso mantém as features PCM compatíveis.
+- Os arrays RMS/pico/clipping/fluxo espectral/ZCR de PCM e waveform proxy são caches separados, indexados por identidade da fonte, intervalo, taxa, tamanho de quadro e versão própria do extrator acústico. A versão do extrator é 6 e a do ranking é 10. O ranking antigo é invalidado para incluir a seleção MMR global; features acústicas permanecem compatíveis e não são recalculadas. Nenhum Parakeet é executado por essa invalidação.
 - O proxy visual usa cache `.npz` separado, indexado pela mídia/intervalo e pelo caminho, tamanho e `mtime_ns` de cada thumbnail existente. Alterar o perfil reutiliza as diferenças de quadro/histogramas; criar ou alterar miniaturas invalida somente essa extração. A coleta de caminhos chama `get_thumb(..., request=False)`, e a escrita é atômica e entra no limite geral do cache do Clipador.
 - Quando a análise visual está ligada, a classificação final relê o manifesto das miniaturas antes de consultar resultado persistido, para que uma miniatura nova/substituída não deixe o ranking antigo visível. O cálculo das diferenças continua vindo do cache visual se a identidade das miniaturas não mudou.
 - Resultados incluem texto/timestamps, opções, perfil, modo e versão da regra. Alterar duração/perfil pode recalcular candidatos e ranking, mas nunca solicita uma nova transcrição. As características de áudio continuam reutilizáveis.

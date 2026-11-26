@@ -28,7 +28,7 @@ from .clip_visual_signals import (read_cached_visual_signals,
     score_cached_visual_interval, detect_cached_visual_events)
 from .ffmpeg import ffmpeg_path, media_info
 
-CLIPPER_VERSION = 9
+CLIPPER_VERSION = 10
 # Keep the persisted v5 feature keys compatible: the PCM/waveform extraction
 # format and algorithm did not change. Bump this independently only when they do.
 FEATURE_EXTRACTOR_VERSION = 6
@@ -1360,7 +1360,10 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                 'max_duration_ms':int(opts.max_seconds*1000),
                 'audio_score':ranked['audio_score'],'audio_available':ranked['audio_available'],
                 'checked':False})
-        selected=select_diverse_clips(candidates,opts.max_candidates)
+        # Keep a cache-local shortlist large enough for the final global pass.
+        # The UI cap belongs to the whole selected scope, not to every source
+        # block independently. The control itself is capped at 50 candidates.
+        selected=select_diverse_clips(candidates,50)
         result={'clip_id':clip.id,'title':clip.title,'source':source,
             'status':'ready' if selected else 'no_candidates','candidates':selected,
             'events':events+gap_audio_events+visual_events,'audio_available':frames is not None,
@@ -1389,8 +1392,14 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
             visible['warnings']=list(item.get('warnings',[])) + [
                 f"Nenhum candidato atingiu a pontuação mínima de {min_score:.0f}/100."]
         visible_results.append(visible)
-    visible_candidates=[candidate for item in visible_results
-                        for candidate in item['candidates']]
+    # Each timeline block has its own result cache, but the user asked for a
+    # single shortlist over the selected scope. Run diversity once more across
+    # that shortlist so split/overlapping blocks from the same source do not
+    # consume multiple slots with the same moment. The selector is source-aware
+    # and never treats equal timestamps in unrelated files as temporal overlap.
+    visible_candidates=select_diverse_clips(
+        [candidate for item in visible_results for candidate in item['candidates']],
+        opts.max_candidates)
     try:
         import psutil
         rss_mb=psutil.Process(os.getpid()).memory_info().rss/(1024*1024)

@@ -600,6 +600,7 @@ def select_diverse_clips(ranked: Sequence[Mapping], max_clips: int = 5,
             continue
         prepared.append({'index': index, 'candidate': dict(candidate),
                          'start': start, 'end': end,
+                         'source': str(candidate.get('source') or ''),
                          'relevance': float(np.clip(relevance / 100.0, 0.0, 1.0)),
                          'terms': _diversity_terms(candidate.get('text', ''))})
     remaining = sorted(prepared, key=lambda item: (-item['relevance'], item['index']))
@@ -611,19 +612,22 @@ def select_diverse_clips(ranked: Sequence[Mapping], max_clips: int = 5,
             similarities = []
             duplicate = False
             for previous in chosen:
-                intersection = max(0.0, min(item['end'], previous['end']) -
-                                   max(item['start'], previous['start']))
+                same_source = (not item['source'] or not previous['source'] or
+                               item['source'] == previous['source'])
+                intersection = (max(0.0, min(item['end'], previous['end']) -
+                                    max(item['start'], previous['start']))
+                                if same_source else 0.0)
                 shorter = min(item['end'] - item['start'],
                               previous['end'] - previous['start'])
                 containment = intersection / max(shorter, EPS)
-                if containment > max_overlap_ratio or _same_topic_duplicate(
+                if (same_source and containment > max_overlap_ratio) or _same_topic_duplicate(
                         item['candidate'], previous['candidate'],
                         item['terms'], previous['terms']):
                     duplicate = True
                     break
                 union = ((item['end'] - item['start']) +
                          (previous['end'] - previous['start']) - intersection)
-                temporal_iou = intersection / max(union, EPS)
+                temporal_iou = intersection / max(union, EPS) if same_source else 0.0
                 lexical = _sparse_term_cosine(item['terms'], previous['terms'])
                 similarities.append(.65 * temporal_iou + .35 * lexical)
             if duplicate:

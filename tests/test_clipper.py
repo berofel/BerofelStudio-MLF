@@ -363,6 +363,21 @@ class ClipperTests(unittest.TestCase):
         self.assertGreaterEqual(filtered['stats']['cache_hits'],1)
         audio.assert_called_once()
 
+    def test_result_limit_and_deduplication_apply_to_entire_selected_scope(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_global_rank_') as folder:
+            source=Path(folder)/'source.wav';source.write_bytes(b'fixture')
+            first=Clip(str(source),0.,36.,kind='audio',title='Primeiro recorte')
+            second=Clip(str(source),0.,36.,kind='audio',title='Recorte duplicado')
+            words=transcript(source,count=180,step=.2)
+            with patch('berofel.services.clipper.audio_features',return_value=(None,False)):
+                result=analyze_clips([first,second],words,
+                    ClipperOptions(8.,16.,1,6.,mode='Rápido'),
+                    cache_dir=Path(folder)/'cache')
+        self.assertEqual(len(result['clips']),2)
+        self.assertTrue(all(item['candidates'] for item in result['clips']))
+        self.assertEqual(len(result['candidates']),1)
+        self.assertEqual(result['stats']['candidate_count'],1)
+
     def test_minimum_score_rejects_nonfinite_and_out_of_range_values(self):
         for value in (-.1,100.1,float('nan'),float('inf')):
             with self.subTest(value=value), self.assertRaises(ValueError):
