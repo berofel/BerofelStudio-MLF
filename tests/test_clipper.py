@@ -7,7 +7,7 @@ from unittest.mock import patch
 import numpy as np
 
 from berofel.core.project import Clip
-from berofel.services.clip_audio_signals import extract_frames_from_chunks
+from berofel.services.clip_audio_signals import FrameFeatures, extract_frames_from_chunks
 from berofel.services.clipper import (ClipperOptions, _candidate_spans,
     _dialogue_context_bounds, _local_textrank_salience, _normalise_words,
     _utterances,
@@ -285,11 +285,43 @@ class ClipperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='bfs_clipper_no_words_') as folder:
             source=Path(folder)/'source.wav';source.write_bytes(b'placeholder')
             clip=Clip(str(source),0.,20.,kind='audio')
-            with patch('berofel.services.clipper.audio_features') as audio:
-                result=analyze_clips([clip],[],cache_dir=Path(folder)/'cache')
-        audio.assert_not_called()
-        self.assertEqual(result['clips'][0]['status'],'missing_transcript')
-        self.assertIn('Transcreva',result['clips'][0]['warnings'][0])
+            with patch('berofel.services.clipper.audio_features',
+                       return_value=(None,False)) as audio:
+                result=analyze_clips([clip],[],ClipperOptions(8.,16.,5,6.,
+                    mode='Rápido'),cache_dir=Path(folder)/'cache')
+        audio.assert_called_once()
+        self.assertTrue(audio.call_args.kwargs['waveform_only'])
+        self.assertEqual(result['clips'][0]['status'],'no_candidates')
+        self.assertTrue(any('Sem transcrição' in warning
+                            for warning in result['clips'][0]['warnings']))
+
+    def test_audio_event_can_propose_review_clip_without_transcript_or_asr(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_event_only_') as folder:
+            source=Path(folder)/'source.wav';source.write_bytes(b'placeholder')
+            clip=Clip(str(source),0.,30.,kind='audio')
+            times=np.arange(1500,dtype=np.float64)*20.
+            rms=np.full(1500,-35.,dtype=np.float32)
+            peak=rms.copy()
+            # A sustained relative burst is an observable cue, not a semantic
+            # claim about what happened in the recording.
+            rms[500:750]=-15.;peak[500:750]=-12.
+            frames=FrameFeatures(times,rms,peak,
+                np.zeros(1500,dtype=np.float32),20.,16000)
+            options=ClipperOptions(8.,18.,5,6.,mode='Equilibrado')
+            with patch('berofel.services.clipper.audio_features',
+                       return_value=(frames,False)), \
+                 patch('berofel.services.parakeet_asr.transcribe_file') as parakeet:
+                result=analyze_clips([clip],[],options,cache_dir=Path(folder)/'cache')
+        parakeet.assert_not_called()
+        self.assertTrue(result['candidates'])
+        candidate=result['candidates'][0]
+        self.assertFalse(candidate['transcript_available'])
+        self.assertEqual(candidate['text'],'')
+        self.assertEqual(candidate['audio_level_source'],'pcm_rms')
+        self.assertTrue(any('Sem transcrição' in warning
+                            for warning in candidate['warnings']))
+        self.assertTrue(any('não identificam ação' in reason
+                            for reason in candidate['reasons']))
 
     def test_saved_parakeet_transcript_is_ranked_without_invoking_any_asr(self):
         with tempfile.TemporaryDirectory(prefix='bfs_clipper_no_asr_') as folder:

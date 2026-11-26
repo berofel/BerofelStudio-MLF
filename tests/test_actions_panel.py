@@ -380,6 +380,34 @@ class ActionsUITests(unittest.TestCase):
             self.assertEqual(analyze.call_args.args[1],words)
             dialog.close();win.close()
 
+    def test_clipador_ui_labels_event_only_candidates_and_keeps_time_trims(self):
+        dialog=ClipperDialog()
+        candidate={'id':'event-1','clip_id':'clip-1','title':'Gameplay',
+            'source_start':4.,'source_end':16.,'duration':12.,'score':60.,
+            'text':'','transcript_available':False,
+            'suggested_title':'Mudança visual detectada',
+            'reasons':['Sem transcrição persistida; candidato baseado somente em sinais observados'],
+            'warnings':['Sem transcrição salva: revisar o acontecimento e os limites manualmente.'],
+            'events':[{'kind':'cached_thumbnail_change'}],
+            'audio_available':False,'checked':False,'start_ms':4000,'end_ms':16000,
+            'min_duration_ms':8000,'max_duration_ms':16000,
+            'score_components':{'audio':None,'visual':1.},'evidence_coverage':.2,
+            'start_choices':[{'ms':3000,'word':'evento ± tempo'},
+                             {'ms':4000,'word':'evento ± tempo'}],
+            'end_choices':[{'ms':16000,'word':'evento ± tempo'},
+                           {'ms':17000,'word':'evento ± tempo'}],
+            'word_spans':[]}
+        dialog.set_results({'candidates':[candidate],'events':[],'stats':{}})
+        self.assertEqual(dialog.table.item(0,3).text(),'Mudança visual detectada')
+        self.assertIn('Sem transcrição',dialog.table.item(0,4).text())
+        self.assertTrue(dialog.start_boundary.isEnabled())
+        dialog.start_boundary.setCurrentIndex(dialog.start_boundary.findData(3000))
+        adjusted=dialog.table.item(0,0).data(Qt.ItemDataRole.UserRole)
+        self.assertEqual(adjusted['source_start'],3.)
+        self.assertEqual(adjusted['suggested_title'],'Mudança visual detectada')
+        self.assertTrue(any('por tempo' in warning for warning in adjusted['warnings']))
+        dialog.close()
+
     def test_custom_voice_panel_defaults_to_full_clone_backend_and_keeps_other_profiles(self):
         with patch('berofel.services.qwen3_native_tts.is_ready',return_value=True):
             panel=NarrationPanel()

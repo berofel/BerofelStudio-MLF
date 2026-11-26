@@ -34,6 +34,8 @@ class ClipperDialog(QDialog):
             'O Clipador reutiliza a transcrição existente do Parakeet. Equilibrado mede RMS/picos em PCM por '
             'streaming; Rápido lê apenas waveforms já armazenadas na timeline (aproximação de pico em 100 ms); '
             'Avançado também aplica TextRank local às falas do candidato. '
+            'Sem transcrição salva, pode sugerir trechos para revisão por picos relativos de áudio ou mudanças '
+            'em miniaturas já armazenadas; isso não reconhece ações nem conteúdo. '
             'A análise não corta nem renderiza a mídia. Cada candidato precisa de confirmação.')
         explanation.setWordWrap(True)
         explanation.setStyleSheet('color:#bac2cc;')
@@ -224,7 +226,10 @@ class ClipperDialog(QDialog):
             title=str(candidate.get('suggested_title') or suggest_title(candidate.get('text','')))
             candidate['suggested_title']=title
             self.table.setItem(row,3,QTableWidgetItem(title))
-            self.table.setItem(row,4,QTableWidgetItem(candidate.get('text','')))
+            transcript_text=candidate.get('text','')
+            if not candidate.get('transcript_available',True):
+                transcript_text='Sem transcrição · candidato baseado apenas em sinais observados'
+            self.table.setItem(row,4,QTableWidgetItem(transcript_text))
             evidence='; '.join(candidate.get('reasons',[])) or 'Sem evidência textual forte.'
             components=candidate.get('score_components',{})
             labels={'hook':'gancho','context':'contexto','audio':'áudio',
@@ -237,7 +242,7 @@ class ClipperDialog(QDialog):
             warnings=candidate.get('warnings',[])
             if warnings:evidence+='  ⚠ '+'; '.join(warnings)
             if candidate.get('events'):
-                evidence+=f"  ·  {len(candidate['events'])} evento(s) de energia"
+                evidence+=f"  ·  {len(candidate['events'])} evento(s) observável(is)"
             self.table.setItem(row,5,QTableWidgetItem(evidence))
             self.table.item(row,3).setToolTip('Título extraído da transcrição; sem geração por IA.')
             self.table.item(row,4).setToolTip(candidate.get('text',''))
@@ -250,10 +255,15 @@ class ClipperDialog(QDialog):
         rss_label=f" · RSS {rss:.1f} MiB" if rss is not None else ''
         profile=stats.get('profile','Geral')
         mode=stats.get('mode','Equilibrado')
-        self.status.setText(f"{len(self._candidates)} candidato(s) · {len(self._events)} evento(s) acústico(s) · "
+        status_text=(f"{len(self._candidates)} candidato(s) · {len(self._events)} evento(s) acústico(s) · "
             f"{stats.get('elapsed_seconds',0):.2f}s · cache {stats.get('cache_hits',0)} hit(s)/"
             f"{stats.get('cache_misses',0)} novo(s) · decodificados {stats.get('decoded_seconds',0):.1f}s"
             +rss_label+f" · {mode} · perfil {profile}. A nota usa somente evidências disponíveis.")
+        if not self._candidates:
+            warnings=[str(warning) for clip in result.get('clips',[])
+                      for warning in clip.get('warnings',[]) if warning]
+            if warnings:status_text+=' '+warnings[0]
+        self.status.setText(status_text)
 
     def _selected_candidate(self):
         row=self.table.currentRow()
@@ -327,15 +337,20 @@ class ClipperDialog(QDialog):
         spans=[word for word in candidate.get('word_spans',[])
                if int(word['start_ms'])>=start and int(word['end_ms'])<=end]
         candidate['text']=' '.join(str(word['text']) for word in spans).strip()
-        candidate['suggested_title']=suggest_title(candidate['text'])
-        warning='Bordas ajustadas por palavra; a nota original não foi recalculada.'
+        if candidate.get('transcript_available',True):
+            candidate['suggested_title']=suggest_title(candidate['text'])
+        warning=('Bordas ajustadas por tempo; confirme o acontecimento no preview.'
+                 if not candidate.get('transcript_available',True) else
+                 'Bordas ajustadas por palavra; a nota original não foi recalculada.')
         if warning not in candidate['warnings']:candidate['warnings'].append(warning)
         row=self.table.currentRow()
         self.table.item(row,0).setData(Qt.ItemDataRole.UserRole,candidate)
         self.table.item(row,2).setText(
             f"{candidate['source_start']:.2f}–{candidate['source_end']:.2f}s  ·  {candidate['duration']:.1f}s")
         self.table.item(row,3).setText(candidate['suggested_title'])
-        self.table.item(row,4).setText(candidate['text'])
+        self.table.item(row,4).setText(candidate['text'] or
+            ('Sem transcrição · candidato baseado apenas em sinais observados'
+             if not candidate.get('transcript_available',True) else ''))
         self.table.item(row,5).setText('; '.join(candidate['reasons'])+'  ⚠ '+
                                       '; '.join(candidate['warnings']))
 

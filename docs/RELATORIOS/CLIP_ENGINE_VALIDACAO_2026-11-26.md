@@ -1,6 +1,6 @@
 # Berofel Clip Engine — validação desta execução
 
-Data: 25/11/2026  
+Data: 26/11/2026
 Branch: `feat/berofel-clip-engine`  
 Base auditada: `3398391` (`feat: add specialized clip editorial profiles`)
 
@@ -10,13 +10,14 @@ Base auditada: `3398391` (`feat: add specialized clip editorial profiles`)
 - A transcrição usada é `project.transcripts`, com timestamps absolutos produzidos pelo fluxo Parakeet TDT v3 ONNX INT8/CPU. O serviço de clipagem não importa nem chama o Parakeet; sem palavras persistidas, não cria candidatos por ASR.
 - No modo rápido, só lê waveforms visuais completos já armazenados e não decodifica PCM se a waveform faltar. O modo equilibrado faz extração PCM em streaming e cacheia RMS/pico/clipping; o avançado acrescenta TextRank local. A análise visual opcional só acessa miniaturas já em cache.
 - O ranking é determinístico e heurístico. A branch identifica perguntas, possíveis respostas, ganchos, mudanças lexicais de tópico, densidade/novidade, desfecho e ritmo; a interface mostra evidências, cobertura, avisos e controles de revisão.
+- Sem palavras Parakeet persistidas, a análise pode produzir candidatos de revisão a partir de picos relativos de áudio nos modos Equilibrado/Avançado ou de mudanças isoladas em miniaturas pré-existentes com Análise visual. Esses candidatos permanecem sem transcrição e sem rótulo de ação; recebem nota parcial ajustada pela cobertura e aviso de revisão.
 - Não há chamada de Whisper/Faster-Whisper, LLM, embeddings neurais ou serviço remoto no fluxo do Clip Engine.
 
 ## Testes
 
-Antes da regressão adicional, a suíte completa executou **627 testes: 621 aprovados e 6 ignorados**, em 67,382 s. Os skips permanecem condicionados a dependências/modelos locais conforme os próprios testes.
+Depois da alteração, `python -m unittest discover -s tests -q` executou **633 testes: 627 aprovados e 6 ignorados**, em 67,969 s. Os skips permanecem condicionados a dependências/modelos locais conforme os próprios testes.
 
-Foi acrescentado `test_saved_parakeet_transcript_is_ranked_without_invoking_any_asr`, que passa transcrição persistida, muda o perfil, exige candidatos e verifica que o serviço `parakeet_asr.transcribe_file` não é chamado nem áudio é decodificado. O conjunto focado `test_clipper.py` passou em **24 testes**, em 1,373 s. A suíte completa será repetida após esta alteração.
+Foi acrescentada cobertura para ausência de transcrição: sugestão por burst sintético medido, proxy visual esparso em miniaturas locais, NMS, invalidação do ranking após alteração de thumbnail, ausência de chamada ao Parakeet e apresentação/ajuste temporal no diálogo Qt. `test_clipper.py` passou em **25 testes**, `test_clip_visual_signals.py` em **8 testes** e `test_actions_panel.py` em **89 testes**. `test_saved_parakeet_transcript_is_ranked_without_invoking_any_asr` confirma também que perfil diferente não chama `parakeet_asr.transcribe_file` nem decodifica PCM no modo Rápido.
 
 ## Benchmark sintético repetido
 
@@ -44,5 +45,7 @@ O relatório real anterior nesta branch documenta um arquivo de 80,63 min: extra
 
 - Não há conjunto de clipes anotado por pessoas nesta execução; Precision@K, Recall, erro de bordas, completude, duplicidade editorial e preferência humana permanecem sem validação.
 - Mudanças de RMS ou miniaturas não provam emoção, ação, humor, relevância ou viralidade. A análise visual é mudança de imagem, não reconhecimento semântico.
+- A busca sem transcrição não consegue distinguir ação relevante de corte de cena, efeito, explosão ou movimento. Resultados desse caminho são apenas pistas para revisão, com cobertura de evidência menor; não são um modo de clipagem sem supervisão.
 - O usuário ainda precisa revisar a seleção antes de inserir ou exportar. A validação desta rodada foi automatizada/offscreen; não foi uma sessão gráfica manual.
 - As medidas de tempo e memória sintéticas não substituem benchmark end-to-end no Ryzen 7 5700G com os arquivos de mídia reais.
+- A pasta mencionada anteriormente em `D:\Edição CapCut\vídeos` não está disponível neste ambiente; nenhum arquivo real adicional foi analisado em 26/11.

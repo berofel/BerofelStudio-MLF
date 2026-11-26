@@ -25,10 +25,10 @@ from .clip_audio_signals import (FrameFeatures, align_events_to_conversation,
 from .discourse_features import (analyze_discourse, content_terms, discourse_role,
     text_tiling_boundaries)
 from .clip_visual_signals import (read_cached_visual_signals,
-    score_cached_visual_interval)
+    score_cached_visual_interval, detect_cached_visual_events)
 from .ffmpeg import ffmpeg_path, media_info
 
-CLIPPER_VERSION = 6
+CLIPPER_VERSION = 7
 # Keep the persisted v5 feature keys compatible: the PCM/waveform extraction
 # format and algorithm did not change. Bump this independently only when they do.
 FEATURE_EXTRACTOR_VERSION = 5
@@ -807,6 +807,141 @@ def _boundary_choices(all_words: Sequence[Mapping], candidate: Mapping,
     return start_choices,end_choices
 
 
+def _event_only_spans(clip, audio_events: Sequence[Mapping],
+                      visual_events: Sequence[Mapping],
+                      options: ClipperOptions) -> list[dict]:
+    """Build cautious candidates around measured events when no transcript exists.
+
+    The result is explicitly non-semantic: an energy burst or a cached-frame
+    change is only a review cue, never a claim that an action/reaction occurred.
+    """
+    minimum = options.min_seconds * 1000.
+    maximum = options.max_seconds * 1000.
+    available = max(0., (float(clip.end) - float(clip.start)) * 1000.)
+    if available < minimum:
+        return []
+    duration = min(maximum, available, max(minimum, (minimum + maximum) / 2.))
+    left_limit, right_limit = float(clip.start) * 1000., float(clip.end) * 1000.
+    anchors=[]
+    for event in audio_events:
+        strength=float(event.get('strength',0.))
+        if strength >= .05:
+            anchors.append((float(event['start_ms']),dict(event)))
+    for event in visual_events:
+        strength=float(event.get('strength',0.))
+        if strength >= .05:
+            anchors.append((float(event['start_ms']),dict(event)))
+    if not anchors:
+        return []
+
+    anchors.sort(key=lambda item:item[0])
+    groups=[]
+    for at,event in anchors:
+        if groups and at-groups[-1][-1][0] <= min(duration*.45,12000.):
+            groups[-1].append((at,event))
+        else:
+            groups.append([(at,event)])
+    candidates=[]
+    for group in groups:
+        strength_sum=sum(max(.01,float(event.get('strength',0.)))
+                         for _at,event in group)
+        center=sum(at*max(.01,float(event.get('strength',0.)))
+                   for at,event in group)/strength_sum
+        start=max(left_limit,min(center-duration/2.,right_limit-duration))
+        end=start+duration
+        if not left_limit <= start < end <= right_limit:
+            continue
+        group_events=[event for _at,event in group]
+        kinds={event.get('kind') for event in group_events}
+        cues=[]
+        if any('energy' in str(kind) or 'waveform' in str(kind) for kind in kinds):
+            cues.append('mudança de energia relativa')
+        if 'cached_thumbnail_change' in kinds:
+            cues.append('mudança visual em miniatura já armazenada')
+        if not cues:
+            continue
+        reasons=['Sem transcrição persistida; candidato baseado somente em sinais observados: '
+                 + ', '.join(cues),
+                 'Mudanças acústicas/visuais não identificam ação nem relevância semântica']
+        candidates.append({'start_ms':int(round(start)),'end_ms':int(round(end)),
+            'duration_ms':int(round(duration)),'text':'','words':[],
+            'event_only':True,'event_cues':cues,'events':group_events,
+            'text_reasons':reasons,'visual_score':None})
+    return candidates
+
+
+def _score_event_only(candidate: Mapping, profile: str,
+                      weights_override: Mapping[str,float] | None = None) -> dict:
+    """Rank only measured event dimensions; semantic dimensions stay absent."""
+    from .clip_audio_signals import CLIP_SCORE_PROFILES
+    weights=dict(CLIP_SCORE_PROFILES.get(profile,CLIP_SCORE_PROFILES['Geral']))
+    if weights_override is not None:
+        weights.update({str(key):float(value) for key,value in weights_override.items()})
+        total=sum(weights.values())
+        if total>0:weights={key:value/total for key,value in weights.items()}
+    audio_events=[event for event in candidate.get('events',[])
+                  if 'energy' in str(event.get('kind','')) or
+                     'waveform' in str(event.get('kind',''))]
+    visual_events=[event for event in candidate.get('events',[])
+                   if event.get('kind')=='cached_thumbnail_change']
+    dimensions={
+        'audio':max((float(event.get('strength',0.)) for event in audio_events),default=None),
+        'visual':max((float(event.get('strength',0.)) for event in visual_events),default=None),
+    }
+    total_weight=sum(weights.get(key,0.) for key,value in dimensions.items()
+                     if value is not None and weights.get(key,0.)>0.)
+    if (total_weight<=0 and weights_override is None and
+            any(value is not None for value in dimensions.values())):
+        # Event-only review is an explicitly opt-in fallback path. If the
+        # selected editorial profile excludes the only observed dimension,
+        # retain a low-coverage cue rather than silently hiding it.
+        weights.update({'audio':.65,'visual':.35})
+        total_weight=sum(weights[key] for key,value in dimensions.items()
+                         if value is not None and weights.get(key,0.)>0.)
+    if total_weight<=0:
+        return {'score':None,'components':{'audio':None,'visual':None},
+                'evidence_coverage':0.,'reasons':[],'warnings':[],
+                'profile':profile,'audio_score':None,'audio_available':False,
+                'note':'Sem dimensões de evento disponíveis.'}
+    raw=sum(weights[key]*float(value) for key,value in dimensions.items()
+            if value is not None and weights.get(key,0.)>0.)/total_weight
+    coverage=sum(weights.get(key,0.) for key,value in dimensions.items()
+                 if value is not None and weights.get(key,0.)>0.)
+    reasons=['Ranking parcial de eventos; não mede contexto, gancho ou conclusão']
+    if dimensions['audio'] is not None:
+        reasons.append('Sinal de energia relativo à própria gravação')
+    if dimensions['visual'] is not None:
+        reasons.append('Mudança visual relativa em miniaturas; sem reconhecimento de conteúdo')
+    raw=float(np.clip(raw,0.,1.))
+    # Shrink a high single-signal score toward neutral according to the
+    # profile's evidence coverage. This makes a lone visual cut visibly
+    # lower-confidence than a multimodal candidate with transcript context.
+    coverage_adjusted=.5+(raw-.5)*float(np.clip(coverage,0.,1.))
+    return {'score':round(100.*float(np.clip(coverage_adjusted,0.,1.)),1),
+        'components':{key:(round(float(value),3) if value is not None else None)
+                      for key,value in dimensions.items()},
+        'evidence_coverage':round(float(coverage),3),'reasons':reasons,'warnings':[],
+        'profile':profile,
+        'audio_score':(round(float(dimensions['audio']),3)
+                       if dimensions['audio'] is not None else None),
+        'audio_available':dimensions['audio'] is not None,
+        'note':'Ranking parcial de eventos observáveis; não avalia conteúdo semântico.'}
+
+
+def _event_boundary_choices(clip, candidate: Mapping,
+                            options: ClipperOptions) -> tuple[list[dict],list[dict]]:
+    """Offer small second-based trims when no transcript word edges exist."""
+    minimum=options.min_seconds*1000.;maximum=options.max_seconds*1000.
+    low=float(clip.start)*1000.;high=float(clip.end)*1000.
+    start=int(candidate['start_ms']);end=int(candidate['end_ms'])
+    offsets=(-2000,-1000,0,1000,2000)
+    starts=[{'ms':at,'word':'evento ± tempo'} for delta in offsets
+            if low <= (at:=start+delta) < end and minimum<=end-at<=maximum]
+    ends=[{'ms':at,'word':'evento ± tempo'} for delta in offsets
+          if start < (at:=end+delta) <= high and minimum<=at-start<=maximum]
+    return starts,ends
+
+
 def _cache_path(cache_dir: Path, key: str) -> Path:
     return cache_dir / 'results' / key[:2] / f'{key}.json'
 
@@ -835,12 +970,6 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
         if control:control.checkpoint()
         source=str(Path(clip.source).resolve())
         words=_normalise_words(clip,path_words.get(source,[]))
-        if not words:
-            results.append({'clip_id':clip.id,'title':clip.title,'source':source,
-                'status':'missing_transcript','candidates':[],'events':[],
-                'audio_available':False,'warnings':['Transcreva este bloco antes de usar o Clipador.']})
-            if progress:progress(position+1,total)
-            continue
         try:
             identity=source_identity(source)
         except (OSError,ValueError):
@@ -852,7 +981,12 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
         result_path=_cache_path(root,result_key)
         try:
             cached=json.loads(result_path.read_text(encoding='utf-8'))
-            if cached.get('schema')==CACHE_SCHEMA and cached.get('key')==result_key:
+            # The rank key intentionally stays cheap. When visual analysis is
+            # enabled, re-read the thumbnail manifest and feature cache before
+            # reusing results, so newly generated/replaced thumbnails cannot
+            # leave a stale visual score in the result cache.
+            if (not opts.analyze_visual and cached.get('schema')==CACHE_SCHEMA
+                    and cached.get('key')==result_key):
                 cached_result=cached['result']
                 cached_result['clip_id']=clip.id;cached_result['title']=clip.title
                 for item in cached_result.get('candidates',[]):
@@ -892,18 +1026,24 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                     'Sinal acústico aproximado pela waveform de pico da timeline (100 ms); sem RMS/FFT.'
                     if frames is not None and frames.level_kind!='pcm_rms' else ''
                 ) if frames is not None else (
-                    'Modo rápido: não havia waveform da timeline em cache; nota baseada em texto e timestamps.'
+                    ('Modo rápido: não havia waveform da timeline em cache; ranking segue pelas evidências restantes.'
+                     if words else 'Modo rápido: sem waveform em cache; não há evidência acústica para pontuar.')
                     if opts.mode=='Rápido' else
                     'A fonte não contém faixa de áudio decodificável.')
         if control:control.checkpoint()
         frames_seen+=len(frames.times_ms) if frames is not None else 0
-        speech_intervals=[(word['start_ms'],word['end_ms']) for word in words]
+        # With no saved transcript, energy events are exploratory only. The
+        # detector receives None (unknown speech mask), never an empty mask
+        # that would falsely mean confirmed silence.
+        speech_intervals=([(word['start_ms'],word['end_ms']) for word in words]
+                          if words else None)
         events=(detect_energy_events(frames,speech_intervals,
                  relative_rise_db=opts.relative_rise_db) if frames is not None else [])
         turns=_utterances(words)
         events=align_events_to_conversation(events,turns)
         events=[dict(event,clip_id=clip.id,title=clip.title,source=source) for event in events]
         visual_signals=None
+        visual_events=[]
         if opts.analyze_visual and visual_provider is not None:
             if stage:stage(f'Clipador • miniaturas em cache · {position+1}/{total}')
             visual_signals=read_cached_visual_signals(
@@ -912,9 +1052,15 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
             if visual_signals is not None:
                 visual_frames_reused+=visual_signals.frame_count
                 visual_cache_hits+=int(visual_signals.cache_hit)
+                if not words:
+                    visual_events=detect_cached_visual_events(visual_signals)
+                    visual_events=[dict(event,clip_id=clip.id,title=clip.title,
+                        source=source) for event in visual_events]
         candidates=[]
         word_starts=[int(word['start_ms']) for word in words]
-        for candidate in _candidate_spans(words,opts):
+        proposals=(_candidate_spans(words,opts) if words else
+            _event_only_spans(clip,events,visual_events,opts))
+        for candidate in proposals:
             if control:control.checkpoint()
             visual=(score_cached_visual_interval(visual_signals,
                 candidate['start_ms'],candidate['end_ms'])
@@ -924,12 +1070,21 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                 candidate['visual_score']=visual['score']
                 candidate['text_reasons'].append(
                     f"{visual['reason']} ({visual['coverage']:.0%} de cobertura)")
-            ranked=score_clip(candidate,events,frames,opts.profile,
-                weights_override=opts.score_weights)
-            candidate_events=[event for event in events
-                if event['start_ms']<candidate['end_ms'] and
-                   event['end_ms']>candidate['start_ms']]
+            if candidate.get('event_only'):
+                candidate['events']=list(candidate.get('events',[]))
+                ranked=_score_event_only(candidate,opts.profile,opts.score_weights)
+                candidate_events=candidate['events']
+            else:
+                ranked=score_clip(candidate,events,frames,opts.profile,
+                    weights_override=opts.score_weights)
+                candidate_events=[event for event in events
+                    if event['start_ms']<candidate['end_ms'] and
+                       event['end_ms']>candidate['start_ms']]
+            if ranked.get('score') is None:
+                continue
             warnings=list(ranked['warnings'])
+            if candidate.get('event_only'):
+                warnings.append('Sem transcrição salva: revisar o acontecimento e os limites manualmente.')
             if opts.analyze_visual and visual.get('score') is None:
                 warnings.append(visual.get('reason') or
                     'Análise visual solicitada, mas nenhum cache visual utilizável foi fornecido.')
@@ -940,23 +1095,36 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                 if right>left and float(np.mean(frames.rms_dbfs[left:right] <= -65.))>.95:
                     warnings.append('Mais de 95% do intervalo ficou abaixo de -65 dBFS.')
             candidate_id=digest({'clip_id':clip.id,'start_ms':candidate['start_ms'],
-                                  'end_ms':candidate['end_ms']})[:16]
+                                  'end_ms':candidate['end_ms'],
+                                  'event_only':bool(candidate.get('event_only'))})[:16]
             start_choices,end_choices=_boundary_choices(words,candidate,opts)
+            if candidate.get('event_only'):
+                start_choices,end_choices=_event_boundary_choices(clip,candidate,opts)
             span_left=bisect_left(word_starts,candidate['start_ms']-3000)
             span_right=bisect_right(word_starts,candidate['end_ms']+3000)
             local_words=words[span_left:span_right]
             candidates.append({'id':candidate_id,'clip_id':clip.id,'title':clip.title,
-                'suggested_title':suggest_title(candidate['text']),
+                'suggested_title':(suggest_title(candidate['text']) if candidate['text']
+                    else ('Mudança acústica e visual' if candidate.get('event_only') and
+                          any(event.get('kind')=='cached_thumbnail_change' for event in candidate_events)
+                          and any('energy' in str(event.get('kind','')) or 'waveform' in str(event.get('kind',''))
+                                  for event in candidate_events)
+                          else 'Mudança visual detectada' if candidate.get('event_only') and
+                          any(event.get('kind')=='cached_thumbnail_change' for event in candidate_events)
+                          else 'Pico acústico para revisão')),
                 'source':source,'source_start':candidate['start_ms']/1000.,
                 'source_end':candidate['end_ms']/1000.,
                 'start_ms':candidate['start_ms'],'end_ms':candidate['end_ms'],
                 'duration':(candidate['end_ms']-candidate['start_ms'])/1000.,
-                'text':candidate['text'],'score':ranked['score'],
-                'score_note':ranked['note'],'reasons':candidate['text_reasons']+ranked['reasons'],
+                'text':candidate['text'],'transcript_available':not bool(candidate.get('event_only')),
+                'score':ranked['score'],
+                'score_note':ranked.get('note','Ranking parcial de eventos observáveis; não avalia conteúdo semântico.'),
+                'reasons':candidate['text_reasons']+ranked['reasons'],
                 'score_profile':ranked['profile'],'score_components':ranked['components'],
                 'evidence_coverage':ranked['evidence_coverage'],
                 'text_rank_score':candidate.get('text_rank_score'),
-                'visual_score':visual.get('score'),
+                'visual_score':(ranked['components'].get('visual')
+                    if candidate.get('event_only') else visual.get('score')),
                 'visual_coverage':visual.get('coverage',0.),
                 'visual_frames':visual.get('frames',0),
                 'audio_level_source':frames.level_kind if frames is not None else None,
@@ -983,7 +1151,9 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
         result={'clip_id':clip.id,'title':clip.title,'source':source,
             'status':'ready' if selected else 'no_candidates','candidates':selected,
             'events':events,'audio_available':frames is not None,
-            'warnings':[audio_warning] if audio_warning else []}
+            'warnings':(([audio_warning] if audio_warning else [])+
+                (['Sem transcrição salva: somente sinais acústicos/visuais observáveis podem gerar candidatos.']
+                 if not words else []))}
         result_path.parent.mkdir(parents=True,exist_ok=True)
         temporary=result_path.with_name(result_path.name+f'.{os.getpid()}.tmp')
         try:

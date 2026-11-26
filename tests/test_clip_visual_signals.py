@@ -9,7 +9,8 @@ from PIL import Image
 
 from berofel.core.project import Clip
 from berofel.services.clip_visual_signals import (
-    read_cached_visual_signals, score_cached_visual_interval)
+    read_cached_visual_signals, score_cached_visual_interval,
+    detect_cached_visual_events)
 from berofel.services.clipper import ClipperOptions, analyze_clips
 from berofel.services.discourse_features import content_terms
 
@@ -60,6 +61,23 @@ class ClipVisualSignalTests(unittest.TestCase):
         self.assertIsNone(score['score'])
         self.assertIn('insuficiente', score['reason'])
         self.assertTrue(all(request is False for _, request in provider.requests))
+
+    def test_visual_event_detector_is_sparse_and_ignores_constant_jpeg_noise(self):
+        from berofel.services.clip_visual_signals import CachedVisualSignals
+        sample_times=np.arange(21,dtype=np.float64)*1000.
+        changes=np.full(20,.02,dtype=np.float32)
+        histogram=changes.copy()
+        constant=CachedVisualSignals(sample_times,sample_times[1:],
+            changes,histogram,21,21)
+        self.assertEqual(detect_cached_visual_events(constant),[])
+        changes[8:11]=(.8,.7,.6)
+        histogram[8:11]=(.7,.65,.6)
+        signals=CachedVisualSignals(sample_times,sample_times[1:],
+            changes,histogram,21,21)
+        events=detect_cached_visual_events(signals,minimum_distance_ms=3500.)
+        self.assertEqual(len(events),1)
+        self.assertEqual(events[0]['kind'],'cached_thumbnail_change')
+        self.assertIn('no semantic action recognition',events[0]['meaning'])
 
     def test_visual_features_are_persisted_and_reused_without_reopening_jpegs(self):
         with tempfile.TemporaryDirectory(prefix='bfs_visual_feature_cache_') as folder:
@@ -121,6 +139,62 @@ class ClipVisualSignalTests(unittest.TestCase):
         self.assertEqual(reranked['stats']['visual_cache_hits'],1)
         self.assertTrue(all(request is False for _, request in provider.requests))
         self.assertEqual(content_terms('O editor mantém a transcrição salva')['editor'], 1)
+
+    def test_cached_visual_event_can_propose_candidate_without_transcription_or_video_decode(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_visual_event_only_') as folder:
+            folder=Path(folder)
+            source=folder/'source.mov'
+            source.write_bytes(b'cached-thumbnail-only fixture')
+            thumbs=folder/'thumbs';thumbs.mkdir()
+            for at in range(36):
+                pixels=np.zeros((80,140),dtype=np.uint8)
+                if at>=10:pixels[:,:70]=220;pixels[:,70:]=35
+                Image.fromarray(pixels,mode='L').save(thumbs/f'{at}.jpg',quality=95)
+            provider=ThumbnailProvider(thumbs)
+            clip=Clip(str(source),0.,30.,kind='video')
+            options=ClipperOptions(8.,16.,5,6.,'Gameplay','Rápido',True)
+            with patch('berofel.services.clipper.audio_features',
+                       return_value=(None,False)) as audio, \
+                 patch('berofel.services.parakeet_asr.transcribe_file') as parakeet:
+                result=analyze_clips([clip],[],options,
+                    cache_dir=folder/'analysis-cache',visual_provider=provider)
+        audio.assert_called_once()
+        self.assertTrue(audio.call_args.kwargs['waveform_only'])
+        parakeet.assert_not_called()
+        self.assertTrue(result['candidates'])
+        candidate=result['candidates'][0]
+        self.assertFalse(candidate['transcript_available'])
+        self.assertEqual(candidate['audio_level_source'],None)
+        self.assertLess(candidate['score'],70.)
+        self.assertEqual(candidate['visual_score'],
+                         candidate['score_components']['visual'])
+        self.assertTrue(any(event['kind']=='cached_thumbnail_change'
+                            for event in candidate['events']))
+
+    def test_new_or_replaced_thumbnails_cannot_reuse_stale_rank_result(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_visual_result_invalidation_') as folder:
+            folder=Path(folder)
+            source=folder/'source.mov';source.write_bytes(b'fixture')
+            thumbs=folder/'thumbs';thumbs.mkdir()
+            for at in range(30):
+                Image.fromarray(np.zeros((80,140),dtype=np.uint8),mode='L').save(
+                    thumbs/f'{at}.jpg')
+            provider=ThumbnailProvider(thumbs)
+            clip=Clip(str(source),0.,30.,kind='video')
+            options=ClipperOptions(8.,16.,5,6.,'Gameplay','Rápido',True)
+            cache=folder/'analysis-cache'
+            with patch('berofel.services.clipper.audio_features',
+                       return_value=(None,False)):
+                first=analyze_clips([clip],[],options,cache_dir=cache,
+                    visual_provider=provider)
+                self.assertFalse(first['candidates'])
+                pixels=np.zeros((80,140),dtype=np.uint8)
+                pixels[:,:70]=220;pixels[:,70:]=35
+                Image.fromarray(pixels,mode='L').save(thumbs/'10.jpg')
+                second=analyze_clips([clip],[],options,cache_dir=cache,
+                    visual_provider=provider)
+        self.assertTrue(second['candidates'])
+        self.assertEqual(second['stats']['cache_hits'],0)
 
 
 if __name__ == '__main__':

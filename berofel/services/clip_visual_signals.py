@@ -206,3 +206,58 @@ def score_cached_visual_interval(signals: CachedVisualSignals | None,
     return {'score': round(float(np.clip(.6*motion + .4*scene, 0., 1.)), 3),
             'coverage': round(coverage, 3), 'frames': count,
             'reason': 'Mudança visual relativa à amostra em cache; não identifica conteúdo.'}
+
+
+def detect_cached_visual_events(signals: CachedVisualSignals | None, *,
+                                max_events: int = 32,
+                                minimum_distance_ms: float = 1500.) -> list[dict]:
+    """Return sparse visual-change cues from already cached thumbnails.
+
+    These are not semantic scene or action labels. The conservative robust
+    threshold prevents constant JPEG noise from becoming an event, and the
+    caller must keep the cue explicitly identified as a visual proxy.
+    """
+    if (signals is None or len(signals.change_times_ms) == 0 or
+            len(signals.frame_change) != len(signals.histogram_change)):
+        return []
+    values = (.6 * signals.frame_change.astype(np.float64) +
+              .4 * signals.histogram_change.astype(np.float64))
+    valid = np.isfinite(values) & np.isfinite(signals.change_times_ms)
+    if not np.any(valid):
+        return []
+    values = values[valid]
+    times = signals.change_times_ms[valid]
+    center = float(np.median(values))
+    mad = float(np.median(np.abs(values - center)))
+    spread = float(np.percentile(values, 90) - np.percentile(values, 10))
+    scale = max(1.4826 * mad, spread / 2.563, .015)
+    threshold = center + max(2.5 * scale, .08)
+    eligible = np.flatnonzero(values >= threshold)
+    if not len(eligible):
+        return []
+
+    # Greedy non-maximum suppression by cue strength avoids returning a run of
+    # nearly identical 1-FPS thumbnail changes around the same visual moment.
+    ranked = sorted(eligible.tolist(), key=lambda index: values[index], reverse=True)
+    selected: list[int] = []
+    for index in ranked:
+        if any(abs(float(times[index] - times[other])) < minimum_distance_ms
+               for other in selected):
+            continue
+        selected.append(index)
+        if len(selected) >= max(1, int(max_events)):
+            break
+    result = []
+    for index in selected:
+        strength = float(np.clip((values[index] - threshold) /
+                                 max(4. * scale, .1), 0., 1.))
+        result.append({
+            'kind': 'cached_thumbnail_change',
+            'start_ms': round(float(times[index])),
+            'end_ms': round(float(times[index]) + 1000.),
+            'strength': round(strength, 3),
+            'visual_change': round(float(values[index]), 4),
+            'source': 'cached_thumbnail_proxy',
+            'meaning': 'visual change only; no semantic action recognition',
+        })
+    return sorted(result, key=lambda event: event['start_ms'])
