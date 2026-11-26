@@ -38,7 +38,9 @@ Editor de vídeo Windows/PySide6 de qualidade e desempenho comprovados, com time
 - Toda alteração validada deve ser registrada em commits locais pequenos e descritivos; não deixar trabalho concluído sem checkpoint versionado.
 - Antes de publicar, confirmar `git status`, branch, `origin`, `git fetch`/estado remoto, testes da mudança e ausência de credenciais, mídias pessoais, caches, modelos ou binários pesados no índice e no histórico a enviar.
 - Sincronizar com o GitHub quando o usuário tiver autorizado a publicação e a conta conectada tiver permissão efetiva de escrita. Verificar a permissão e a rede separadamente; uma falha não autoriza contornar controles.
+- Diagnosticar `gh auth status` com acesso de rede disponível. Se o sandbox retornar `connectex`/socket proibido, classificar como bloqueio de rede e repetir a operação Git em um contexto com rede aprovado; não fazer logout, apagar credenciais nem concluir que o token expirou com base nessa mensagem. Um `git push --dry-run` não comprova escrita; confirmar push real de commit validado com `git ls-remote` no SHA remoto.
 - Nunca usar `push --force`, sobrescrever `main`, reescrever histórico já compartilhado ou anunciar publicação sem confirmar o commit remoto. Se o acesso estiver bloqueado, preservar commits locais, informar a causa comprovada e preparar bundle/patch quando útil.
+- Publicar commits somente em branches `feat/*`, `fix/*` ou `docs/*`; `main` exige PR atualizado e todos os checks obrigatórios. Não enfraquecer proteção nem ampliar permissões de Actions para contornar falhas.
 - Para releases, seguir a versão declarada em `berofel/__init__.py`, atualizar changelog/documentação, validar instalador/artefatos e então criar tag de versão. Não publicar tag ou pacote sem testes correspondentes.
 
 ## Referência de sucesso

@@ -55,6 +55,26 @@ git ls-remote --heads origin <branch>
 
 `git push` atualiza o código no GitHub. A Release/instalador só muda após tag validada. O próprio instalador consulta a Release no momento da instalação, mas não publica commits nem atualiza a si mesmo a partir do código-fonte.
 
+### Diagnóstico definitivo de rede, autenticação e proteções (26/11/2026)
+
+Validação feita no checkout Windows durante a investigação:
+
+- `origin` está correto: `https://github.com/berofel/BerofelStudio-MLF.git`. A CLI local autenticou `berofel` com `repo` e `workflow`; a API confirmou `admin: true` e `push: true`. Não há ajuste de acesso do proprietário necessário para publicação pela CLI local.
+- Dentro do sandbox, a consulta HTTPS à API falhou com `connectex: Foi feita uma tentativa de acesso a um soquete de uma maneira que é proibida pelas permissões de acesso`. O `gh auth status` naquele contexto também imprimiu `The token in default is invalid`, mas a causa observada foi a conexão bloqueada. Com rede aprovada, a mesma CLI validou a sessão e a API. Portanto, **não fazer logout, apagar ou substituir credenciais em resposta isolada a esse erro de socket**; executar operações GitHub em um contexto com rede aprovado e verificar `gh auth status` novamente.
+- O Git usa `gh auth git-credential`, configurado pelo GitHub CLI. Um push real da branch sincronizada retornou `Everything up-to-date`, e `git ls-remote` confirmou `35d91cf151b58c5cc582927ef17b9359854b4f9c` em `feat/clip-engine-cache-shortlist`. Um push de commit novo já havia sido publicado e confirmado em sessão anterior. `--dry-run` não publica refs nem comprova que uma alteração foi aceita; a confirmação é sempre o SHA remoto após o push real de um commit validado.
+- O GitHub Connector integrado ao Codex é uma identidade separada: os metadados retornaram `push: false`, e consultar permissões de colaborador retornou `403 Resource not accessible by integration`. Isso **não** limita a conta `berofel` usada pelo `gh` local. Para fazer push/abrir PR por esse Connector, o proprietário deve autorizar a instalação para este repositório com `Contents: read/write` e `Pull requests: read/write`; para editar `.github/workflows/*`, também `Workflows: write`. Se o app não solicitar essas permissões, somente o mantenedor do app poderá adicioná-las. A CLI local continua sendo a rota já validada.
+- `main` exige PR, atualização estrita em relação à base e estes checks: `Windows 11 / Python 3.12 tests`, `build` e `Clean Windows install / launch / uninstall`. A regra também se aplica aos administradores; force-push e exclusão estão bloqueados. A branch de trabalho `feat/clip-engine-cache-shortlist` não tem proteção própria. Nenhum ruleset adicional foi encontrado. Assim, enviar direto a `main` é intencionalmente incompatível com a política; publique a branch e abra PR.
+- Actions estão habilitadas com ações permitidas; a permissão padrão de `GITHUB_TOKEN` é `read` e não pode aprovar PRs. O workflow do projeto declara `contents: read` para CI/build e `contents: write` apenas no job de publicação de Release, o que é suficiente: o workflow não cria PR. Não ampliar permissões globais do Actions.
+- O run do commit `35d91cf151b58c5cc582927ef17b9359854b4f9c` passou nos três checks obrigatórios ([run 45798866912](https://github.com/berofel/BerofelStudio-MLF/actions/runs/45798866912)). Runs anteriores falharam em testes: seletores de motor multivozes ausentes (`Escolha manualmente o motor de narração...`) e testes de seleção de janela acústica incompatíveis com a nova assinatura/subprocesso. Foram seguidos por correções e o run mais recente passou; testes não foram desabilitados.
+
+Links de configuração relevantes para o proprietário:
+
+- [Acesso do repositório](https://github.com/berofel/BerofelStudio-MLF/settings/access)
+- [Instalações de aplicativos GitHub](https://github.com/settings/installations)
+- [Regras de branches](https://github.com/berofel/BerofelStudio-MLF/settings/branches)
+- [Rulesets](https://github.com/berofel/BerofelStudio-MLF/settings/rules)
+- [Permissões do GitHub Actions](https://github.com/berofel/BerofelStudio-MLF/settings/actions)
+
 ## Segurança e limites de distribuição
 
 - O EXE é um bootstrapper online, não um pacote offline completo: baixa Python, dependências, FFmpeg e os motores selecionados.
