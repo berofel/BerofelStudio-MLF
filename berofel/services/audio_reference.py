@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from functools import lru_cache
 import json
+import math
 import os
 import re
 import tempfile
@@ -15,7 +16,8 @@ from .ai_cache import digest, file_sha256
 _PROMPT_MAX_SECONDS = 30.0
 # Bump whenever candidate selection, trimming, resampling or conditioning
 # preparation changes; cached speaker prompts must not survive a new window.
-REFERENCE_PREPARATION_VERSION = 6
+REFERENCE_PREPARATION_VERSION = 7
+REFERENCE_WINDOW_CACHE_VERSION = 1
 VOICE_REFERENCE_REPORT_VERSION = 1
 _SILENCE_THRESHOLD_DB = -38
 _SILENCE_MIN_SECONDS = .35
@@ -55,6 +57,7 @@ def _voice_report_dependencies() -> dict:
         pass
     return {'report_version':VOICE_REFERENCE_REPORT_VERSION,
             'reference_preparation_version':REFERENCE_PREPARATION_VERSION,
+            'reference_window_cache_version':REFERENCE_WINDOW_CACHE_VERSION,
             'acoustic_feature_version':ACOUSTIC_FEATURE_VERSION,
             'pitch_feature_version':PITCH_FEATURE_VERSION,
             'spectral_feature_version':SPECTRAL_FEATURE_VERSION,
@@ -87,6 +90,64 @@ def _write_voice_report_cache(path: Path, key: str, report: dict) -> None:
             if stale!=path:
                 try:stale.unlink()
                 except OSError:pass
+    finally:
+        pending.unlink(missing_ok=True)
+
+
+def _reference_window_cache_path(source: Path, source_hash: str,
+                                 dependencies: dict) -> tuple[Path, str]:
+    """Return a private content/version keyed cache path without storing paths."""
+    source_key = digest({'path': str(source.resolve())})
+    key = digest({'schema': REFERENCE_WINDOW_CACHE_VERSION,
+                  'source_sha256': source_hash, 'dependencies': dependencies})
+    return (_voice_report_cache_root() / 'windows' / source_key[:2] /
+            f'{source_key}-{key}.json', key)
+
+
+def _read_reference_window_cache(path: Path, key: str
+                                 ) -> tuple[float, float, float] | None:
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+        if (not isinstance(payload, dict) or
+                payload.get('schema') != REFERENCE_WINDOW_CACHE_VERSION or
+                payload.get('key') != key):
+            return None
+        result = payload.get('window')
+        if not isinstance(result, dict):
+            return None
+        start = float(result['start'])
+        duration = float(result['duration'])
+        activity = float(result['active_fraction'])
+        if (not all(math.isfinite(value) for value in (start, duration, activity)) or
+                start < 0 or not 0 < duration <= _PROMPT_MAX_SECONDS or
+                not 0 <= activity <= 1):
+            return None
+        return start, duration, activity
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def _write_reference_window_cache(path: Path, key: str,
+                                  window: tuple[float, float, float]) -> None:
+    """Atomically persist only numeric selection results, never source data."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pending = path.with_name(path.name + f'.{os.getpid()}.tmp')
+    payload = {'schema': REFERENCE_WINDOW_CACHE_VERSION, 'key': key,
+               'window': {'start': float(window[0]), 'duration': float(window[1]),
+                          'active_fraction': float(window[2])}}
+    try:
+        with pending.open('w', encoding='utf-8', newline='\n') as stream:
+            json.dump(payload, stream, separators=(',', ':'), allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(pending, path)
+        prefix = path.name.split('-', 1)[0]
+        for stale in path.parent.glob(prefix + '-*.json'):
+            if stale != path:
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
     finally:
         pending.unlink(missing_ok=True)
 
@@ -220,10 +281,47 @@ def _best_reference_window(path: str, size: int, mtime_ns: int) -> tuple[float, 
     return selected.start, selected.duration, selected.active_fraction
 
 
-def _reference_window(source: Path) -> tuple[float, float, float]:
-    stat = source.stat()
+@lru_cache(maxsize=32)
+def _reference_window_for_identity(path: str, size: int,
+                                   mtime_ns: int) -> tuple[float, float, float]:
+    """Reuse a persisted whole-file scan across editor/worker restarts.
+
+    The disk key uses the source content hash and tool/algorithm identities.
+    Only the selected numeric time range is persisted. Hashing is performed
+    once per process/file identity; the existing in-memory LRU handles later
+    requests without another file read.
+    """
+    source = Path(path)
+    cache_path = None
+    cache_key = None
+    try:
+        source_hash = file_sha256(source)
+        dependencies = _voice_report_dependencies()
+        cache_path, cache_key = _reference_window_cache_path(
+            source, source_hash, dependencies)
+    except (OSError, RuntimeError, ValueError):
+        # Persistent caching is an optimization. A cache identity failure must
+        # not prevent reference analysis or voice generation.
+        pass
+
     with _REFERENCE_SCAN_LOCK:
-        return _best_reference_window(str(source.resolve()), stat.st_size, stat.st_mtime_ns)
+        if cache_path is not None and cache_key is not None:
+            cached = _read_reference_window_cache(cache_path, cache_key)
+            if cached is not None:
+                return cached
+        selected = _best_reference_window(path, size, mtime_ns)
+        if cache_path is not None and cache_key is not None:
+            try:
+                _write_reference_window_cache(cache_path, cache_key, selected)
+            except (OSError, TypeError, ValueError):
+                pass
+        return selected
+
+
+def _reference_window(source: Path) -> tuple[float, float, float]:
+    resolved = source.expanduser().resolve()
+    stat = resolved.stat()
+    return _reference_window_for_identity(str(resolved), stat.st_size, stat.st_mtime_ns)
 
 
 def validate_reference_transcript(text: str, duration_seconds: float) -> None:

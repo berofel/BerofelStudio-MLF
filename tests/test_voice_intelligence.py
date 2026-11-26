@@ -313,7 +313,7 @@ class PureCEmotionVectorMathTests(TestCase):
 class ReferenceWindowRankingTests(TestCase):
     def test_reference_selection_revision_invalidates_conditioning_cache(self):
         from berofel.services.audio_reference import REFERENCE_PREPARATION_VERSION
-        self.assertEqual(REFERENCE_PREPARATION_VERSION, 6)
+        self.assertEqual(REFERENCE_PREPARATION_VERSION, 7)
 
     def test_clean_shorter_window_can_beat_longer_noisy_window(self):
         candidates = [
@@ -357,6 +357,67 @@ class VoiceReferenceReportCacheTests(TestCase):
             payload=next(cache.rglob('*.json')).read_text(encoding='utf-8')
             self.assertNotIn(str(source),payload)
             self.assertNotIn('private voice bytes',payload)
+
+    def test_reference_window_selection_persists_across_process_cache_clear(self):
+        from berofel.services import audio_reference
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'authorized-reference.wav'
+            source.write_bytes(b'private audio content')
+            cache = root / 'cache'
+            selected = (18.5, 24.0, .92)
+            audio_reference._reference_window_for_identity.cache_clear()
+            try:
+                with patch.dict('os.environ', {
+                        'BEROFEL_VOICE_INSPECTION_CACHE': str(cache)}), \
+                     patch.object(audio_reference, '_voice_report_dependencies',
+                                  return_value={'tools': 'stable-v1'}), \
+                     patch.object(audio_reference, '_best_reference_window',
+                                  return_value=selected) as scan:
+                    first = audio_reference._reference_window(source)
+                    audio_reference._reference_window_for_identity.cache_clear()
+                    second = audio_reference._reference_window(source)
+                self.assertEqual(first, selected)
+                self.assertEqual(second, selected)
+                scan.assert_called_once()
+                cache_file = next((cache / 'windows').rglob('*.json'))
+                payload = cache_file.read_text(encoding='utf-8')
+                self.assertNotIn(str(source), payload)
+                self.assertNotIn('private audio content', payload)
+            finally:
+                audio_reference._reference_window_for_identity.cache_clear()
+
+    def test_reference_window_selection_cache_invalidates_on_content_or_tool_change(self):
+        from berofel.services import audio_reference
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'authorized-reference.wav'
+            source.write_bytes(b'audio-v1')
+            cache = root / 'cache'
+            dependencies = {'tools': 'v1'}
+            audio_reference._reference_window_for_identity.cache_clear()
+            try:
+                with patch.dict('os.environ', {
+                        'BEROFEL_VOICE_INSPECTION_CACHE': str(cache)}), \
+                     patch.object(audio_reference, '_voice_report_dependencies',
+                                  side_effect=lambda: dict(dependencies)), \
+                     patch.object(audio_reference, '_best_reference_window',
+                                  side_effect=[(1.0, 20.0, .8),
+                                               (2.0, 20.0, .85),
+                                               (3.0, 20.0, .9)]) as scan:
+                    first = audio_reference._reference_window(source)
+                    audio_reference._reference_window_for_identity.cache_clear()
+                    dependencies['tools'] = 'v2'
+                    tool_changed = audio_reference._reference_window(source)
+                    audio_reference._reference_window_for_identity.cache_clear()
+                    source.write_bytes(b'audio-v2')
+                    media_changed = audio_reference._reference_window(source)
+                self.assertEqual(first[0], 1.0)
+                self.assertEqual(tool_changed[0], 2.0)
+                self.assertEqual(media_changed[0], 3.0)
+                self.assertEqual(scan.call_count, 3)
+            finally:
+                audio_reference._reference_window_for_identity.cache_clear()
 
     def test_invalidates_report_when_content_or_tool_identity_changes(self):
         from berofel.services import audio_reference
