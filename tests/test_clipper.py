@@ -10,6 +10,7 @@ from berofel.core.project import Clip
 from berofel.services.clip_audio_signals import extract_frames_from_chunks
 from berofel.services.clipper import (ClipperOptions, _candidate_spans,
     _dialogue_context_bounds, _local_textrank_salience, _normalise_words,
+    _utterances,
     analyze_clips, audio_features, suggest_title)
 
 
@@ -134,6 +135,25 @@ class ClipperTests(unittest.TestCase):
                           if word['text'].endswith('?'))
         _start,end,_,expanded_end=_dialogue_context_bounds(
             words,0,question_end,5000.)
+        self.assertEqual(end,len(words)-1)
+        self.assertTrue(expanded_end)
+
+    def test_parakeet_question_without_punctuation_splits_at_a_natural_pause(self):
+        words=[]
+        at=0.
+        for turn_index,text in enumerate((
+                'Você sabia que o editor guarda a transcrição',
+                'O editor guarda a transcrição em arquivos locais.')):
+            for token in text.split():
+                words.append({'id':f'w{len(words)}','start_ms':round(at*1000),
+                    'end_ms':round((at+.22)*1000),'text':token})
+                at+=.3
+            at+=.8 if turn_index==0 else 0.
+        turns=_utterances(words)
+        self.assertEqual(len(turns),2)
+        start,end,_,expanded_end=_dialogue_context_bounds(
+            words,0,len(turns[0]['words'])-1,6000.)
+        self.assertEqual(start,0)
         self.assertEqual(end,len(words)-1)
         self.assertTrue(expanded_end)
 

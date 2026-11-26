@@ -54,6 +54,10 @@ _RESOLUTION = frozenset("""
     conseguimos deu certo corrigido corrigida pronto finalmente
 """.split())
 _QUESTION_START = frozenset(('quem quando onde como qual quanto'.split()))
+_QUESTION_PREFIXES = (
+    ('voce', 'sabia'), ('ja', 'imaginou'), ('sera', 'que'),
+    ('voce', 'concorda'), ('alguem', 'sabe'), ('tem', 'como'),
+    ('pode', 'me', 'explicar'))
 _REVEAL_START = frozenset(('descobri descobrimos percebi percebemos resultado segredo afinal'.split()))
 _CONCLUSION_START = frozenset(('resumindo concluindo conclusão conclusao enfim finalmente'.split()))
 _ANSWER_PREFIXES = (
@@ -293,7 +297,9 @@ def discourse_role(text: object) -> str:
     value = ' '.join(normalize_tokens(text))
     tokens = normalize_tokens(text)
     if ('?' in str(text) or (tokens and tokens[0] in _QUESTION_START) or
-            tokens[:2] == ('por', 'que')):
+            tokens[:2] == ('por', 'que') or
+            any(tokens[:len(prefix)] == prefix
+                for prefix in _QUESTION_PREFIXES)):
         return 'question'
     if tokens and tokens[0] in _REVEAL_START:
         return 'reveal'

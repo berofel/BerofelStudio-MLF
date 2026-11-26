@@ -332,10 +332,16 @@ def _utterances(words: Sequence[Mapping]) -> list[dict]:
             prev=current[-1]
             gap=(float(word['start_ms'])-float(prev['end_ms']))/1000.
             finished=bool(_TERMINAL.search(str(prev['text']).strip()))
+            question_pause=False
+            if gap>=.7 and len(current)>=3:
+                current_text=' '.join(str(item['text']) for item in current)
+                last_token=re.sub(r'^\W+|\W+$','',str(prev['text']).casefold())
+                question_pause=(_role(current_text)=='question' and
+                    last_token not in _INCOMPLETE_ENDINGS)
             speaker_change=(prev.get('speaker_id') is not None and
                             word.get('speaker_id') is not None and
                             prev.get('speaker_id')!=word.get('speaker_id'))
-            if gap >= .9 or finished or speaker_change:
+            if gap >= .9 or finished or speaker_change or question_pause:
                 groups.append(current);current=[]
         current.append(word)
     if current:groups.append(current)
