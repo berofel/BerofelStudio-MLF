@@ -449,7 +449,7 @@ class ClipperTests(unittest.TestCase):
         self.assertTrue(all(candidate['start_ms']<item['ms']<=candidate['allowed_end_ms']
                             for item in ends))
 
-    def test_result_cache_is_invalidated_by_transcript_text_and_options(self):
+    def test_result_cache_invalidates_transcript_but_reuses_candidate_limit_change(self):
         with tempfile.TemporaryDirectory(prefix='bfs_clipper_cache_') as folder:
             source=Path(folder)/'source.wav';source.write_bytes(b'synthetic placeholder')
             clip=Clip(str(source),0.,36.,kind='audio')
@@ -463,11 +463,14 @@ class ClipperTests(unittest.TestCase):
                 changed[2]['text']='alterado'
                 third=analyze_clips([clip],changed,ClipperOptions(8.,16.,5,6.),cache_dir=cache)
                 fourth=analyze_clips([clip],changed,ClipperOptions(8.,16.,6,6.),cache_dir=cache)
-        self.assertEqual(audio.call_count,3)
+        # The final shortlist cap does not change the per-source cached
+        # analysis; only the changed transcript causes a new feature pass.
+        self.assertEqual(audio.call_count,2)
         self.assertEqual(second['stats']['cache_hits'],1)
         self.assertEqual(first['candidates'],second['candidates'])
         self.assertNotEqual(first['candidates'][0]['text'],third['candidates'][0]['text'])
         self.assertTrue(fourth['candidates'])
+        self.assertEqual(fourth['stats']['result_cache_hits'],1)
 
     def test_profile_change_reuses_acoustic_feature_cache_without_pcm_decode(self):
         import wave

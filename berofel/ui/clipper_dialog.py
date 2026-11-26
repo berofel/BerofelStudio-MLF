@@ -307,9 +307,12 @@ class ClipperDialog(QDialog):
         rss_label=f" · RSS {rss:.1f} MiB" if rss is not None else ''
         profile=stats.get('profile','Geral')
         mode=stats.get('mode','Equilibrado')
+        cache_detail=(f"cache ranking {stats.get('result_cache_hits',stats.get('cache_hits',0))} hit(s)"
+            + (f" · sinais {stats.get('feature_cache_hits',0)} hit(s)"
+               if 'feature_cache_hits' in stats else ''))
         status_text=(f"{len(self._candidates)} candidato(s) · {len(self._events)} evento(s) acústico(s) · "
-            f"{stats.get('elapsed_seconds',0):.2f}s · cache {stats.get('cache_hits',0)} hit(s)/"
-            f"{stats.get('cache_misses',0)} novo(s) · decodificados {stats.get('decoded_seconds',0):.1f}s"
+            f"{stats.get('elapsed_seconds',0):.2f}s · {cache_detail}/"
+            f"{stats.get('cache_misses',0)} análise(s) nova(s) · decodificados {stats.get('decoded_seconds',0):.1f}s"
             +rss_label+f" · {mode} · perfil {profile} · nota mínima {stats.get('min_score',0):.0f}/100. "
             "A nota usa somente evidências disponíveis.")
         if not self._candidates:

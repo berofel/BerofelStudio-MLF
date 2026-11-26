@@ -105,6 +105,18 @@ class ClipperOptions:
                     sorted(self.score_weights.items())}
                     if self.score_weights is not None else None)}
 
+    def cache_identity(self):
+        """Options that can change per-source analysis and its cached shortlist.
+
+        ``max_candidates`` is deliberately excluded: it is applied only after
+        cached per-source shortlists are combined. The local shortlist retains
+        up to 50 rows, the maximum the UI allows, so changing the requested
+        final count must not rerun feature scoring or rebuild candidates.
+        """
+        values = self.as_dict()
+        values.pop('max_candidates', None)
+        return values
+
 
 def clipper_cache_dir() -> Path:
     """Keep derived audio features separate from AI weights and user projects."""
@@ -1144,7 +1156,8 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
     opts.__post_init__()
     root=Path(cache_dir or clipper_cache_dir())
     started=time.monotonic()
-    results=[];hits=misses=0;decoded_seconds=0.;frames_seen=0
+    results=[];hits=misses=0;result_cache_hits=0;feature_cache_hits=0
+    decoded_seconds=0.;frames_seen=0
     visual_frames_reused=visual_cache_hits=0
     path_words={}
     for word in transcript_words:
@@ -1166,7 +1179,8 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
             identity={'path':source,'missing':True}
         result_identity={'schema':CACHE_SCHEMA,'version':CLIPPER_VERSION,
             'source':identity,'start':round(clip.start,4),
-            'end':round(clip.end,4),'words':words,'options':opts.as_dict(),
+            'end':round(clip.end,4),'words':words,
+            'options':opts.cache_identity(),
             'timebase':'absolute-source-ms'}
         if opts.mode=='Rápido' and waveform_provider is not None:
             result_identity['waveform_signature']=waveform_signature
@@ -1188,7 +1202,7 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                         event['clip_id']=clip.id;event['title']=clip.title
                 for event in cached_result.get('events',[]):
                     event['clip_id']=clip.id;event['title']=clip.title
-                results.append(cached_result);hits+=1
+                results.append(cached_result);hits+=1;result_cache_hits+=1
                 if progress:progress(position+1,total)
                 continue
         except (OSError,ValueError,KeyError,TypeError):
@@ -1208,7 +1222,7 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                     progress=audio_progress,cache_dir=root,waveform_provider=waveform_provider,
                     waveform_only=opts.mode=='Rápido',
                     waveform_signature=waveform_signature)
-                if feature_hit:hits+=1
+                if feature_hit:hits+=1;feature_cache_hits+=1
                 elif frames is not None:decoded_seconds+=clip.end-clip.start
             except Exception as exc:
                 from .process_control import ProcessCancelled
@@ -1407,7 +1421,10 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
         rss_mb=None
     return {'clips':visible_results,'candidates':visible_candidates,
         'events':[event for item in results for event in item['events']],
-        'stats':{'cache_hits':hits,'cache_misses':misses,'decoded_seconds':round(decoded_seconds,3),
+        'stats':{'cache_hits':hits,'cache_misses':misses,
+            'result_cache_hits':result_cache_hits,
+            'feature_cache_hits':feature_cache_hits,
+            'decoded_seconds':round(decoded_seconds,3),
             'profile':opts.profile,'mode':opts.mode,
             'min_score':min_score,
             'feature_frames':frames_seen,'candidate_count':len(visible_candidates),

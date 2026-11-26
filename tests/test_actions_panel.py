@@ -308,6 +308,23 @@ class ActionsUITests(unittest.TestCase):
         self.assertEqual(previews[0]['id'],'candidate-1')
         dialog.close();panel.close()
 
+    def test_clipper_results_explain_separate_ranking_and_feature_cache_hits(self):
+        dialog=ClipperDialog()
+        candidate={'id':'cache-candidate','clip_id':'clip-1','title':'Cache',
+            'source_start':1.,'source_end':8.,'duration':7.,'score':74.,
+            'suggested_title':'Resultado','text':'Um resultado completo.',
+            'reasons':['Fecha em limite de frase'],'warnings':[],'events':[],
+            'audio_available':True,'score_components':{'hook':.7},
+            'evidence_coverage':.8,'start_ms':1000,'end_ms':8000,
+            'min_duration_ms':3000,'max_duration_ms':10000,
+            'start_choices':[],'end_choices':[],'word_spans':[]}
+        dialog.set_results({'candidates':[candidate],'events':[],
+            'stats':{'result_cache_hits':2,'feature_cache_hits':1,
+                     'cache_misses':0,'cache_hits':3}})
+        self.assertIn('cache ranking 2 hit(s)',dialog.status.text())
+        self.assertIn('sinais 1 hit(s)',dialog.status.text())
+        dialog.close()
+
     def test_clipador_inserts_selected_source_interval_non_destructively_with_undo(self):
         import wave
         from berofel.core.project import Clip
