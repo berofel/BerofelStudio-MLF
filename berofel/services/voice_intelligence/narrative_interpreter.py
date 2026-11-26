@@ -49,7 +49,7 @@ def _tokens(value: str) -> list[str]:
     return _WORD.findall(_fold(value))
 
 
-def _sentence_spans(source: str) -> list[tuple[int, int, str]]:
+def sentence_spans(source: str) -> list[tuple[int, int, str]]:
     """Split at sentence punctuation while preserving exact source offsets."""
     spans: list[tuple[int, int, str]] = []
     cursor = 0
@@ -180,7 +180,7 @@ def plan_narrative_interpretation(text: str) -> dict:
     relative targets for future validated controls, not applied audio effects.
     """
     source = str(text or "")
-    sentences = _sentence_spans(source)
+    sentences = sentence_spans(source)
     plans = []
     prior_emotion = "neutral"
     for index, (start, end, sentence) in enumerate(sentences):

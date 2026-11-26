@@ -27,6 +27,16 @@ class LongNarrationTests(TestCase):
         self.assertTrue(all(len(part) <= 700 for part in chunks))
         self.assertEqual(' '.join(chunks).replace(' .', '.'), text.strip())
 
+    def test_long_text_split_does_not_separate_known_titles_from_names(self):
+        text=('A Dra. Ana revisa o caso com bastante cuidado. '
+              'O Prof. Silva explica o resultado com clareza. ')*30
+        chunks=_split_narration_text(text,120)
+        self.assertGreater(len(chunks),1)
+        self.assertTrue(all(not chunk.rstrip().endswith(('Dra.','Prof.'))
+                            for chunk in chunks),chunks)
+        self.assertTrue(all(len(chunk)<=120 for chunk in chunks))
+        self.assertEqual(' '.join(chunks),text.strip())
+
     def test_1700_character_local_text_remains_one_request(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

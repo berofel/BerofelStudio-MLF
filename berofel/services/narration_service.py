@@ -15,7 +15,9 @@ from typing import Callable
 
 from .ai_cache import digest, file_sha256
 from .voice_intelligence.text_normalizer import NORMALIZER_VERSION, normalize_pt_br
-from .voice_intelligence.narrative_interpreter import plan_narrative_interpretation
+from .voice_intelligence.narrative_interpreter import (
+    plan_narrative_interpretation, sentence_spans,
+)
 from .voice_intelligence.pronunciation_dictionary import (
     PronunciationDictionary, apply_pronunciations,
 )
@@ -140,7 +142,7 @@ def _split_narration_text(text: str, limit: int) -> list[str]:
     text = str(text or '').strip()
     if len(text) <= limit:
         return [text]
-    sentences = re.split(r'(?<=[.!?…])\s+|\n+', text)
+    sentences = [sentence for _start, _end, sentence in sentence_spans(text)]
     chunks: list[str] = []
     current = ''
     for sentence in sentences:
