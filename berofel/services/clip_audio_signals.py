@@ -38,6 +38,22 @@ CLIP_SCORE_PROFILES = {
                "payoff": .15, "rhythm": .08, "visual": .02},
     "Vlog": {"hook": .20, "context": .15, "audio": .15, "value": .10,
              "payoff": .15, "rhythm": .10, "visual": .15},
+    "Lives": {"hook": .20, "context": .15, "audio": .25, "value": .08,
+              "payoff": .13, "rhythm": .10, "visual": .09},
+    "Aulas": {"hook": .15, "context": .25, "audio": .05, "value": .30,
+              "payoff": .15, "rhythm": .08, "visual": .02},
+    "Histórias": {"hook": .15, "context": .25, "audio": .10, "value": .10,
+                  "payoff": .25, "rhythm": .10, "visual": .05},
+    "Notícias": {"hook": .15, "context": .20, "audio": .10, "value": .25,
+                 "payoff": .15, "rhythm": .10, "visual": .05},
+    "Entrevistas": {"hook": .15, "context": .25, "audio": .15, "value": .15,
+                    "payoff": .15, "rhythm": .12, "visual": .03},
+    "Motivacional": {"hook": .20, "context": .15, "audio": .15, "value": .20,
+                     "payoff": .20, "rhythm": .08, "visual": .02},
+    "Esportivo": {"hook": .15, "context": .10, "audio": .25, "value": .05,
+                  "payoff": .15, "rhythm": .10, "visual": .20},
+    "Personalizado": {"hook": .20, "context": .20, "audio": .15, "value": .15,
+                      "payoff": .15, "rhythm": .10, "visual": .05},
 }
 
 # Small PT-BR function-word list for candidate diversity only. It is not a

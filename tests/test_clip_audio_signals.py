@@ -91,6 +91,21 @@ class ClipAudioTests(unittest.TestCase):
         self.assertLess(general['evidence_coverage'], 1.)
         self.assertNotEqual(general['score'], gameplay['score'])
 
+    def test_specialized_editorial_profiles_are_selectable_and_rank_differently(self):
+        from berofel.services.clip_audio_signals import CLIP_SCORE_PROFILES
+        candidate=dict(start_ms=0,end_ms=10000,context_score=.7,hook_score=.8,
+                       boundary_score=.8,audio_available=True,
+                       information_score=.75,payoff_score=.65,rhythm_score=.7,
+                       visual_score=.6)
+        self.assertTrue({'Lives','Aulas','Histórias','Notícias','Entrevistas',
+                         'Motivacional','Esportivo','Personalizado'} <=
+                        set(CLIP_SCORE_PROFILES))
+        results={profile:score_clip(candidate,[],profile=profile)['score']
+                 for profile in ('Geral','Lives','Aulas','Histórias','Notícias',
+                     'Entrevistas','Motivacional','Esportivo','Personalizado')}
+        self.assertGreater(len(set(results.values())),3)
+        self.assertTrue(all(0. <= value <= 100. for value in results.values()))
+
     def test_custom_weights_change_priorities_without_fabricating_missing_audio(self):
         candidate=dict(start_ms=0,end_ms=10000,context_score=.7,hook_score=.9,
                        boundary_score=.8,information_score=.2,payoff_score=.3,

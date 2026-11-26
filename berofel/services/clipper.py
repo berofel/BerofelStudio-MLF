@@ -75,13 +75,12 @@ class ClipperOptions:
             raise ValueError('Escolha entre 1 e 50 candidatos.')
         if not 1 <= float(self.relative_rise_db) <= 24:
             raise ValueError('Sensibilidade de energia precisa ficar entre 1 e 24 dB.')
-        if self.profile not in ('Geral','Podcast','Gameplay','Tutorial','Terror',
-                                'Humor','Debate','Vlog'):
+        from .clip_audio_signals import CLIP_SCORE_PROFILES
+        if self.profile not in CLIP_SCORE_PROFILES:
             raise ValueError('Perfil do Clipador desconhecido.')
         if self.mode not in ('Rápido','Equilibrado','Avançado'):
             raise ValueError('Modo do Clipador desconhecido.')
         if self.score_weights is not None:
-            from .clip_audio_signals import CLIP_SCORE_PROFILES
             allowed=set(CLIP_SCORE_PROFILES['Geral'])
             weights={str(key):float(value) for key,value in self.score_weights.items()}
             if (not weights or set(weights)-allowed or

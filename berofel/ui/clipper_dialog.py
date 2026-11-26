@@ -57,8 +57,7 @@ class ClipperDialog(QDialog):
         options.addWidget(self.sensitivity)
         options.addWidget(QLabel('perfil'))
         self.profile=QComboBox()
-        self.profile.addItems(('Geral','Podcast','Gameplay','Tutorial','Terror',
-                               'Humor','Debate','Vlog'))
+        self.profile.addItems(tuple(CLIP_SCORE_PROFILES))
         self.profile.setToolTip('Altera os pesos do ranking editorial; não executa outra transcrição.')
         options.addWidget(self.profile)
         options.addWidget(QLabel('modo'))
