@@ -14,9 +14,10 @@ from bisect import bisect_right
 from .ai_cache import digest, file_sha256
 
 _PROMPT_MAX_SECONDS = 30.0
+_REFERENCE_ACOUSTIC_MIN_SECONDS = 2.0
 # Bump whenever candidate selection, trimming, resampling or conditioning
 # preparation changes; cached speaker prompts must not survive a new window.
-REFERENCE_PREPARATION_VERSION = 7
+REFERENCE_PREPARATION_VERSION = 8
 REFERENCE_WINDOW_CACHE_VERSION = 1
 VOICE_REFERENCE_REPORT_VERSION = 1
 _SILENCE_THRESHOLD_DB = -38
@@ -168,13 +169,33 @@ def _candidate_acoustic_metrics(source: Path, binary: str,
     # ranking is an optional refinement, so missing PCM must fall back to the
     # VAD ordering rather than fail voice preparation.
     pcm = getattr(result, 'stdout', b'') or b''
-    if result.returncode or len(pcm) < 16000 * 4:
+    minimum_pcm_bytes = int(16000 * 4 * _REFERENCE_ACOUSTIC_MIN_SECONDS)
+    if result.returncode or len(pcm) < minimum_pcm_bytes:
         return None
     try:
         from .voice_intelligence.acoustic_analyzer import analyze_pcm_f32le
         return analyze_pcm_f32le(pcm, sample_rate=16000, frame_ms=20)
     except (ValueError, OverflowError):
         return None
+
+
+def _rank_reference_shortlist(shortlist_records: list[dict], acoustics: dict,
+                              fallback: list):
+    """Compare acoustically measured candidates on a consistent evidence set.
+
+    If at least one PCM scan succeeded, candidates whose scan failed are not
+    mixed into that ranking: renormalizing each candidate over different
+    feature subsets can otherwise reward a missing measurement. If no scan
+    succeeded, preserve the full VAD-only ranking.
+    """
+    if not acoustics:
+        return fallback
+    measured = [candidate for candidate in shortlist_records
+                if (float(candidate['start']), float(candidate['duration'])) in acoustics]
+    if not measured:
+        return fallback
+    from .voice_intelligence.reference_selector import rank_reference_candidates
+    return rank_reference_candidates(measured, acoustics)
 
 
 @lru_cache(maxsize=32)
@@ -276,7 +297,7 @@ def _best_reference_window(path: str, size: int, mtime_ns: int) -> tuple[float, 
         'active_seconds': item.active_seconds,
         'active_fraction': item.active_fraction,
     } for item in shortlist]
-    ranked = rank_reference_candidates(shortlist_records, acoustics) if acoustics else preliminary
+    ranked = _rank_reference_shortlist(shortlist_records, acoustics, preliminary)
     selected = ranked[0]
     return selected.start, selected.duration, selected.active_fraction
 

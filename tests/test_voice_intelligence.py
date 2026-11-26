@@ -324,7 +324,37 @@ class PureCEmotionVectorMathTests(TestCase):
 class ReferenceWindowRankingTests(TestCase):
     def test_reference_selection_revision_invalidates_conditioning_cache(self):
         from berofel.services.audio_reference import REFERENCE_PREPARATION_VERSION
-        self.assertEqual(REFERENCE_PREPARATION_VERSION, 7)
+        self.assertEqual(REFERENCE_PREPARATION_VERSION, 8)
+
+    def test_partial_acoustic_scans_do_not_mix_unmeasured_candidates(self):
+        from berofel.services.audio_reference import _rank_reference_shortlist
+        candidates = [
+            {'start': 0.0, 'duration': 3.0,
+             'active_seconds': 3.0, 'active_fraction': 1.0},
+            {'start': 12.0, 'duration': 6.0,
+             'active_seconds': 5.0, 'active_fraction': 5.0 / 6.0},
+        ]
+        fallback = rank_reference_candidates(candidates)
+        ranked = _rank_reference_shortlist(candidates, {
+            (12.0, 6.0): {'rms_dbfs': -24.0, 'clipped_fraction': 0.0,
+                          'near_silence_fraction': 0.0},
+        }, fallback)
+        self.assertEqual([(item.start, item.duration) for item in ranked],
+                         [(12.0, 6.0)])
+
+    def test_reference_acoustic_scan_accepts_two_second_windows(self):
+        from berofel.services.audio_reference import _candidate_acoustic_metrics
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        source = Path('reference.wav')
+        pcm_2s = b'\0' * (16000 * 4 * 2)
+        with patch('berofel.services.audio_reference.subprocess.run',
+                   return_value=SimpleNamespace(returncode=0, stdout=pcm_2s)), \
+             patch('berofel.services.voice_intelligence.acoustic_analyzer.analyze_pcm_f32le',
+                   return_value={'rms_dbfs': -30.0}) as analyze:
+            result = _candidate_acoustic_metrics(source, 'ffmpeg', 0.0, 3.0)
+        self.assertEqual(result, {'rms_dbfs': -30.0})
+        analyze.assert_called_once()
 
     def test_clean_shorter_window_can_beat_longer_noisy_window(self):
         candidates = [
