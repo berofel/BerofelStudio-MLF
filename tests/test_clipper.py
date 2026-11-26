@@ -291,6 +291,23 @@ class ClipperTests(unittest.TestCase):
         self.assertEqual(result['clips'][0]['status'],'missing_transcript')
         self.assertIn('Transcreva',result['clips'][0]['warnings'][0])
 
+    def test_saved_parakeet_transcript_is_ranked_without_invoking_any_asr(self):
+        with tempfile.TemporaryDirectory(prefix='bfs_clipper_no_asr_') as folder:
+            source=Path(folder)/'source.wav';source.write_bytes(b'fixture')
+            clip=Clip(str(source),0.,36.,kind='audio')
+            words=transcript(source,count=180,step=.2)
+            options=ClipperOptions(8.,16.,5,6.,mode='Rápido')
+            with patch('berofel.services.clipper.audio_features',return_value=(None,False)), \
+                 patch('berofel.services.parakeet_asr.transcribe_file') as parakeet:
+                first=analyze_clips([clip],words,options,cache_dir=Path(folder)/'cache')
+                changed=ClipperOptions(8.,16.,5,6.,profile='Gameplay',mode='Rápido')
+                second=analyze_clips([clip],words,changed,cache_dir=Path(folder)/'cache')
+        parakeet.assert_not_called()
+        self.assertTrue(first['candidates'])
+        self.assertTrue(second['candidates'])
+        self.assertEqual(first['stats']['decoded_seconds'],0.)
+        self.assertEqual(second['stats']['decoded_seconds'],0.)
+
     def test_result_cache_is_invalidated_by_transcript_text_and_options(self):
         with tempfile.TemporaryDirectory(prefix='bfs_clipper_cache_') as folder:
             source=Path(folder)/'source.wav';source.write_bytes(b'synthetic placeholder')
