@@ -346,7 +346,42 @@ class PureCEmotionVectorMathTests(TestCase):
 class ReferenceWindowRankingTests(TestCase):
     def test_reference_selection_revision_invalidates_conditioning_cache(self):
         from berofel.services.audio_reference import REFERENCE_PREPARATION_VERSION
-        self.assertEqual(REFERENCE_PREPARATION_VERSION, 8)
+        self.assertEqual(REFERENCE_PREPARATION_VERSION, 9)
+
+    def test_pitch_trackability_is_optional_selection_evidence_not_identity(self):
+        from berofel.services.voice_intelligence.reference_selector import (
+            score_reference_candidate)
+        candidate = {'start': 0., 'duration': 10., 'active_seconds': 9.,
+                     'active_fraction': .9}
+        without_pitch = score_reference_candidate(candidate, {
+            'rms_dbfs': -24., 'clipped_fraction': 0.,
+            'near_silence_fraction': .02})
+        with_pitch = score_reference_candidate(candidate, {
+            'rms_dbfs': -24., 'clipped_fraction': 0.,
+            'near_silence_fraction': .02, 'pitch_trackability': .9})
+        low_pitch = score_reference_candidate(candidate, {
+            'rms_dbfs': -24., 'clipped_fraction': 0.,
+            'near_silence_fraction': .02, 'pitch_trackability': .1})
+        self.assertGreater(with_pitch.score, low_pitch.score)
+        self.assertAlmostEqual(with_pitch.components['pitch_trackability'], .9)
+        self.assertNotIn('speaker_identity', with_pitch.components)
+
+    def test_candidate_pcm_measurement_reuses_pcm_for_bounded_yin_scan(self):
+        import numpy as np
+        from berofel.services.audio_reference import _candidate_acoustic_metrics
+        rate = 16000
+        signal = (.12 * np.sin(2 * np.pi * 180 * np.arange(rate * 3) / rate))
+        pcm = np.asarray(signal, dtype='<f4').tobytes()
+        completed = Mock(returncode=0, stdout=pcm, stderr='')
+        with patch('berofel.services.audio_reference.subprocess.run',
+                   return_value=completed), \
+             patch('berofel.services.voice_intelligence.acoustic_analyzer.analyze_pitch_yin_f32le',
+                   return_value={'sampled_frame_count': 6, 'voiced_frame_count': 5,
+                       'confidence_median': .9}) as yin:
+            metrics = _candidate_acoustic_metrics(Path('reference.wav'), 'ffmpeg', 2., 3.)
+        self.assertAlmostEqual(metrics['pitch_trackability'], .65 * (5 / 6) + .35 * .9)
+        self.assertAlmostEqual(metrics['pitch_voiced_frame_fraction'], 5 / 6)
+        yin.assert_called_once_with(pcm, sample_rate=16000, max_frames=40)
 
     def test_partial_acoustic_scans_do_not_mix_unmeasured_candidates(self):
         from berofel.services.audio_reference import _rank_reference_shortlist

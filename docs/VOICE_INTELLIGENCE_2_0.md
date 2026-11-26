@@ -97,6 +97,12 @@ O YIN foi medido separadamente em PCM sintético (tom de 145 Hz, 30 s, 1,92 MB):
 
 Na inspeção da referência autorizada local disponível, o arquivo tinha 6,06 s; a janela analisada tinha 3,00 s. A tarefa levou 1,12 s, mas só 1 de 7 quadros amostrados passou pelos critérios de voz/confiança. O sistema corretamente não exibiu F0 agregado. Isso valida o fail-safe em uma amostra real curta; não valida estabilidade de F0 em voz contínua, nem identidade.
 
+### Seleção de referência v9
+
+A shortlist de janelas agora reaproveita o PCM já decodificado dos oito candidatos acústicos e executa uma amostragem YIN limitada a 40 quadros. Quando há pelo menos três quadros vozeados e confiança mediana calculável, a seleção incorpora `pitch_trackability` (65% da fração de quadros vozeados + 35% da confiança YIN). O sinal é evidência auxiliar de periodicidade/vozeabilidade; harmônicos musicais também podem passar, portanto ele não identifica a pessoa, não é SNR e não prova clonagem melhor. Se a medida for insuficiente, ela fica ausente e os outros componentes são renormalizados. A versão de preparação/cache subiu para 9.
+
+Em uma execução com o WAV CC0 local `assets/voices/stuart_bell.wav` (8,454 s), a varredura fria selecionou a janela de 3 s iniciada em 4,616 s, com fração de atividade VAD 1,0, e terminou em 0,918 s no ambiente atual. Isso valida a execução e o custo em um fixture curto licenciado; não é uma comparação de qualidade vocal e não representa referências de uma hora. Os testes cobrem a incorporação da medida, o comportamento opcional e a chamada YIN sobre o mesmo PCM.
+
 ## Limitações e próximos passos de validação
 
 * Repetir medições várias vezes em condições controladas e medir RAM/CPU de pico.

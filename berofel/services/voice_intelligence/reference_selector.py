@@ -43,6 +43,7 @@ def score_reference_candidate(candidate: dict, acoustic: dict | None = None
         "recording_level": None,
         "low_clipping": None,
         "low_near_silence": None,
+        "pitch_trackability": None,
     }
     rms_dbfs = acoustic.get("rms_dbfs")
     if rms_dbfs is not None and math.isfinite(float(rms_dbfs)):
@@ -53,9 +54,12 @@ def score_reference_candidate(candidate: dict, acoustic: dict | None = None
     near_silence = acoustic.get("near_silence_fraction")
     if near_silence is not None and math.isfinite(float(near_silence)):
         components["low_near_silence"] = 1.0 - _unit(float(near_silence))
-    weights = {"voice_activity": .35, "useful_duration": .05,
-               "recording_level": .20, "low_clipping": .25,
-               "low_near_silence": .15}
+    pitch_trackability = acoustic.get("pitch_trackability")
+    if pitch_trackability is not None and math.isfinite(float(pitch_trackability)):
+        components["pitch_trackability"] = _unit(pitch_trackability)
+    weights = {"voice_activity": .30, "useful_duration": .05,
+               "recording_level": .18, "low_clipping": .22,
+               "low_near_silence": .15, "pitch_trackability": .10}
     available = [(name, weights[name], value) for name, value in components.items()
                  if value is not None]
     total_weight = sum(weight for _name, weight, _value in available)

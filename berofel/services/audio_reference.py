@@ -17,7 +17,7 @@ _PROMPT_MAX_SECONDS = 30.0
 _REFERENCE_ACOUSTIC_MIN_SECONDS = 2.0
 # Bump whenever candidate selection, trimming, resampling or conditioning
 # preparation changes; cached speaker prompts must not survive a new window.
-REFERENCE_PREPARATION_VERSION = 8
+REFERENCE_PREPARATION_VERSION = 9
 REFERENCE_WINDOW_CACHE_VERSION = 1
 VOICE_REFERENCE_REPORT_VERSION = 1
 _SILENCE_THRESHOLD_DB = -38
@@ -173,8 +173,31 @@ def _candidate_acoustic_metrics(source: Path, binary: str,
     if result.returncode or len(pcm) < minimum_pcm_bytes:
         return None
     try:
-        from .voice_intelligence.acoustic_analyzer import analyze_pcm_f32le
-        return analyze_pcm_f32le(pcm, sample_rate=16000, frame_ms=20)
+        from .voice_intelligence.acoustic_analyzer import (
+            analyze_pcm_f32le, analyze_pitch_yin_f32le)
+        metrics = analyze_pcm_f32le(pcm, sample_rate=16000, frame_ms=20)
+        # The PCM was already decoded for this candidate. Reuse it for a
+        # bounded YIN scan to estimate whether its activity contains voiced,
+        # trackable speech rather than relying on level alone. This is not a
+        # speaker-identity measure and cannot distinguish speech from every
+        # harmonic instrument; the existing VAD and recording-quality checks
+        # remain independent evidence.
+        try:
+            pitch = analyze_pitch_yin_f32le(
+                pcm, sample_rate=16000, max_frames=40)
+        except (RuntimeError, ValueError, OverflowError):
+            pitch = None
+        if (pitch is not None and pitch.get('sampled_frame_count') and
+                pitch.get('confidence_median') is not None and
+                int(pitch.get('voiced_frame_count', 0)) >= 3):
+            sampled = max(1, int(pitch['sampled_frame_count']))
+            voiced_fraction = min(1., max(0.,
+                int(pitch['voiced_frame_count']) / sampled))
+            confidence = min(1., max(0., float(pitch['confidence_median'])))
+            metrics['pitch_trackability'] = .65 * voiced_fraction + .35 * confidence
+            metrics['pitch_voiced_frame_fraction'] = voiced_fraction
+            metrics['pitch_confidence_median'] = confidence
+        return metrics
     except (ValueError, OverflowError):
         return None
 
@@ -528,12 +551,20 @@ def _inspect_voice_reference_uncached(voice: str | Path) -> dict:
         if clipped>.01: warnings.append('Há clipping perceptível; reduza o ganho e grave novamente se possível.')
         if silence>.50: warnings.append('Mais de 50% do trecho está quase silencioso; escolha uma fala mais contínua ou grave uma amostra com menos pausas.')
         from .voice_intelligence.reference_selector import score_reference_candidate
+        quality_acoustics = {
+            'rms_dbfs': rms_dbfs, 'clipped_fraction': clipped,
+            'near_silence_fraction': silence}
+        pitch_sampled = int(pitch_features.get('sampled_frame_count') or 0)
+        pitch_voiced = int(pitch_features.get('voiced_frame_count') or 0)
+        pitch_confidence = pitch_features.get('confidence_median')
+        if pitch_sampled > 0 and pitch_voiced >= 3 and pitch_confidence is not None:
+            quality_acoustics['pitch_trackability'] = (
+                .65 * min(1., max(0., pitch_voiced / pitch_sampled))
+                + .35 * min(1., max(0., float(pitch_confidence))))
         quality = score_reference_candidate({
             'start': float(selected_start), 'duration': duration,
             'active_fraction': float(active_fraction),
-            'active_seconds': duration * float(active_fraction)}, {
-                'rms_dbfs': rms_dbfs, 'clipped_fraction': clipped,
-                'near_silence_fraction': silence})
+            'active_seconds': duration * float(active_fraction)}, quality_acoustics)
         return {'duration':duration,'source_duration':source_duration,
                 'selected_start':float(selected_start),'active_fraction':float(active_fraction),
                 'sample_rate':int(rate),'rms_dbfs':float(rms_dbfs),
