@@ -3895,6 +3895,7 @@ class MainWindow(QMainWindow):
         originals=copy.deepcopy({target.original_id:self.project.clip(target.original_id)
                                  for target in targets})
         dialog=ClipperDialog(self)
+        dialog.set_thumbnail_provider(self.timeline.view.visual_cache)
         dialog._clipper_context={'clips':copy.deepcopy(usable),'targets':copy.deepcopy(targets),
             'originals':originals,'words':words,'missing':missing}
         dialog.analyze_requested.connect(

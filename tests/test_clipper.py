@@ -477,6 +477,8 @@ class ClipperTests(unittest.TestCase):
         self.assertTrue(hit2)
         np.testing.assert_allclose(frames.rms_dbfs,frames2.rms_dbfs)
         np.testing.assert_allclose(frames.peak_dbfs,frames2.peak_dbfs)
+        np.testing.assert_allclose(frames.spectral_flux,frames2.spectral_flux)
+        np.testing.assert_allclose(frames.zero_crossing_rate,frames2.zero_crossing_rate)
 
     def test_relative_audio_surge_is_linked_to_existing_transcript_words(self):
         rate=16000

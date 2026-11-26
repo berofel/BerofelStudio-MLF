@@ -10,6 +10,7 @@ Use cached feature arrays when available: don't decode audio a second time.
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+from array import array
 from typing import Iterable, Mapping, Sequence
 import re
 import unicodedata
@@ -122,12 +123,26 @@ class FrameFeatures:
     frame_ms: float
     sample_rate: int
     level_kind: str = 'pcm_rms'
+    spectral_flux: np.ndarray | None = None
+    zero_crossing_rate: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         lengths = [len(self.times_ms), len(self.rms_dbfs),
                    len(self.peak_dbfs), len(self.clip_fraction)]
         if len(set(lengths)) != 1:
             raise ValueError(f"Feature arrays have different lengths: {lengths}")
+        arrays = (self.times_ms, self.rms_dbfs, self.peak_dbfs,
+                  self.clip_fraction, self.spectral_flux,
+                  self.zero_crossing_rate)
+        if any(values is not None and not np.isfinite(values).all()
+               for values in arrays):
+            raise ValueError("Feature arrays must contain only finite values")
+        if len(self.times_ms) > 1 and np.any(np.diff(self.times_ms) < 0):
+            raise ValueError("Feature timestamps must be ordered")
+        for name in ('spectral_flux', 'zero_crossing_rate'):
+            values = getattr(self, name)
+            if values is not None and len(values) != lengths[0]:
+                raise ValueError(f"{name} must have the same length as frame features")
         if self.frame_ms <= 0 or self.sample_rate <= 0:
             raise ValueError("frame_ms and sample_rate must be positive")
 
@@ -140,6 +155,10 @@ class FrameFeatures:
             "frame_ms": self.frame_ms,
             "sample_rate": self.sample_rate,
             "level_kind": self.level_kind,
+            "spectral_flux": (self.spectral_flux.round(6).tolist()
+                              if self.spectral_flux is not None else None),
+            "zero_crossing_rate": (self.zero_crossing_rate.round(6).tolist()
+                                   if self.zero_crossing_rate is not None else None),
         }
 
     @classmethod
@@ -152,6 +171,10 @@ class FrameFeatures:
             frame_ms=float(d["frame_ms"]),
             sample_rate=int(d["sample_rate"]),
             level_kind=str(d.get('level_kind','pcm_rms')),
+            spectral_flux=(np.asarray(d['spectral_flux'],dtype=np.float32)
+                           if d.get('spectral_flux') is not None else None),
+            zero_crossing_rate=(np.asarray(d['zero_crossing_rate'],dtype=np.float32)
+                                if d.get('zero_crossing_rate') is not None else None),
         )
 
 
@@ -173,9 +196,16 @@ def extract_frames_from_chunks(
     n = round(sample_rate * frame_ms / 1000)
     if n < 1:
         raise ValueError("Frame size too small")
-    rms_list: list[float] = []
-    peak_list: list[float] = []
-    clipped_list: list[float] = []
+    fft_size = 1 << max(8, int(n - 1).bit_length())
+    analysis_window = np.hanning(n).astype(np.float32)
+    # Typed float32 buffers avoid retaining millions of boxed Python floats
+    # for long recordings. Each frame still occupies only 20 ms of source.
+    rms_list = array('f')
+    peak_list = array('f')
+    clipped_list = array('f')
+    flux_list = array('f')
+    zcr_list = array('f')
+    previous_spectrum = None
     rem = np.empty(0, dtype=np.float32)
     for chunk in chunks:
         a = np.asarray(chunk, dtype=np.float32).reshape(-1)
@@ -192,18 +222,41 @@ def extract_frames_from_chunks(
             rms_list.extend(np.sqrt(np.mean(framed.astype(np.float64)**2, axis=1)).tolist())
             peak_list.extend(np.max(np.abs(framed), axis=1).tolist())
             clipped_list.extend(np.mean(np.abs(framed) >= 0.995, axis=1).tolist())
+            signs = framed >= 0
+            zcr = np.mean(signs[:, 1:] != signs[:, :-1], axis=1) if n > 1 else np.zeros(len(framed))
+            zcr_list.extend(zcr.tolist())
+            # One small FFT per existing 20 ms PCM frame. Normalizing each
+            # magnitude spectrum reduces sensitivity to microphone gain.
+            spectra = np.abs(np.fft.rfft(framed * analysis_window,
+                                           n=fft_size, axis=1)).astype(np.float32)
+            spectra /= np.maximum(np.sum(spectra, axis=1, keepdims=True), EPS)
+            previous = (previous_spectrum[None, :] if previous_spectrum is not None
+                        else spectra[:1])
+            sequence = np.concatenate((previous, spectra), axis=0)
+            delta = np.maximum(0., sequence[1:] - sequence[:-1])
+            flux_list.extend(np.sum(delta * delta, axis=1).tolist())
+            previous_spectrum = spectra[-1].copy()
         rem = a[full_len:].copy()
     if rem.size:
         rms_list.append(float(np.sqrt(np.mean(rem.astype(np.float64)**2))))
         peak_list.append(float(np.max(np.abs(rem))))
         clipped_list.append(float(np.mean(np.abs(rem) >= 0.995)))
+        zcr_list.append(float(np.mean((rem[1:] >= 0) != (rem[:-1] >= 0))) if len(rem) > 1 else 0.)
+        padded = np.zeros(n, dtype=np.float32)
+        padded[:len(rem)] = rem
+        spectrum = np.abs(np.fft.rfft(padded * analysis_window, n=fft_size)).astype(np.float32)
+        spectrum /= max(float(np.sum(spectrum)), EPS)
+        flux_list.append(float(np.sum(np.maximum(0., spectrum - previous_spectrum) ** 2))
+                         if previous_spectrum is not None else 0.)
     return FrameFeatures(
         times_ms=np.arange(len(rms_list), dtype=np.float64) * (n * 1000.0 / sample_rate),
-        rms_dbfs=_to_dbfs(np.asarray(rms_list, dtype=np.float64)),
-        peak_dbfs=_to_dbfs(np.asarray(peak_list, dtype=np.float64)),
-        clip_fraction=np.asarray(clipped_list, dtype=np.float32),
+        rms_dbfs=_to_dbfs(np.frombuffer(rms_list, dtype=np.float32)),
+        peak_dbfs=_to_dbfs(np.frombuffer(peak_list, dtype=np.float32)),
+        clip_fraction=np.frombuffer(clipped_list, dtype=np.float32),
         frame_ms=n * 1000.0 / sample_rate,
         sample_rate=sample_rate,
+        spectral_flux=np.frombuffer(flux_list, dtype=np.float32),
+        zero_crossing_rate=np.frombuffer(zcr_list, dtype=np.float32),
     )
 
 
@@ -394,6 +447,22 @@ def score_clip(
         audio = 0.5
     else:
         audio = 0.0
+    spectral_novelty = None
+    if (frames is not None and frames.spectral_flux is not None and
+            len(frames.spectral_flux) == len(frames.times_ms)):
+        left = int(np.searchsorted(frames.times_ms, start, side='left'))
+        right = int(np.searchsorted(frames.times_ms, end, side='left'))
+        all_flux = frames.spectral_flux
+        local = all_flux[left:right]
+        if local.size and all_flux.size:
+            baseline = float(np.median(all_flux))
+            mad = float(np.median(np.abs(all_flux - baseline)))
+            scale = max(1.4826 * mad, 1e-6)
+            relative_flux = max(0., float(np.percentile(local, 90)) - baseline) / scale
+            spectral_novelty = float(np.clip((relative_flux - 1.) / 4., 0., 1.))
+            # Spectral change is a small positive cue, never a standalone
+            # candidate or a claim that a sound is meaningful.
+            audio = float(np.clip(audio + .20 * spectral_novelty, 0., 1.))
     figurative = float(np.clip(candidate.get('figurative_score', 0.0), 0, 1))
     discourse = float(np.clip(candidate.get('discourse_score', 0.0), 0, 1))
     # Explainable editorial dimensions. Values not supplied by the analysis are
@@ -478,6 +547,8 @@ def score_clip(
         reasons.append("Sinais discursivos de reação, humor, pergunta retórica ou reinício; conferir no áudio")
     if verified and frames is not None and frames.level_kind != 'pcm_rms':
         reasons.append('Sinal acústico aproximado pela waveform de pico da timeline (100 ms)')
+    if spectral_novelty is not None and spectral_novelty >= .25:
+        reasons.append('Mudança espectral relativa no áudio (cue acústico, sem interpretação semântica)')
     semantic = .6*context + .4*hook
     return {
         "start_ms": int(start), "end_ms": int(end),
@@ -488,6 +559,8 @@ def score_clip(
         "discourse_score": round(discourse, 3) if 'discourse_score' in candidate else None,
         "audio_available": audio_available,
         "audio_event_evidence": bool(verified),
+        "spectral_novelty": round(spectral_novelty, 3)
+            if spectral_novelty is not None else None,
         "audio_source": frames.level_kind if frames is not None else None,
         "boundary_score": round(boundary, 3),
         "profile": profile if profile in CLIP_SCORE_PROFILES else 'Geral',

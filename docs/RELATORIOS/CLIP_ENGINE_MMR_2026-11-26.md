@@ -7,7 +7,7 @@ Branch de trabalho: `feat/berofel-clip-engine-mmr`
 
 - ASR existente: `nemo-parakeet-tdt-0.6b-v3`, artefatos ONNX INT8, adaptador `onnx-asr==0.12.0`, `CPUExecutionProvider`, com Silero ONNX local para VAD. A integração do clipador lê as palavras persistidas em `project.transcripts`; `analyze_clips` não carrega nem chama Parakeet. O runtime e o formato foram confirmados em `berofel/services/parakeet_asr.py`, `requirements-ai.txt` e no caminho de integração da janela.
 - Cada palavra Parakeet fornece texto, `start`, `end` e `probability=None`; após a conversão do projeto, os tempos são mantidos como segundos absolutos de origem. Não há confiança calibrada nem diarização garantida.
-- Modo Rápido usa a waveform visual existente (proxy de pico, 100 ms), quando completa; não inicia nova decodificação se ela faltar. Equilibrado/Avançado calculam PCM mono em streaming com FFmpeg e cacheiam RMS, pico e clipping a cada 20 ms. O Avançado adiciona TextRank lexical local. A opção visual lê miniaturas já existentes em cache.
+- Modo Rápido usa a waveform visual existente (proxy de pico, 100 ms), quando completa; não inicia nova decodificação se ela faltar. Equilibrado/Avançado calculam PCM mono em streaming com FFmpeg e cacheiam RMS, pico, clipping, fluxo espectral e ZCR a cada 20 ms. O Avançado adiciona TextRank lexical local. A opção visual lê miniaturas já existentes em cache, e os resultados podem exibir miniatura sem renderização antecipada.
 - TextRank e mudanças de tópico usam somente texto local. Candidatos preservam início/fim de palavras ou segmentos disponíveis, carregam justificativas e cobertura e passam pela revisão; o motor não aplica cortes nem renderiza candidatos automaticamente.
 
 ## Mudança implementada
@@ -20,7 +20,7 @@ O seletor final agora utiliza uma variante determinística de Maximal Marginal R
 - A similaridade combina IoU temporal (65%) e cosseno sobre conjuntos esparsos de termos de conteúdo (35%).
 - A seleção continua rejeitando contenção temporal acima do limite atual e duplicatas lexicais quase idênticas. Isso preserva os guardrails anteriores; o MMR organiza diversidade entre os candidatos restantes.
 - `lambda=0.75` é uma escolha heurística inicial, não calibrada com preferência humana. A entrada inválida de intervalo é ignorada; o parâmetro fora de `[0,1]` produz erro explícito.
-- O cache de ranking foi elevado da versão 8 para 9. O cache acústico permanece na versão 5 porque seu formato/extrator não mudou.
+- O cache de ranking é versão 9 e o extrator acústico versão 6; essa extração já estava integrada na branch DSP. A mudança MMR não incrementa de novo a versão do extrator, pois não altera os arrays acústicos.
 - Nenhuma dependência foi adicionada; nada foi copiado de projetos externos.
 
 ## Referências e licenças
@@ -35,6 +35,7 @@ O seletor final agora utiliza uma variante determinística de Maximal Marginal R
 
 - `python -m unittest discover -s tests -p test_clip_audio_signals.py -v`: **20/20 passaram**.
 - `python -m unittest discover -s tests -p test_clipper.py -v`: **27/27 passaram**.
+- A branch DSP integrada acrescenta cobertura do fluxo espectral e do painel de resultados; essa cobertura será reexecutada no conjunto final após a integração.
 - `python -m unittest discover -s tests -q`: **648 testes, OK; 6 ignorados** por pré-condições existentes. Uma mensagem de uso do benchmark Qwen aparece por um teste negativo de argumentos; não é falha da suíte.
 - `python -m compileall -q` nos dois serviços e no teste alterado: passou.
 - `python scripts/benchmark_clip_engine_synthetic.py --lengths 5 20 60 80 120 --repeats 2`: texto PT-BR sintético repetitivo, 2 repetições por modo/duração, sem mídia, áudio, vídeo, Parakeet ou anotações humanas. Medianas de parede:

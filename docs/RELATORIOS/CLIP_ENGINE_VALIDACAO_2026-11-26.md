@@ -19,6 +19,21 @@ Depois da alteração, `python -m unittest discover -s tests -q` executou **633 
 
 Foi acrescentada cobertura para ausência de transcrição: sugestão por burst sintético medido, proxy visual esparso em miniaturas locais, NMS, invalidação do ranking após alteração de thumbnail, ausência de chamada ao Parakeet e apresentação/ajuste temporal no diálogo Qt. `test_clipper.py` passou em **25 testes**, `test_clip_visual_signals.py` em **8 testes** e `test_actions_panel.py` em **89 testes**. `test_saved_parakeet_transcript_is_ranked_without_invoking_any_asr` confirma também que perfil diferente não chama `parakeet_asr.transcribe_file` nem decodifica PCM no modo Rápido.
 
+## Extensão DSP do Clip Engine — 26/11/2026
+
+O modo Equilibrado passou a medir, no mesmo fluxo PCM de 16 kHz/20 ms, fluxo espectral normalizado por magnitude e taxa de cruzamento por zero. A taxa ZCR é armazenada como diagnóstico, sem peso editorial. A novidade espectral mede somente mudança acústica: entra com contribuição máxima pequena (0,20 na dimensão de áudio), não inicia candidatos por conta própria e não afirma detectar emoção, risada, fala ou importância. O modo Rápido continua consumindo apenas a waveform existente. O extrator avançou para v6, invalidando uma vez somente as features PCM antigas sem esse sinal; transcrições Parakeet permanecem compatíveis e não são refeitas.
+
+Teste sintético de mudança de frequência a volume constante confirmou um pico local de fluxo espectral; teste em blocos confirmou paridade com alimentação PCM em uma única peça, e o contrato rejeita NaN/Inf e timestamps fora de ordem. Testes direcionados: `test_clip_audio_signals.py` **20/20**, `test_clipper.py` **27/27** e `test_actions_panel.py` **91/91** (inclui UI Qt offscreen e consulta de miniatura em cache sem solicitar decodificação). Suíte completa final: **649 testes executados, 643 aprovados e 6 ignorados**; `git diff --check` e `compileall` passaram.
+
+Benchmark reproduzível: `python scripts/benchmark_clip_audio_features.py --minutes 5 80 --repeats 1`. A execução desta sessão, em PCM sintético por streaming, teve estes resultados:
+
+| Duração | Referência RMS/pico/clipping | DSP atual | Aumento de tempo | Pico RSS amostrado da referência → DSP |
+|---:|---:|---:|---:|---:|
+| 5 min | 0,3075 s | 0,4122 s | 0,1047 s | 4,60 → 4,33 MiB |
+| 80 min | 4,3335 s | 5,2426 s | 0,9091 s | 29,13 → 11,68 MiB |
+
+Uma repetição por célula não representa p50/p95 nem desempenho em Ryzen específico. O sinal foi gerado sinteticamente e o teste exclui FFmpeg, leitura de disco, ASR, VAD, ranking e qualidade editorial. A queda de memória veio da troca de listas de floats Python por buffers float32 tipados; a pequena diferença de tempo é o custo observado dos FFTs. O script registra separadamente CPU, parede, frames e RSS amostrado.
+
 ## Benchmark sintético repetido
 
 Comando:
