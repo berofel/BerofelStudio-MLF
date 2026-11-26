@@ -627,6 +627,35 @@ class ParakeetQualityInspectionTests(TestCase):
             self.assertFalse(changed['cache_hit'])
             self.assertEqual(parakeet.call_count, 3)
 
+    def test_inspector_invalidates_cache_when_parakeet_runtime_identity_changes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            audio = root / 'generated.wav'
+            audio.write_bytes(b'RIFF' + b'unchanged wav content' * 4)
+            cache = root / 'cache'
+            runtime = {'onnxruntime_version': 'runtime-v1'}
+
+            def ffmpeg_runner(command, **_kwargs):
+                with wave.open(command[-1], 'wb') as wav:
+                    wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(16000)
+                    wav.writeframes(struct.pack('<h', 3600) * 16000)
+                return Mock(returncode=0, stdout='', stderr='')
+
+            with patch('berofel.services.voice_intelligence.quality_inspector._parakeet_cache_identity',
+                       side_effect=lambda: dict(runtime)), \
+                 patch('berofel.services.parakeet_asr.transcribe_file',
+                       return_value={'text':'conteúdo reconhecido','words':[],
+                                     'backend':'onnxruntime-cpu'}) as parakeet:
+                first = inspect_generated_wav_with_parakeet(audio, 'conteúdo reconhecido',
+                    ffmpeg='ffmpeg', runner=ffmpeg_runner, cache_directory=cache)
+                runtime['onnxruntime_version'] = 'runtime-v2'
+                changed_runtime = inspect_generated_wav_with_parakeet(audio,
+                    'conteúdo reconhecido', ffmpeg='ffmpeg', runner=ffmpeg_runner,
+                    cache_directory=cache)
+            self.assertFalse(first['cache_hit'])
+            self.assertFalse(changed_runtime['cache_hit'])
+            self.assertEqual(parakeet.call_count, 2)
+
     def test_silent_output_is_reported_and_skips_parakeet(self):
         with tempfile.TemporaryDirectory() as folder:
             audio = Path(folder) / 'voice.wav'

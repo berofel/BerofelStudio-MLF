@@ -178,34 +178,60 @@ def inspect_pcm16_wav(path: str | Path, *, block_seconds: float = 1.0) -> dict:
 def _parakeet_cache_identity() -> dict:
     """Describe the installed ASR/runtime without loading either model."""
     from .. import parakeet_asr
-    try:
-        from importlib.metadata import version
-        runtime_version = version("onnx-asr")
-    except Exception:
-        runtime_version = "unknown"
+    from importlib.metadata import PackageNotFoundError, version
+
+    def package_version(name: str) -> str:
+        try:
+            return version(name)
+        except PackageNotFoundError:
+            return "not-installed"
+
     model_files = []
+    model_root_identity = "unavailable"
     try:
         from ..model_paths import parakeet_tdt_model_dir
         model_root = Path(parakeet_tdt_model_dir())
-        for model in sorted(model_root.rglob("*.onnx"), key=lambda item: item.name.casefold()):
+        model_root_identity = "available"
+        for model in sorted((item for item in model_root.rglob("*") if item.is_file()),
+                            key=lambda item: item.relative_to(model_root).as_posix().casefold()):
             try:
                 stat = model.stat()
-                model_files.append({"name": model.name, "size": stat.st_size,
+                model_files.append({"name": model.relative_to(model_root).as_posix(),
+                                    "size": stat.st_size,
                                     "mtime_ns": stat.st_mtime_ns})
             except OSError:
                 continue
     except (OSError, RuntimeError, ValueError):
         # A missing/unreadable model changes the key to an empty inventory;
         # it can never turn a previous cache entry into a hit accidentally.
+        model_root_identity = "unavailable"
         model_files = []
+    try:
+        adapter_source = Path(parakeet_asr.__file__).resolve()
+        adapter_hash = file_sha256(adapter_source) if adapter_source.is_file() else None
+    except (OSError, TypeError, ValueError):
+        adapter_hash = None
+    ffmpeg_identity = None
+    try:
+        from ..ffmpeg import ffmpeg_path
+        ffmpeg = Path(ffmpeg_path())
+        stat = ffmpeg.stat()
+        ffmpeg_identity = {"path": str(ffmpeg.resolve()), "size": stat.st_size,
+                           "mtime_ns": stat.st_mtime_ns}
+    except (OSError, RuntimeError, ValueError):
+        pass
     return {
         "cache_version": PARAKEET_CHECK_CACHE_VERSION,
         "adapter_model": parakeet_asr.MODEL_NAME,
+        "adapter_source_sha256": adapter_hash,
         "sample_rate": parakeet_asr.SAMPLE_RATE,
         "adapter_max_speech_seconds": parakeet_asr.MAX_SPEECH_SECONDS,
-        "onnx_asr_version": runtime_version,
+        "onnx_asr_version": package_version("onnx-asr"),
+        "onnxruntime_version": package_version("onnxruntime"),
         "provider": "CPUExecutionProvider",
+        "model_inventory": model_root_identity,
         "model_files": model_files,
+        "ffmpeg": ffmpeg_identity,
         "normalization": "ffmpeg-mono-16k-pcm16-v1",
         "integrity_method": "bounded_pcm16_rms_peak_clip_v1",
     }
