@@ -2,6 +2,10 @@
 
 O ASR usado no fluxo BVI é **Parakeet TDT v3 ONNX INT8 em CPU**, junto ao Silero VAD local. Faster-Whisper não faz parte desta rota e não foi usado nos resultados abaixo.
 
+## Reutilização real do cache de verificação Parakeet (26/11/2026)
+
+O inspetor foi executado sobre a amostra de voz CC0 `assets/voices/stuart_bell.wav` (8,454 s), sem alterar o WAV. A primeira checagem carregou e chamou Parakeet TDT v3 ONNX INT8 via `onnxruntime-cpu`, reconhecendo 23 palavras; a segunda, para o mesmo conteúdo, retornou `cache_hit=true` e o mesmo texto reconhecido, mesmo alterando o parâmetro de threads de 4 para 8. O cache temporário foi removido ao fim do processo. O texto ASR não foi registrado neste documento. Esta execução comprova a integração real do cache com o Parakeet instalado, não a precisão do reconhecimento, qualidade vocal ou desempenho em gravações longas. O texto esperado é comparado novamente a cada chamada, fora do cache, e requer validação humana para ser tratado como referência.
+
 ## Verificação exploratória de identidade Pure C
 
 Em 25/11/2026, foi gerada uma frase nova com a referência local autorizada, Qwen3-TTS Base Pure C INT8/6 threads e arquivo de saída em diretório temporário. A síntese levou 8,925 s e produziu WAV PCM válido de 5,12 s (245.804 bytes). O botão/manual checker extraiu os x-vectors da referência e saída pelo mesmo backend; a operação levou 10,370 s. O servidor terminou no mesmo perfil, INT8 e seis threads que tinha antes. O arquivo temporário foi removido. O valor do cosseno foi deliberadamente omitido deste relatório versionado para não persistir uma métrica derivada da gravação vocal privada. Esse experimento demonstra que o caminho de cálculo e restauração funciona para um par; não calibra um limiar, não mede MOS, não constitui avaliação auditiva e não permite concluir fidelidade geral. A comparação está marcada `calibrated=false` e nunca aprova/rejeita áudio automaticamente.
