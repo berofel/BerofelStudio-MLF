@@ -517,6 +517,33 @@ def score_clip(
             if mean_clip_fraction > 0.01:
                 raw -= 0.08
                 penalties.append("Amostras próximas ao limite digital em parte significativa do áudio")
+    transcript_confidence = candidate.get('transcript_confidence_score')
+    confidence_coverage = candidate.get('transcript_confidence_coverage', 1.0)
+    try:
+        transcript_confidence = float(transcript_confidence)
+    except (TypeError, ValueError):
+        transcript_confidence = None
+    try:
+        confidence_coverage = float(confidence_coverage)
+    except (TypeError, ValueError):
+        confidence_coverage = 0.
+    if (transcript_confidence is not None and
+            (not np.isfinite(transcript_confidence) or
+             not 0. <= transcript_confidence <= 1.)):
+        transcript_confidence = None
+    if (not np.isfinite(confidence_coverage) or
+            not 0. <= confidence_coverage <= 1.):
+        confidence_coverage = 0.
+    if (transcript_confidence is not None and
+            confidence_coverage > 0.):
+        # ASR confidence may be uncalibrated. Use a deliberately small capped
+        # ranking penalty, weighted by coverage, and disclose it to the reviewer.
+        confidence_penalty = .08 * (1. - transcript_confidence) * confidence_coverage
+        raw -= confidence_penalty
+        if confidence_penalty >= .01:
+            penalties.append(
+                f"Confiança ASR relatada baixa ({transcript_confidence:.2f}; "
+                f"cobertura {confidence_coverage:.0%}); sinal não calibrado")
     # Prevent noisy clips from outranking semantically incoherent clips.
     if context < 0.5:
         raw = min(raw, 0.59)
@@ -561,6 +588,10 @@ def score_clip(
         "audio_event_evidence": bool(verified),
         "spectral_novelty": round(spectral_novelty, 3)
             if spectral_novelty is not None else None,
+        "transcript_confidence_score": (
+            round(transcript_confidence, 3) if transcript_confidence is not None else None),
+        "transcript_confidence_coverage": (
+            round(confidence_coverage, 3) if transcript_confidence is not None else 0.),
         "audio_source": frames.level_kind if frames is not None else None,
         "boundary_score": round(boundary, 3),
         "profile": profile if profile in CLIP_SCORE_PROFILES else 'Geral',

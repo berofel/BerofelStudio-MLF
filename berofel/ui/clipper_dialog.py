@@ -344,7 +344,8 @@ class ClipperDialog(QDialog):
         combo.clear()
         for choice in choices:
             at=int(choice['ms'])
-            combo.addItem(f"{at/1000:.2f}s · {choice.get('word','')}",at)
+            label=choice.get('label',choice.get('word',''))
+            combo.addItem(f"{at/1000:.2f}s · {label}",at)
         index=combo.findData(int(selected_ms))
         combo.setCurrentIndex(max(0,index))
 
@@ -411,7 +412,10 @@ class ClipperDialog(QDialog):
             candidate['suggested_title']=suggest_title(candidate['text'])
         warning=('Bordas ajustadas por tempo; confirme o acontecimento no preview.'
                  if not candidate.get('transcript_available',True) else
-                 'Bordas ajustadas por palavra; a nota original não foi recalculada.')
+                 ('Bordas ajustadas pelos limites disponíveis dos segmentos; '
+                  'a precisão é reduzida e a nota original não foi recalculada.'
+                  if candidate.get('timestamp_precision')=='segment' else
+                  'Bordas ajustadas por palavra; a nota original não foi recalculada.'))
         if warning not in candidate['warnings']:candidate['warnings'].append(warning)
         row=self.table.currentRow()
         self.table.item(row,0).setData(Qt.ItemDataRole.UserRole,candidate)

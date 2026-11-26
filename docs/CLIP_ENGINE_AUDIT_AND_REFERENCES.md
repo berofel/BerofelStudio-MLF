@@ -2,6 +2,12 @@
 
 Data da revisão: 26/11/2026
 
+## Contrato de timestamps e confiança da transcrição
+
+A normalização do Clip Engine agora aceita tanto palavras com `source_start`/`source_end` quanto documentos com segmentos nesses mesmos tempos de origem. Quando há palavras temporizadas dentro de um segmento, preserva esses limites; quando não há, o segmento inteiro vira uma unidade de seleção. O motor não distribui artificialmente uma frase por timestamps calculados a partir do número de caracteres. A interface marca a precisão como segmentar e restringe o ajuste às bordas observadas.
+
+`probability`/`confidence` é preservado apenas se for número finito entre 0 e 1. Se a fonte não fornecer confiança, não há penalidade. Se houver, uma penalidade limitada a 8% do score bruto é ponderada pela cobertura disponível e identificada como sinal ASR não calibrado. A implementação atual do Parakeet produz `probability=None`, então essa dimensão permanece indisponível na rota usual. O resultado cacheado foi versionado para invalidar rankings anteriores à mudança; transcrição e features acústicas não são invalidadas.
+
 ## Correção de duração na timeline com velocidade alterada
 
 O escopo de edição fornece limites da mídia original e mantém a velocidade de reprodução do bloco. O Clip Engine conserva esse contrato: Parakeet, eventos e cortes continuam em segundos da fonte. Agora, os limites mínimo/máximo escolhidos pelo usuário são limites de duração reproduzida; para buscar palavras/acontecimentos em mídia, o motor converte a janela por `source_duration = playback_duration × clip.speed`. A duração apresentada no resultado é `source_duration / clip.speed`, e a interface identifica separadamente tempo de fonte e duração na timeline. Os controles de ajuste de borda usam limites equivalentes em tempo da fonte.

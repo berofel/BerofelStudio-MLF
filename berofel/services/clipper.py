@@ -29,7 +29,7 @@ from .clip_visual_signals import (read_cached_visual_signals,
     score_cached_visual_interval, detect_cached_visual_events)
 from .ffmpeg import ffmpeg_path, media_info
 
-CLIPPER_VERSION = 11
+CLIPPER_VERSION = 12
 # Keep the persisted v5 feature keys compatible: the PCM/waveform extraction
 # format and algorithm did not change. Bump this independently only when they do.
 FEATURE_EXTRACTOR_VERSION = 6
@@ -386,23 +386,76 @@ def _features_from_cached_waveform(source: str, start: float, end: float,
 
 
 def _normalise_words(clip, words: Sequence[Mapping]) -> list[dict]:
+    """Normalize persisted word or segment timing into source-time units.
+
+    Word timestamps are preferred.  A transcript containing only segment
+    boundaries is still useful for contextual ranking, but each segment stays
+    one indivisible unit: this adapter never fabricates per-word alignment.
+    Nested documents may use ``segments=[{source_start, source_end, text,
+    words=[...]}]``; only child words with their own source bounds are
+    flattened.
+    """
     source = str(Path(clip.source).resolve())
     result = []
-    for index, word in enumerate(words):
+
+    def append_unit(unit: Mapping, index: int, *, inherited_source: str,
+                    precision: str) -> None:
         try:
-            if str(Path(word.get('source', source)).resolve()) != source:
-                continue
-            start, end = float(word['source_start']), float(word['source_end'])
-            text = str(word.get('text', '')).strip()
+            if str(Path(unit.get('source', inherited_source)).resolve()) != source:
+                return
+            start, end = float(unit['source_start']), float(unit['source_end'])
+            text = str(unit.get('text', '')).strip()
         except (KeyError, TypeError, ValueError, OSError):
-            continue
+            return
         if not text or not np.isfinite(start + end) or end <= start:
-            continue
+            return
         if start < clip.start - .005 or end > clip.end + .005:
-            continue
-        result.append({'id': str(word.get('id') or f'{clip.id}_word_{index}'),
+            return
+        result.append({'id': str(unit.get('id') or f'{clip.id}_unit_{index}'),
             'start_ms': round(start * 1000.), 'end_ms': round(end * 1000.),
-            'text': text, 'speaker_id': word.get('speaker_id')})
+            'text': text, 'speaker_id': unit.get('speaker_id'),
+            'timestamp_precision': precision})
+        confidence = unit.get('probability', unit.get('confidence'))
+        try:
+            confidence = float(confidence)
+        except (TypeError, ValueError):
+            confidence = None
+        if confidence is not None and np.isfinite(confidence) and 0. <= confidence <= 1.:
+            result[-1]['asr_confidence'] = confidence
+
+    index = 0
+    for record in words:
+        if not isinstance(record, Mapping):
+            continue
+        inherited_source = str(record.get('source', source))
+        nested_segments = record.get('segments')
+        if isinstance(nested_segments, Sequence) and not isinstance(nested_segments, (str, bytes)):
+            for segment in nested_segments:
+                if not isinstance(segment, Mapping):
+                    continue
+                child_words = segment.get('words')
+                timed_children = ([child for child in child_words
+                    if isinstance(child, Mapping) and
+                    'source_start' in child and 'source_end' in child]
+                    if isinstance(child_words, Sequence) and
+                    not isinstance(child_words, (str, bytes)) else [])
+                if timed_children:
+                    for child in timed_children:
+                        append_unit(child, index, inherited_source=inherited_source,
+                                    precision='word')
+                        index += 1
+                else:
+                    append_unit(segment, index, inherited_source=inherited_source,
+                                precision='segment')
+                    index += 1
+            continue
+
+        marker = str(record.get('timestamp_precision',
+            record.get('unit_type', record.get('kind', '')))).casefold()
+        precision = 'segment' if marker in {'segment', 'transcript_segment'} else 'word'
+        append_unit(record, index, inherited_source=inherited_source,
+                    precision=precision)
+        index += 1
     result.sort(key=lambda item: (item['start_ms'], item['end_ms']))
     return result
 
@@ -838,8 +891,22 @@ def _candidate_spans(words: Sequence[Mapping], options: ClipperOptions) -> list[
             reasons.append('Pergunta e resposta próximas mantidas no mesmo clipe')
         information_score,payoff_score,rhythm_score,text_rank_score=_editorial_dimensions(
             text,subset,int(start),int(end),advanced=options.mode=='Avançado')
+        known_confidences=[float(word['asr_confidence']) for word in subset
+                           if 'asr_confidence' in word]
+        confidence_coverage=(len(known_confidences)/len(subset) if subset else 0.)
+        confidence_score=(sum(known_confidences)/len(known_confidences)
+                          if known_confidences else None)
+        if confidence_score is not None and confidence_coverage < .5:
+            reasons.append('Confiança ASR disponível para menos da metade das unidades; cobertura reduzida')
+        timestamp_precision=('segment' if any(
+            word.get('timestamp_precision')=='segment' for word in subset) else 'word')
+        if timestamp_precision=='segment':
+            reasons.append('Transcrição com limites de segmento; não foram criados tempos por palavra')
         candidates.append({'start_ms':int(start),'end_ms':int(end),'text':text,
             'words':subset,'context_score':context,'hook_score':hook,
+            'timestamp_precision':timestamp_precision,
+            'transcript_confidence_score':confidence_score,
+            'transcript_confidence_coverage':round(confidence_coverage,3),
             'boundary_score':boundary,'figurative_score':figurative_score,
             'information_score':information_score,'payoff_score':payoff_score,
             'rhythm_score':rhythm_score,'text_rank_score':text_rank_score,
@@ -866,13 +933,19 @@ def _boundary_choices(all_words: Sequence[Mapping], candidate: Mapping,
     for word in all_words[left:right]:
         word_start=int(word['start_ms']);word_end=int(word['end_ms'])
         if minimum<=end-word_start<=maximum:
-            start_choices.append({'ms':word_start,'word':str(word['text'])})
+            precision=word.get('timestamp_precision','word')
+            start_choices.append({'ms':word_start,'word':str(word['text']),
+                'label': (f"limite de segmento: {word['text']}" if precision=='segment'
+                          else str(word['text']))})
     left=bisect_left(all_words,end-3000,key=key)
     right=bisect_right(all_words,end+3000,key=key)
     for word in all_words[left:right]:
         word_end=int(word['end_ms'])
         if abs(word_end-end)<=3000 and minimum<=word_end-start<=maximum:
-            end_choices.append({'ms':word_end,'word':str(word['text'])})
+            precision=word.get('timestamp_precision','word')
+            end_choices.append({'ms':word_end,'word':str(word['text']),
+                'label': (f"limite de segmento: {word['text']}" if precision=='segment'
+                          else str(word['text']))})
     for choices,value,label in ((start_choices,start,'Início atual'),
                                 (end_choices,end,'Fim atual')):
         if not any(item['ms']==value for item in choices):
@@ -1364,6 +1437,9 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                             1000./playback_rate),
                 'playback_rate':playback_rate,
                 'text':candidate['text'],'transcript_available':not bool(candidate.get('event_only')),
+                'timestamp_precision':candidate.get('timestamp_precision','word'),
+                'transcript_confidence_score':ranked.get('transcript_confidence_score'),
+                'transcript_confidence_coverage':ranked.get('transcript_confidence_coverage',0.),
                 'transcript_present':bool(words),
                 'score':ranked['score'],
                 'score_note':ranked.get('note','Ranking parcial de eventos observáveis; não avalia conteúdo semântico.'),
@@ -1387,7 +1463,8 @@ def analyze_clips(clips, transcript_words: Sequence[Mapping], options: ClipperOp
                 'topic_shift_after':float(candidate.get('topic_shift_after',0.)),
                 'topic_shift_internal':float(candidate.get('topic_shift_internal',0.)),
                 'word_spans':[{'start_ms':int(word['start_ms']),
-                    'end_ms':int(word['end_ms']),'text':str(word['text'])}
+                    'end_ms':int(word['end_ms']),'text':str(word['text']),
+                    'timestamp_precision':word.get('timestamp_precision','word')}
                     for word in local_words
                     if int(word['start_ms'])>=candidate['start_ms']-3000 and
                        int(word['end_ms'])<=candidate['end_ms']+3000],

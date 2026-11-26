@@ -85,6 +85,34 @@ class ClipAudioTests(unittest.TestCase):
         self.assertEqual(result['components']['audio'], .5)
         self.assertIn('valor neutro', ' '.join(result['reasons']))
 
+    def test_uncalibrated_asr_confidence_is_a_small_coverage_weighted_penalty(self):
+        candidate=dict(start_ms=0,end_ms=10000,context_score=.8,
+                       hook_score=.8,boundary_score=.8)
+        baseline=score_clip(candidate,[])
+        absent=score_clip(dict(candidate,transcript_confidence_score=None),[])
+        low=score_clip(dict(candidate,transcript_confidence_score=.2,
+                             transcript_confidence_coverage=1.),[])
+        partial=score_clip(dict(candidate,transcript_confidence_score=.2,
+                                 transcript_confidence_coverage=.25),[])
+        self.assertEqual(absent['score'],baseline['score'])
+        self.assertLess(low['score'],baseline['score'])
+        self.assertLess(partial['score'],baseline['score'])
+        self.assertGreater(partial['score'],low['score'])
+        self.assertIn('não calibrado',' '.join(low['warnings']))
+        self.assertIsNone(baseline['transcript_confidence_score'])
+
+    def test_invalid_asr_confidence_does_not_change_editorial_score(self):
+        candidate=dict(start_ms=0,end_ms=10000,context_score=.8,
+                       hook_score=.8,boundary_score=.8)
+        baseline=score_clip(candidate,[])
+        invalid=score_clip(dict(candidate,transcript_confidence_score=float('nan'),
+                                 transcript_confidence_coverage=1.),[])
+        malformed=score_clip(dict(candidate,transcript_confidence_score=.1,
+                                  transcript_confidence_coverage='unknown'),[])
+        self.assertEqual(invalid['score'],baseline['score'])
+        self.assertIsNone(invalid['transcript_confidence_score'])
+        self.assertEqual(malformed['score'],baseline['score'])
+
     def test_discourse_signal_is_small_and_reported_in_editorial_ranking(self):
         base = dict(start_ms=0, end_ms=10000, context_score=.7,
                     hook_score=.6, boundary_score=.8, figurative_score=0.)

@@ -31,6 +31,63 @@ def transcript(source, count=180, start=0., step=.2):
 
 
 class ClipperTests(unittest.TestCase):
+    def test_segment_only_transcripts_keep_coarse_source_boundaries(self):
+        source=str(Path('segments.wav').resolve())
+        clip=Clip(source,0.,80.,kind='audio')
+        segments=[{'source':source,'source_start':float(index*4),
+            'source_end':float(index*4+3.8),
+            'timestamp_precision':'segment',
+            'probability':.8,
+            'text':f'Parte {index} explica uma ideia completa.'}
+            for index in range(20)]
+        units=_normalise_words(clip,segments)
+        self.assertEqual(len(units),len(segments))
+        self.assertTrue(all(unit['timestamp_precision']=='segment' for unit in units))
+        self.assertEqual(units[0]['asr_confidence'],.8)
+        candidates=_candidate_spans(units,ClipperOptions(12.,20.,8,6.))
+        self.assertTrue(candidates)
+        candidate=candidates[0]
+        self.assertEqual(candidate['timestamp_precision'],'segment')
+        self.assertIn('não foram criados tempos por palavra',
+                      ' '.join(candidate['text_reasons']))
+        self.assertEqual(candidate['start_ms'],units[0]['start_ms'])
+        self.assertIn(candidate['end_ms'],{unit['end_ms'] for unit in units})
+
+    def test_nested_segment_prefers_only_real_word_timestamps(self):
+        source=str(Path('nested-segments.wav').resolve())
+        clip=Clip(source,0.,10.,kind='audio')
+        records=[{'source':source,'segments':[{
+            'source_start':1.,'source_end':4.,'text':'Olá pessoal.',
+            'words':[{'text':'Olá','source_start':1.,'source_end':2.},
+                     {'text':'pessoal.','source_start':2.1,'source_end':3.}]},
+            {'source_start':5.,'source_end':8.,'text':'Mais uma frase.'}]}]
+        units=_normalise_words(clip,records)
+        self.assertEqual([unit['text'] for unit in units],
+                         ['Olá','pessoal.','Mais uma frase.'])
+        self.assertEqual([unit['timestamp_precision'] for unit in units],
+                         ['word','word','segment'])
+        self.assertEqual((units[2]['start_ms'],units[2]['end_ms']),(5000,8000))
+
+    def test_segment_transcript_runs_through_engine_without_asr_or_decoding(self):
+        from berofel.services import parakeet_asr
+        with tempfile.TemporaryDirectory(prefix='bfs_clip_segment_contract_') as folder:
+            source=Path(folder)/'source.wav'
+            clip=Clip(str(source),0.,80.,kind='audio')
+            segments=[{'source':str(source.resolve()),'source_start':float(i*4),
+                'source_end':float(i*4+3.8),'timestamp_precision':'segment',
+                'text':f'A gravação explica o ponto de número {i}.'}
+                for i in range(20)]
+            with patch.object(parakeet_asr,'transcribe_file',
+                              side_effect=AssertionError('ASR não deve rodar')):
+                result=analyze_clips([clip],segments,
+                    ClipperOptions(12.,20.,5,6.),cache_dir=Path(folder)/'cache')
+        self.assertTrue(result['candidates'])
+        self.assertTrue(all(item['timestamp_precision']=='segment'
+                            for item in result['candidates']))
+        self.assertEqual(result['stats']['decoded_seconds'],0.)
+        self.assertTrue(all('não foram criados tempos por palavra' in
+                            ' '.join(item['reasons']) for item in result['candidates']))
+
     def test_dialogue_boundary_keeps_nearby_question_and_answer_together(self):
         words=[]
         at=0.
