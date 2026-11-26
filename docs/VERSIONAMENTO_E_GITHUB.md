@@ -57,19 +57,47 @@ git ls-remote --heads origin <branch>
 
 ## Diagnóstico de acesso e fluxo permanente (26/11/2026)
 
-Estado verificado no workspace Windows:
+Estado revalidado no checkout Windows em 26/11/2026:
 
-- `origin` aponta para `https://github.com/berofel/BerofelStudio-MLF.git` em fetch e push.
-- O Git Credential Manager está configurado como helper (`manager`). O teste autenticado `git push --dry-run` ao branch de trabalho retornou `Everything up-to-date`; pushes reais anteriores desta sessão também foram confirmados no remoto. Nenhum token deve ser copiado para arquivos ou logs.
-- O sandbox bloqueia conexões HTTPS ao GitHub (`Failed to connect to github.com:443`). Fora do sandbox, `git fetch --prune origin` e o `push --dry-run` concluíram. Se a mesma mensagem aparecer, a causa é a rede do ambiente, não um conflito Git; não altere o remote nem reescreva histórico para tentar contorná-la.
-- A configuração Git global inclui o caminho exato deste checkout em `safe.directory`, corrigindo a rejeição `fatal: detected dubious ownership`. Não marque pastas amplas como seguras.
-- A configuração local do repositório é `push.default=simple`, `push.autoSetupRemote=true`, `fetch.prune=true` e `pull.ff=only`. Assim, branches novas passam a rastrear o upstream no primeiro push, branches removidas do remoto são podadas no fetch, e pulls não criam merges implícitos.
-- `gh` não está instalado neste ambiente (`gh` não reconhecido), então `gh auth status` e criação de PR via CLI não estão disponíveis. Instalar/autenticar o CLI é opcional; o Git Credential Manager já atende aos pushes Git.
-- A integração GitHub conectada ao Codex informa `permissions.push=false`; a consulta de permissão do colaborador falha com `403 Resource not accessible by integration`. Uma tentativa anterior de criar PR foi rejeitada com `422 ... must be collaborator`. Essa identidade do conector é diferente do credential helper que autenticou os pushes Git. Portanto, push Git funcional não implica permissão para abrir PR pela integração do Codex.
-- A lista pública de branches reporta `protected=false` e o endpoint de rulesets retorna `[]`. A consulta detalhada da proteção de `main` respondeu `403 Resource not accessible by integration`, portanto a integração não consegue inspecionar regras administrativas; não há evidência de branch protection ativa na lista pública. Não removemos proteções.
-- A leitura de `actions/permissions` é recusada pelo conector como endpoint não permitido. O estado administrativo das permissões de Actions não pôde ser confirmado por esta conexão. Os workflows versionados devem continuar executando seus testes; nenhuma permissão ou teste foi alterado nesta configuração.
-- O workflow do instalador define `permissions: contents: read` para os testes/build e `contents: write` somente no job de publicação de Releases; não usa token para abrir PR. O endpoint administrativo de permissões do repositório não ficou acessível, portanto não afirmamos conhecer a política global do Actions.
-- A execução CI do commit `ff441903600c7a6ae59ffc1343fd0c4c119db678` (run [45790082395](https://github.com/berofel/BerofelStudio-MLF/actions/runs/45790082395)) reportou `4 failed, 677 passed, 8 skipped`. Os quatro testes multivozes chamavam `build_script()` sem selecionar motor, mas a interface exige seleção explícita e corretamente lança `ValueError: Escolha manualmente o motor de narração antes de gerar o roteiro.`. Os fixtures foram corrigidos nesta branch para escolher um motor de teste compatível. A CI Windows do commit de correção `57580c138dbff82d4ca3374ca2ebd4f2523680c2` (run [45792450673](https://github.com/berofel/BerofelStudio-MLF/actions/runs/45792450673)) passou: `681 passed, 8 skipped, 83 subtests`; compilação do instalador e smoke test de instalação limpa também passaram. O ambiente local não tem `pytest` nem `PySide6`, por isso essa validação foi feita pelo runner Windows do repositório.
+- Raiz correta: `BerofelStudio\BerofelStudio 1`. `origin` aponta para `https://github.com/berofel/BerofelStudio-MLF.git`. O branch `feat/clip-engine-cache-shortlist` estava limpo e no mesmo commit remoto `28bc525c4c768d0211409ffade7833f32e4fa00a`; não havia commits locais pendentes nem conflito de avanço.
+- Git `2.56.0.windows.4` e GitHub CLI `2.105.0` estão instalados. `gh auth status` identifica a conta `berofel`, mas informa literalmente `The token in default is invalid.`; a tentativa à API, ainda dentro do sandbox, também falha com `connectex: Foi feita uma tentativa de acesso a um soquete de uma maneira que é proibida pelas permissões de acesso`.
+- O helper por usuário configurado para GitHub executa `gh auth git-credential`, substituindo o helper genérico `manager`. O Git Credential Manager `2.9.1` existe, mas não há credencial GitHub em cache; a consulta retorna `GCM returned no GitHub username` e o CLI do helper emite `Unable to persist credentials with the 'wincredman' credential store`. Portanto, a configuração atual não tem uma credencial de escrita utilizável. Não imprimir nem armazenar tokens.
+- No sandbox, `git ls-remote` falha exatamente com `Failed to connect to github.com:443 ... connectex: Foi feita uma tentativa de acesso a um soquete de uma maneira que é proibida pelas permissões de acesso`. Fora do sandbox, `git push --dry-run` respondeu `Everything up-to-date`, mas não havia objetos a enviar; isso **não valida escrita**. Nenhum push real foi efetuado nesta verificação.
+- A conexão GitHub do Codex está autenticada como `Befofas-lab`, não como a conta proprietária `berofel`. O metadata do repositório informa para essa conexão `pull: true`, `push: false`, `admin: false`; consultar permissões de colaborador retorna `403 Resource not accessible by integration`. Essa identidade não pode publicar branches nem abrir PRs. O `403` é do escopo do conector, não uma rejeição de branch protection.
+- A listagem pública atual mostra `protected: false` para todas as branches, inclusive `main`; o endpoint de rulesets do repositório retorna `[]`. Logo, não encontramos proteção/ruleset de repositório que explique as rejeições. O endpoint detalhado `branches/main/protection` retorna `403 Resource not accessible by integration`, então a regra detalhada não é inspecionável pelo conector. Não foi removida nenhuma proteção.
+- O endpoint administrativo `actions/permissions/workflow` foi recusado pelo conector: `HTTPError: 400: GitHub Fetch URL is not an allowed public GitHub repository or search endpoint`. A configuração global de Actions requer inspeção pelo proprietário em Settings. No YAML, o workflow concede `contents: read` para CI/build e `contents: write` apenas a `publish-release`; testes e build não recebem escrita e o workflow não cria PR.
+- CI do HEAD `28bc525c4c768d0211409ffade7833f32e4fa00a`: run [45796041959](https://github.com/berofel/BerofelStudio-MLF/actions/runs/45796041959) concluído com sucesso. Passaram os jobs `Windows 11 / Python 3.12 tests`, `build` e `Clean Windows install / launch / uninstall`; `Publish validated GitHub Release` foi pulado como esperado num push de branch. Os testes que falharam em execuções anteriores foram corrigidos em commits subsequentes; não desativamos testes.
+- O checkout tem `push.default=simple`, `push.autoSetupRemote=true`, `fetch.prune=true` e `pull.ff=only`; `origin` e os upstreams estão corretos. O autor local é `BerofelStudio Codex <codex@localhost>`; isso não impediu os commits remotos observados, mas não atribui autoria ao perfil GitHub nem satisfaz uma eventual política futura de assinatura/verificação. Defina nome e e-mail verificado somente com os dados confirmados pelo proprietário.
+
+### Corrigir a autenticação de escrita
+
+Na máquina Windows do usuário, reautentique a CLI com uma sessão interativa do proprietário e instale-a como helper Git:
+
+```powershell
+& 'C:\Program Files\GitHub CLI\gh.exe' auth login --hostname github.com --git-protocol https --web --scopes repo,workflow
+& 'C:\Program Files\GitHub CLI\gh.exe' auth status
+& 'C:\Program Files\GitHub CLI\gh.exe' auth setup-git
+git ls-remote origin HEAD
+```
+
+Conclua a autorização no navegador com a conta que tem escrita no repositório. Não cole PAT no terminal, chat, workflow ou arquivo do projeto. Se o token foi revogado/expirou, essa nova autorização substitui a entrada inválida sem expor o token. Se a organização exigir SSO, autorize o token para SSO.
+
+Depois de reautenticar, teste escrita somente enviando um commit validado em uma branch de trabalho e confirme o mesmo SHA com `git ls-remote --heads origin <branch>`. Um `--dry-run` com tudo sincronizado não comprova permissão de escrita.
+
+### Permissões que dependem do proprietário
+
+Para usar o conector Codex, a instalação precisa incluir este repositório e conceder `Contents: read/write` e `Pull requests: read/write`; para commits que alterem `.github/workflows/*`, também é necessário `Workflows: write`. O metadata atual da conexão diz `push: false`, e o usuário conector é `Befofas-lab`. Se o app não oferecer esses escopos, o proprietário deve conectar no Codex a conta `berofel` com escrita ou solicitar ao fornecedor do app os escopos necessários. O owner do repositório não consegue conceder ao GitHub App uma permissão que o app não solicitou.
+
+Para o fluxo de integração validada, recomendamos proteger `main` com PR obrigatório e exigir o check de teste `Windows 11 / Python 3.12 tests`; manter build e smoke do instalador como checks conforme o tempo de CI. A branch `main` está atualmente desprotegida (`protected: false`). Essa mudança é uma decisão administrativa do proprietário e não é necessária para corrigir a autenticação de branches de feature.
+
+Links diretos do proprietário:
+
+- Acesso e colaboradores: <https://github.com/berofel/BerofelStudio-MLF/settings/access>
+- Instalação de aplicativos: <https://github.com/settings/installations>
+- Tokens fine-grained: <https://github.com/settings/personal-access-tokens/new>
+- Regras de branches: <https://github.com/berofel/BerofelStudio-MLF/settings/branches>
+- Rulesets: <https://github.com/berofel/BerofelStudio-MLF/settings/rules>
+- Permissões de GitHub Actions: <https://github.com/berofel/BerofelStudio-MLF/settings/actions>
 
 ### Uso diário
 
